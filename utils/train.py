@@ -200,7 +200,7 @@ def train():
 
         tr = train_epoch(model, train_loader, optimizer, device, beta)
         va = val_epoch(model, val_loader, device, beta)
-        scheduler.step(va['loss'])
+        scheduler.step(va['recon'])
 
         epoch_time = time.perf_counter() - t0
         lr_now     = optimizer.param_groups[0]['lr']
@@ -227,8 +227,8 @@ def train():
 
         wandb.log(log)
 
-        if va['loss'] < best_val:
-            best_val  = va['loss']
+        if va['recon'] < best_val:
+            best_val  = va['recon']
             patience_ = 0
             torch.save({
                 'epoch'      : epoch,
