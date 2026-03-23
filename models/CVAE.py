@@ -73,7 +73,6 @@ class Decoder(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.ConvTranspose2d(32,  1,   kernel_size=4, stride=2, padding=1),
-            nn.Tanh(),   # sortie dans [-1, 1]
         )
 
     def forward(self, z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
@@ -101,10 +100,12 @@ class CVAE(nn.Module):
         theta_dim  : int   = 6,
         latent_dim : int   = 64,
         beta       : float = 1.0,
+        free_bits  : float = 0.5,   # seuil KL min par dimension latente
     ):
         super().__init__()
 
         self.beta      = beta
+        self.free_bits = free_bits
         self.latent_dim = latent_dim
 
         self.encoder = Encoder(N, theta_dim, latent_dim)
@@ -157,13 +158,27 @@ class CVAE(nn.Module):
         """
         recon_loss = F.mse_loss(U_hat, U, reduction='mean')
 
-        kl_loss = -0.5 * torch.mean(
-            1 + logvar - mu.pow(2) - logvar.exp()
-        )
+        # Gradient MSE : penalise les erreurs sur les gradients spatiaux
+        def spatial_grads(x):
+            dx = x[:, :, :, 1:] - x[:, :, :, :-1]
+            dy = x[:, :, 1:, :] - x[:, :, :-1, :]
+            return dx, dy
 
-        neg_elbo = recon_loss + self.beta * kl_loss
+        dx_gt,  dy_gt  = spatial_grads(U)
+        dx_hat, dy_hat = spatial_grads(U_hat)
+        grad_loss = (
+            F.mse_loss(dx_hat, dx_gt, reduction='mean') +
+            F.mse_loss(dy_hat, dy_gt, reduction='mean')
+        ) * 0.5
 
-        return neg_elbo, recon_loss, kl_loss
+        # KL : free-bits — on ne pénalise pas en dessous de free_bits par dim
+        kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())  # (B, latent)
+        kl_per_dim = kl_per_dim.mean(dim=0)                           # (latent,)
+        kl_loss    = kl_per_dim.clamp(min=self.free_bits).sum()
+
+        neg_elbo = recon_loss + grad_loss + self.beta * kl_loss
+
+        return neg_elbo, recon_loss, kl_loss, grad_loss
 
 
     @torch.no_grad()

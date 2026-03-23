@@ -20,6 +20,7 @@ import wandb
 from models.CVAE import CVAE
 from utils.dataset import ConvDiffDataset
 
+from tqdm import tqdm
 
 
 CONFIG = {
@@ -27,15 +28,16 @@ CONFIG = {
     'dataset'       : 'dataset/dataset.npz',
 
     # Modèle
-    'latent_dim'    : 64,
-    'beta'          : 1.0,
-    'beta_warmup'   : 20,      # époques pour monter beta de 0 → beta
+    'latent_dim'    : 16,
+    'beta'          : 0.5,
+    'free_bits'     : 0.5,     # KL min par dimension latente (anti-collapse)
+    'beta_warmup'   : 80,      # époques pour monter beta de 0 → beta
 
     # Entraînement
     'epochs'        : 500,
     'batch_size'    : 32,
     'lr'            : 1e-3,
-    'patience'      : 15,
+    'patience'      : 40,
     'seed'          : 42,
 
     # Logging
@@ -48,19 +50,16 @@ CONFIG = {
 
 
 
-
-# ─── Boucles ──────────────────────────────────────────────────────────────────
-
 def train_epoch(model, loader, optimizer, device, beta):
     model.train()
-    metrics = dict(loss=0., recon=0., kl=0.)
+    metrics = dict(loss=0., recon=0., kl=0., grad=0.)
 
     for theta, U in loader:
         theta, U   = theta.to(device), U.to(device)
         model.beta = beta
 
-        U_hat, mu, logvar = model(U, theta)
-        loss, recon, kl   = model.elbo(U, U_hat, mu, logvar)
+        U_hat, mu, logvar     = model(U, theta)
+        loss, recon, kl, grad = model.elbo(U, U_hat, mu, logvar)
 
         optimizer.zero_grad()
         loss.backward()
@@ -70,6 +69,7 @@ def train_epoch(model, loader, optimizer, device, beta):
         metrics['loss']  += loss.item()
         metrics['recon'] += recon.item()
         metrics['kl']    += kl.item()
+        metrics['grad']  += grad.item()
 
     n = len(loader)
     return {k: v / n for k, v in metrics.items()}
@@ -78,18 +78,19 @@ def train_epoch(model, loader, optimizer, device, beta):
 @torch.no_grad()
 def val_epoch(model, loader, device, beta):
     model.eval()
-    metrics = dict(loss=0., recon=0., kl=0.)
+    metrics = dict(loss=0., recon=0., kl=0., grad=0.)
 
     for theta, U in loader:
         theta, U   = theta.to(device), U.to(device)
         model.beta = beta
 
-        U_hat, mu, logvar = model(U, theta)
-        loss, recon, kl   = model.elbo(U, U_hat, mu, logvar)
+        U_hat, mu, logvar     = model(U, theta)
+        loss, recon, kl, grad = model.elbo(U, U_hat, mu, logvar)
 
         metrics['loss']  += loss.item()
         metrics['recon'] += recon.item()
         metrics['kl']    += kl.item()
+        metrics['grad']  += grad.item()
 
     n = len(loader)
     return {k: v / n for k, v in metrics.items()}
@@ -151,6 +152,9 @@ def train():
         generator=torch.Generator().manual_seed(CONFIG['seed'])
     )
 
+    # Normalisation basée uniquement sur les stats train (pas de leakage)
+    dataset.fit(train_set.indices)
+
     train_loader = DataLoader(train_set, batch_size=CONFIG['batch_size'],
                               shuffle=True,  num_workers=2, pin_memory=True)
     val_loader   = DataLoader(val_set,   batch_size=CONFIG['batch_size'],
@@ -166,6 +170,7 @@ def train():
         theta_dim  = 6,
         latent_dim = CONFIG['latent_dim'],
         beta       = CONFIG['beta'],
+        free_bits  = CONFIG['free_bits'],
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -189,7 +194,7 @@ def train():
     best_val  = float('inf')
     patience_ = 0
 
-    for epoch in range(1, CONFIG['epochs'] + 1):
+    for epoch in tqdm(range(1, CONFIG['epochs'] + 1)):
         t0   = time.perf_counter()
         beta = CONFIG['beta'] * min(1.0, epoch / CONFIG['beta_warmup'])
 
@@ -208,9 +213,11 @@ def train():
             'train/loss'   : tr['loss'],
             'train/recon'  : tr['recon'],
             'train/kl'     : tr['kl'],
+            'train/grad'   : tr['grad'],
             'val/loss'     : va['loss'],
             'val/recon'    : va['recon'],
             'val/kl'       : va['kl'],
+            'val/grad'     : va['grad'],
         }
 
         if epoch % CONFIG['log_img_every'] == 0:
@@ -235,7 +242,6 @@ def train():
                 'theta_std'  : dataset.theta_std,
             }, best_path)
             wandb.save(str(best_path))
-            print(f'  → Checkpoint sauvegardé  (val={best_val:.4f})')
         else:
             patience_ += 1
             if patience_ >= CONFIG['patience']:
@@ -266,6 +272,7 @@ def train():
         'test/loss'  : te['loss'],
         'test/recon' : te['recon'],
         'test/kl'    : te['kl'],
+        'test/grad'  : te['grad'],
         'test/r2'    : r2,
     })
 
