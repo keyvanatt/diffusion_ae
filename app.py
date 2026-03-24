@@ -22,14 +22,20 @@ THETA_PARAMS = [
     ('x0y - source centre y',      0.1,    0.9,   0.5),
     ('f   - intensite source',     1.0,   20.0,  10.0),
 ]
-DATASET_PATH = 'dataset/dataset.npz'
-CKPT         = 'checkpoints/cvae_best.pt'
+DATASET_PATH  = 'dataset/dataset.npz'
+CKPT_DIR      = 'checkpoints'
+
+
+def list_checkpoints():
+    ckpt_dir = Path(CKPT_DIR)
+    return sorted([p.name for p in ckpt_dir.glob('*.pt')])
 
 
 @st.cache_resource
-def get_model():
+def get_model(ckpt_name):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model, ckpt = load_model(CKPT, device)
+    ckpt_path = str(Path(CKPT_DIR) / ckpt_name)
+    model, ckpt = load_model(ckpt_path, device)
     return model, ckpt, device
 
 
@@ -101,6 +107,13 @@ def make_heatmap_fig(grids, cmap):
 st.set_page_config(page_title='CVAE Diffusion', layout='wide')
 st.title('CVAE — Diffusion-Advection')
 
+checkpoints = list_checkpoints()
+if not checkpoints:
+    st.error('Aucun checkpoint .pt trouve dans le dossier checkpoints/')
+    st.stop()
+selected_ckpt = st.sidebar.selectbox('Checkpoint', checkpoints,
+                                      index=0, key='ckpt_select')
+
 st.sidebar.header('Parametres physiques theta')
 slider_vals = []
 for label, lo, hi, default in THETA_PARAMS:
@@ -121,7 +134,7 @@ cmap_name = st.sidebar.selectbox('Colormap',
 gt_btn = st.sidebar.button('Comparer a la ground truth', use_container_width=True)
 
 # Inference live — re-run automatique a chaque slider
-model, ckpt, device = get_model()
+model, ckpt, device = get_model(selected_ckpt)
 U_pred = run_predict(theta_vals, model, ckpt, device)
 
 # Memoriser l'etat GT entre les re-runs
