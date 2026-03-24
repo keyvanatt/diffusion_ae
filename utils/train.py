@@ -179,7 +179,7 @@ def train():
     wandb.watch(model, log='gradients', log_freq=50)
 
     # Optimiseur + scheduler
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.AdamW(
         model.parameters(), lr=CONFIG['lr'], weight_decay=1e-5
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -244,9 +244,6 @@ def train():
             wandb.save(str(best_path))
         else:
             patience_ += 1
-            if patience_ >= CONFIG['patience']:
-                print(f'Early stopping à l\'époque {epoch}')
-                break
 
     ckpt = torch.load(best_path, map_location=device)
     model.load_state_dict(ckpt['model_state'])
