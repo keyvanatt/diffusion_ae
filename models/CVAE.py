@@ -138,7 +138,6 @@ class CVAE(nn.Module):
         U_hat      = self.decoder(z, theta)
         return U_hat, mu, logvar
 
-    # ── ELBO ──────────────────────────────────────────────────────────────────
 
     def elbo(
         self,
@@ -210,5 +209,11 @@ class CVAE(nn.Module):
             f"latent_dim={self.latent_dim}, "
             f"beta={self.beta}\n"
             f"  params entraînables : {n:,}\n"
+            f"Encoder : {self.encoder}\n"
+            f"Decoder : {self.decoder}\n"
             f")"
         )
+
+if __name__ == "__main__":
+    model = CVAE()
+    print(model)
