@@ -167,7 +167,7 @@ def train():
     # Modèle
     model = CVAE(
         N           = dataset.N,
-        theta_dim   = 6,
+        theta_dim   = 4,
         latent_dim  = CONFIG['latent_dim'],
         beta        = CONFIG['beta'],
         free_bits   = CONFIG['free_bits'],

@@ -1,9 +1,11 @@
 """
-Génération du dataset pour le CVAE
+Génération du dataset
 ====================================
 Chaque sample est une paire :
-  θ = (D, bx, by, x0x, x0y, f)   :vecteur de paramètres physiques
-  U = grille N×N                  :solution de l'EDP
+  θ = (D, bx, by, f)   :vecteur de paramètres physiques
+  U = grille N×N        :solution de l'EDP
+
+La position source est fixée à x0 = (0.5, 0.5).
 
 Stockage : fichier .npz  (numpy compressé)
 """
@@ -21,10 +23,10 @@ PARAM_RANGES = {
     'D'  : (1e-3,    1e-1 ),   # diffusivité
     'bx' : (-2.0,    2.0  ),   # convection x
     'by' : (-2.0,    2.0  ),   # convection y
-    'x0x': (0.1,     0.9  ),   # position source x  (évite le bord)
-    'x0y': (0.1,     0.9  ),   # position source y
     'f'  : (1.0,     20.0 ),   # intensité source
 }
+
+X0_FIXED = np.array([0.5, 0.5])   # position source fixée
 
 
 def sample_params(rng):
@@ -40,9 +42,8 @@ def sample_params(rng):
 
 
 def params_to_vector(p):
-    """Convertit le dict de paramètres en vecteur numpy (6,)."""
-    return np.array([p['D'], p['bx'], p['by'],
-                     p['x0x'], p['x0y'], p['f']], dtype=np.float32)
+    """Convertit le dict de paramètres en vecteur numpy (4,)."""
+    return np.array([p['D'], p['bx'], p['by'], p['f']], dtype=np.float32)
 
 
 
@@ -70,7 +71,7 @@ def generate_dataset(
 
     # Pré-allouer les tableaux
     U_all     = np.zeros((n_samples, N_grid, N_grid), dtype=np.float32)
-    theta_all = np.zeros((n_samples, 6),              dtype=np.float32)
+    theta_all = np.zeros((n_samples, 4),              dtype=np.float32)
 
     n_ok   = 0   # simulations réussies
     n_fail = 0   # simulations échouées
@@ -87,7 +88,7 @@ def generate_dataset(
                 D      = p['D'],
                 b_val  = np.array([p['bx'], p['by']]),
                 f      = p['f'],
-                x0     = np.array([p['x0x'], p['x0y']]),
+                x0     = X0_FIXED,
                 n      = N_mesh,
                 use_supg = use_supg,
             )
@@ -123,11 +124,11 @@ def generate_dataset(
     np.savez_compressed(
         output_path,
         U          = U_all,          # (n_samples, N, N)   float32
-        theta      = theta_all,      # (n_samples, 6)      float32  brut
-        theta_norm = theta_norm,      # (n_samples, 6)      float32  normalisé
-        theta_mean = theta_mean,      # (6,)  pour dénormaliser plus tard
-        theta_std  = theta_std,       # (6,)
-        param_names= np.array(['D', 'bx', 'by', 'x0x', 'x0y', 'f']),
+        theta      = theta_all,      # (n_samples, 4)      float32  brut
+        theta_norm = theta_norm,      # (n_samples, 4)      float32  normalisé
+        theta_mean = theta_mean,      # (4,)  pour dénormaliser plus tard
+        theta_std  = theta_std,       # (4,)
+        param_names= np.array(['D', 'bx', 'by', 'f']),
         N_grid     = np.array([N_grid]),
         N_mesh     = np.array([N_mesh]),
     )
@@ -175,12 +176,11 @@ def check_dataset(path='dataset.npz'):
 
         p = theta[idx]
         ax.set_title(
-            f"D={p[0]:.3f}  b=({p[1]:.1f},{p[2]:.1f})\n"
-            f"x0=({p[3]:.2f},{p[4]:.2f})  f={p[5]:.1f}",
+            f"D={p[0]:.3f}  b=({p[1]:.1f},{p[2]:.1f})  f={p[3]:.1f}",
             fontsize=8
         )
-        # Marquer la source
-        ax.plot(p[3], p[4], 'co', markersize=6)
+        # Marquer la source (position fixe)
+        ax.plot(0.5, 0.5, 'co', markersize=6)
 
     plt.suptitle(f'Dataset — {len(U)} samples', fontsize=11)
     plt.tight_layout()

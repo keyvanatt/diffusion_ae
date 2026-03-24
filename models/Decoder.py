@@ -13,7 +13,7 @@ class Decoder(nn.Module):
     Û     : (B, 1, N, N)
     """
 
-    def __init__(self, N: int = 64, theta_dim: int = 6):
+    def __init__(self, N: int = 64, theta_dim: int = 4):
         super().__init__()
         self.N    = N
         self.base = N // 16
@@ -77,7 +77,7 @@ class Decoder(nn.Module):
         Interface identique à CVAE.generate pour compatibilité app.py.
         n_samples est ignoré (pas d'espace latent stochastique).
 
-        theta : (6,) ou (B, 6)  paramètres normalisés
+        theta : (4,) ou (B, 4)  paramètres normalisés
         Retourne : (B, 1, N, N)
         """
         self.eval()
@@ -91,8 +91,8 @@ class Decoder(nn.Module):
 
 
 if __name__ == "__main__":
-    model = Decoder(N=64, theta_dim=6)
+    model = Decoder(N=64, theta_dim=4)
     print(model)
-    theta = torch.randn(4, 6)
+    theta = torch.randn(4, 4)
     out   = model(theta)
     print(f"theta {theta.shape} → U_hat {out.shape}")

@@ -150,7 +150,7 @@ def train():
 
     print(f'Train: {n_train}  Val: {n_val}  Test: {n_test}')
 
-    model = Decoder(N=dataset.N, theta_dim=6).to(device)
+    model = Decoder(N=dataset.N, theta_dim=4).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Paramètres entraînables : {n_params:,}')

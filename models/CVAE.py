@@ -8,11 +8,11 @@ class Encoder(nn.Module):
     (U, theta) → (mu, log var)
 
     U : (B, 1, N, N)  champ spatial
-    theta : (B, 6)        paramètres physiques
+    theta : (B, 4)        paramètres physiques
 
     """
 
-    def __init__(self, N: int, theta_dim: int = 6, latent_dim: int = 64):
+    def __init__(self, N: int, theta_dim: int = 4, latent_dim: int = 64):
         super().__init__()
         self.N = N
 
@@ -49,10 +49,10 @@ class Decoder(nn.Module):
     (z, theta) → Û
 
     z : (B, latent_dim)
-    theta  : (B, 6)
+    theta  : (B, 4)
     """
 
-    def __init__(self, N: int, theta_dim: int = 6, latent_dim: int = 64):
+    def __init__(self, N: int, theta_dim: int = 4, latent_dim: int = 64):
         super().__init__()
         self.N    = N
         self.base = N // 16
@@ -97,7 +97,7 @@ class CVAE(nn.Module):
     def __init__(
         self,
         N           : int   = 64,
-        theta_dim   : int   = 6,
+        theta_dim   : int   = 4,
         latent_dim  : int   = 64,
         beta        : float = 1.0,
         free_bits   : float = 0.5,   # seuil KL min par dimension latente
@@ -191,7 +191,7 @@ class CVAE(nn.Module):
     ) -> torch.Tensor:
         """
 
-        theta : (6,) ou (B, 6)  paramètres normalisés
+        theta : (4,) ou (B, 4)  paramètres normalisés
         """
         self.eval()
 
