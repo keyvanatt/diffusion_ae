@@ -145,7 +145,7 @@ class CVAE(nn.Module):
         U_hat  : torch.Tensor,
         mu     : torch.Tensor,
         logvar : torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         ELBO = E_q[log p(U|z,θ)]  -  β·KL(q(z|U,θ) || p(z))
 
@@ -154,6 +154,7 @@ class CVAE(nn.Module):
         neg_elbo   : loss totale à minimiser
         recon_loss : terme reconstruction seul
         kl_loss    : terme KL seul
+        grad_loss  : terme gradient
         """
         recon_loss = F.mse_loss(U_hat, U, reduction='mean')
 
@@ -165,9 +166,12 @@ class CVAE(nn.Module):
 
         dx_gt,  dy_gt  = spatial_grads(U)
         dx_hat, dy_hat = spatial_grads(U_hat)
+        eps = 1e-6
+        w_x = dx_gt.abs().detach() + eps
+        w_y = dy_gt.abs().detach() + eps
         grad_loss = (
-            F.mse_loss(dx_hat, dx_gt, reduction='mean') +
-            F.mse_loss(dy_hat, dy_gt, reduction='mean')
+            (w_x * (dx_hat - dx_gt).pow(2)).mean() / w_x.mean() +
+            (w_y * (dy_hat - dy_gt).pow(2)).mean() / w_y.mean()
         ) * 0.5
 
         # KL : free-bits — on ne pénalise pas en dessous de free_bits par dim
