@@ -16,7 +16,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import wandb
 
-from models.CVAE import CVAE
+from models.CVAELight import CVAELight
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -29,9 +29,8 @@ CONFIG = {
     # Modèle
     'latent_dim'    : 16,
     'beta'          : 0.5,
-    'free_bits'     : 0.5,     # KL min par dimension latente (anti-collapse)
-    'beta_warmup'   : 80,      # époques pour monter beta de 0 → beta
-    'lambda_grad'   : 5.0,     # poids du terme gradient dans la loss
+    'free_bits'     : 0.2,
+    'lambda_grad'   : 2.0,     # poids du terme gradient dans la loss
 
     # Entraînement
     'epochs'        : 500,
@@ -41,7 +40,7 @@ CONFIG = {
     'seed'          : 42,
 
     # Logging
-    'project'       : 'cvae-convdiff',
+    'project'       : 'cvae-light-convdiff',
     'run_name'      : None,    # None → wandb génère un nom automatique
     'ckpt_dir'      : 'checkpoints',
     'log_img_every' : 10,      # envoyer des images toutes les N époques
@@ -79,6 +78,7 @@ def train_epoch(model, loader, optimizer, device, beta):
 def val_epoch(model, loader, device, beta):
     model.eval()
     metrics = dict(loss=0., recon=0., kl=0., grad=0.)
+    ss_res, ss_tot = 0.0, 0.0
 
     for theta, U in loader:
         theta, U   = theta.to(device), U.to(device)
@@ -92,8 +92,13 @@ def val_epoch(model, loader, device, beta):
         metrics['kl']    += kl.item()
         metrics['grad']  += grad.item()
 
+        ss_res += ((U_hat - U) ** 2).sum().item()
+        ss_tot += ((U - U.mean()) ** 2).sum().item()
+
     n = len(loader)
-    return {k: v / n for k, v in metrics.items()}
+    out = {k: v / n for k, v in metrics.items()}
+    out['r2'] = 1.0 - ss_res / (ss_tot + 1e-8)
+    return out
 
 
 
@@ -104,6 +109,7 @@ def log_reconstructions(model, loader, dataset, device, n_show=4):
     theta, U = theta[:n_show].to(device), U[:n_show].to(device)
 
     U_hat, _, _ = model(U, theta)
+    U_hat = torch.sigmoid(U_hat)   # logits → [0, 1]
 
     U_phys     = dataset.denorm_U(U.cpu())
     U_hat_phys = dataset.denorm_U(U_hat.cpu())
@@ -165,7 +171,7 @@ def train():
     print(f'Train: {n_train}  Val: {n_val}  Test: {n_test}')
 
     # Modèle
-    model = CVAE(
+    model = CVAELight(
         N           = dataset.N,
         theta_dim   = 6,
         latent_dim  = CONFIG['latent_dim'],
@@ -197,7 +203,7 @@ def train():
 
     for epoch in tqdm(range(1, CONFIG['epochs'] + 1)):
         t0   = time.perf_counter()
-        beta = CONFIG['beta'] * min(1.0, epoch / CONFIG['beta_warmup'])
+        beta = CONFIG['beta'] * min(1.0, epoch / 100)
 
         tr = train_epoch(model, train_loader, optimizer, device, beta)
         va = val_epoch(model, val_loader, device, beta)
@@ -219,6 +225,7 @@ def train():
             'val/recon'    : va['recon'],
             'val/kl'       : va['kl'],
             'val/grad'     : va['grad'],
+            'val/r2'       : va['r2'],
         }
 
         if epoch % CONFIG['log_img_every'] == 0:
@@ -232,7 +239,7 @@ def train():
             best_val  = va['recon']
             patience_ = 0
             torch.save({
-                'model_type' : 'cvae',
+                'model_type' : 'cvae_light',
                 'epoch'      : epoch,
                 'model_state': model.state_dict(),
                 'optimizer'  : optimizer.state_dict(),

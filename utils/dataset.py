@@ -35,5 +35,6 @@ class ConvDiffDataset(Dataset):
     def __getitem__(self, idx):
         return self.theta[idx], self.U[idx]
 
-    def denorm_U(self, U_norm: torch.Tensor) -> torch.Tensor:
-        return (U_norm + 1.0) / 2.0 * (self.U_max - self.U_min) + self.U_min
+    def denorm_U(self, U_01: torch.Tensor) -> torch.Tensor:
+        """U_01 dans [0, 1] → valeurs physiques."""
+        return U_01 * (self.U_max - self.U_min) + self.U_min
