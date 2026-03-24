@@ -166,12 +166,9 @@ class CVAE(nn.Module):
 
         dx_gt,  dy_gt  = spatial_grads(U)
         dx_hat, dy_hat = spatial_grads(U_hat)
-        eps = 1e-6
-        w_x = dx_gt.abs().detach() + eps
-        w_y = dy_gt.abs().detach() + eps
         grad_loss = (
-            (w_x * (dx_hat - dx_gt).pow(2)).mean() / w_x.mean() +
-            (w_y * (dy_hat - dy_gt).pow(2)).mean() / w_y.mean()
+            F.mse_loss(dx_hat, dx_gt) +
+            F.mse_loss(dy_hat, dy_gt)
         ) * 0.5
 
         # KL : free-bits — on ne pénalise pas en dessous de free_bits par dim
