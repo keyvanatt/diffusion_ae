@@ -1,9 +1,8 @@
 """
-train.py — Entraînement CVAE avec Weights & Biases
-====================================================
+train_decoder.py — Entraînement du Decoder direct (theta → U)
+==============================================================
 Usage :
-    wandb login
-    python train.py
+    python utils/train_decoder.py
 """
 import sys
 from pathlib import Path
@@ -13,10 +12,10 @@ import time
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import DataLoader, random_split
 import wandb
 
-from models.CVAE import CVAE
+from models.Decoder import Decoder
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -27,11 +26,7 @@ CONFIG = {
     'dataset'       : 'dataset/dataset.npz',
 
     # Modèle
-    'latent_dim'    : 16,
-    'beta'          : 0.5,
-    'free_bits'     : 0.5,     # KL min par dimension latente (anti-collapse)
-    'beta_warmup'   : 80,      # époques pour monter beta de 0 → beta
-    'lambda_grad'   : 5.0,     # poids du terme gradient dans la loss
+    'lambda_grad'   : 1.0,    # poids du terme gradient dans la loss
 
     # Entraînement
     'epochs'        : 500,
@@ -41,25 +36,22 @@ CONFIG = {
     'seed'          : 42,
 
     # Logging
-    'project'       : 'cvae-convdiff',
-    'run_name'      : None,    # None → wandb génère un nom automatique
+    'project'       : 'decoder-convdiff',
+    'run_name'      : None,
     'ckpt_dir'      : 'checkpoints',
-    'log_img_every' : 10,      # envoyer des images toutes les N époques
+    'log_img_every' : 10,
 }
 
 
-
-
-def train_epoch(model, loader, optimizer, device, beta):
+def train_epoch(model, loader, optimizer, device, lambda_grad):
     model.train()
-    metrics = dict(loss=0., recon=0., kl=0., grad=0.)
+    metrics = dict(loss=0., recon=0., grad=0.)
 
     for theta, U in loader:
-        theta, U   = theta.to(device), U.to(device)
-        model.beta = beta
+        theta, U = theta.to(device), U.to(device)
 
-        U_hat, mu, logvar     = model(U, theta)
-        loss, recon, kl, grad = model.elbo(U, U_hat, mu, logvar)
+        U_hat                   = model(theta)
+        loss, recon, grad       = model.loss(U_hat, U, lambda_grad)
 
         optimizer.zero_grad()
         loss.backward()
@@ -68,7 +60,6 @@ def train_epoch(model, loader, optimizer, device, beta):
 
         metrics['loss']  += loss.item()
         metrics['recon'] += recon.item()
-        metrics['kl']    += kl.item()
         metrics['grad']  += grad.item()
 
     n = len(loader)
@@ -76,25 +67,22 @@ def train_epoch(model, loader, optimizer, device, beta):
 
 
 @torch.no_grad()
-def val_epoch(model, loader, device, beta):
+def val_epoch(model, loader, device, lambda_grad):
     model.eval()
-    metrics = dict(loss=0., recon=0., kl=0., grad=0.)
+    metrics = dict(loss=0., recon=0., grad=0.)
 
     for theta, U in loader:
-        theta, U   = theta.to(device), U.to(device)
-        model.beta = beta
+        theta, U = theta.to(device), U.to(device)
 
-        U_hat, mu, logvar     = model(U, theta)
-        loss, recon, kl, grad = model.elbo(U, U_hat, mu, logvar)
+        U_hat             = model(theta)
+        loss, recon, grad = model.loss(U_hat, U, lambda_grad)
 
         metrics['loss']  += loss.item()
         metrics['recon'] += recon.item()
-        metrics['kl']    += kl.item()
         metrics['grad']  += grad.item()
 
     n = len(loader)
     return {k: v / n for k, v in metrics.items()}
-
 
 
 @torch.no_grad()
@@ -103,7 +91,7 @@ def log_reconstructions(model, loader, dataset, device, n_show=4):
     theta, U = next(iter(loader))
     theta, U = theta[:n_show].to(device), U[:n_show].to(device)
 
-    U_hat, _, _ = model(U, theta)
+    U_hat = model(theta)
 
     U_phys     = dataset.denorm_U(U.cpu())
     U_hat_phys = dataset.denorm_U(U_hat.cpu())
@@ -129,7 +117,6 @@ def log_reconstructions(model, loader, dataset, device, n_show=4):
     return images
 
 
-
 def train():
     wandb.init(
         project = CONFIG['project'],
@@ -152,7 +139,6 @@ def train():
         generator=torch.Generator().manual_seed(CONFIG['seed'])
     )
 
-    # Normalisation basée uniquement sur les stats train (pas de leakage)
     dataset.fit(train_set.indices)
 
     train_loader = DataLoader(train_set, batch_size=CONFIG['batch_size'],
@@ -164,22 +150,13 @@ def train():
 
     print(f'Train: {n_train}  Val: {n_val}  Test: {n_test}')
 
-    # Modèle
-    model = CVAE(
-        N           = dataset.N,
-        theta_dim   = 6,
-        latent_dim  = CONFIG['latent_dim'],
-        beta        = CONFIG['beta'],
-        free_bits   = CONFIG['free_bits'],
-        lambda_grad = CONFIG['lambda_grad'],
-    ).to(device)
+    model = Decoder(N=dataset.N, theta_dim=6).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Paramètres entraînables : {n_params:,}')
     wandb.config.update({'n_params': n_params, 'device': str(device)})
     wandb.watch(model, log='gradients', log_freq=50)
 
-    # Optimiseur + scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=CONFIG['lr'], weight_decay=1e-5
     )
@@ -187,20 +164,18 @@ def train():
         optimizer, mode='min', factor=0.5, patience=7
     )
 
-    # Checkpoint
     ckpt_dir  = Path(CONFIG['ckpt_dir'])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    best_path = ckpt_dir / 'cvae_best.pt'
+    best_path = ckpt_dir / 'decoder_best.pt'
 
     best_val  = float('inf')
     patience_ = 0
 
     for epoch in tqdm(range(1, CONFIG['epochs'] + 1)):
-        t0   = time.perf_counter()
-        beta = CONFIG['beta'] * min(1.0, epoch / CONFIG['beta_warmup'])
+        t0 = time.perf_counter()
 
-        tr = train_epoch(model, train_loader, optimizer, device, beta)
-        va = val_epoch(model, val_loader, device, beta)
+        tr = train_epoch(model, train_loader, optimizer, device, CONFIG['lambda_grad'])
+        va = val_epoch(model, val_loader, device, CONFIG['lambda_grad'])
         scheduler.step(va['recon'])
 
         epoch_time = time.perf_counter() - t0
@@ -208,16 +183,13 @@ def train():
 
         log = {
             'epoch'        : epoch,
-            'beta'         : beta,
             'lr'           : lr_now,
             'epoch_time_s' : epoch_time,
             'train/loss'   : tr['loss'],
             'train/recon'  : tr['recon'],
-            'train/kl'     : tr['kl'],
             'train/grad'   : tr['grad'],
             'val/loss'     : va['loss'],
             'val/recon'    : va['recon'],
-            'val/kl'       : va['kl'],
             'val/grad'     : va['grad'],
         }
 
@@ -232,7 +204,7 @@ def train():
             best_val  = va['recon']
             patience_ = 0
             torch.save({
-                'model_type' : 'cvae',
+                'model_type' : 'decoder',
                 'epoch'      : epoch,
                 'model_state': model.state_dict(),
                 'optimizer'  : optimizer.state_dict(),
@@ -246,17 +218,20 @@ def train():
             wandb.save(str(best_path))
         else:
             patience_ += 1
+            if patience_ >= CONFIG['patience']:
+                print(f'Early stopping à l\'époque {epoch}')
+                break
 
     ckpt = torch.load(best_path, map_location=device)
     model.load_state_dict(ckpt['model_state'])
 
-    te = val_epoch(model, test_loader, device, beta=CONFIG['beta'])
+    te = val_epoch(model, test_loader, device, CONFIG['lambda_grad'])
 
     all_U, all_U_hat = [], []
     with torch.no_grad():
         for theta, U in test_loader:
             theta, U = theta.to(device), U.to(device)
-            U_hat, _, _ = model(U, theta)
+            U_hat    = model(theta)
             all_U.append(dataset.denorm_U(U.cpu()))
             all_U_hat.append(dataset.denorm_U(U_hat.cpu()))
 
@@ -270,7 +245,6 @@ def train():
     wandb.log({
         'test/loss'  : te['loss'],
         'test/recon' : te['recon'],
-        'test/kl'    : te['kl'],
         'test/grad'  : te['grad'],
         'test/r2'    : r2,
     })

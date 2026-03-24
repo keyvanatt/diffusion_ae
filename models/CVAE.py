@@ -96,16 +96,18 @@ class CVAE(nn.Module):
 
     def __init__(
         self,
-        N          : int   = 64,
-        theta_dim  : int   = 6,
-        latent_dim : int   = 64,
-        beta       : float = 1.0,
-        free_bits  : float = 0.5,   # seuil KL min par dimension latente
+        N           : int   = 64,
+        theta_dim   : int   = 6,
+        latent_dim  : int   = 64,
+        beta        : float = 1.0,
+        free_bits   : float = 0.5,   # seuil KL min par dimension latente
+        lambda_grad : float = 1.0,   # poids du terme gradient dans la loss
     ):
         super().__init__()
 
-        self.beta      = beta
-        self.free_bits = free_bits
+        self.beta        = beta
+        self.free_bits   = free_bits
+        self.lambda_grad = lambda_grad
         self.latent_dim = latent_dim
 
         self.encoder = Encoder(N, theta_dim, latent_dim)
@@ -176,7 +178,7 @@ class CVAE(nn.Module):
         kl_per_dim = kl_per_dim.mean(dim=0)                           # (latent,)
         kl_loss    = kl_per_dim.clamp(min=self.free_bits).sum()
 
-        neg_elbo = recon_loss + grad_loss + self.beta * kl_loss
+        neg_elbo = recon_loss + self.lambda_grad * grad_loss + self.beta * kl_loss
 
         return neg_elbo, recon_loss, kl_loss, grad_loss
 

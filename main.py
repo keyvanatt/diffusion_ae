@@ -16,35 +16,43 @@ import numpy as np
 import torch
 
 from models.CVAE import CVAE
+from models.Decoder import Decoder
 
 
 def load_model(ckpt_path: str, device: torch.device):
-    ckpt = torch.load(ckpt_path, map_location=device)
-    cfg  = ckpt['config']
+    ckpt       = torch.load(ckpt_path, map_location=device)
+    state      = ckpt['model_state']
+    model_type = ckpt.get('model_type', 'cvae')   # anciens ckpts sans clé → CVAE
 
-    model = CVAE(
-        N          = cfg['latent_dim'],   # N est dans le dataset, pas config
-        theta_dim  = 6,
-        latent_dim = cfg['latent_dim'],
-        beta       = cfg['beta'],
-        free_bits  = cfg['free_bits'],
-    )
+    # N est déduit de la shape du premier ConvTranspose2d dans les deux cas
+    # Pour CVAE  : clé 'decoder.deconv.0.weight'
+    # Pour Decoder : clé 'deconv.0.weight'
+    if model_type == 'decoder':
+        deconv_key = 'deconv.0.weight'
+    else:
+        deconv_key = 'decoder.deconv.0.weight'
 
-    # N est déduit de la shape des poids du décodeur
-    # On reconstruit depuis model_state pour récupérer N automatiquement
-    state = ckpt['model_state']
-    # La première couche du décodeur fc : (latent+6, 256*base**2)
-    fc_out = state['decoder.fc.0.weight'].shape[0]   # 256 * base**2
-    base   = int((fc_out / 256) ** 0.5)
-    N      = base * 16
+    # deconv.0.weight shape : (in_channels=256, out_channels=128, kH, kW)
+    # base déduit depuis la couche fc
+    if model_type == 'decoder':
+        fc_out = state['fc.0.weight'].shape[0]     # 256 * base**2
+    else:
+        fc_out = state['decoder.fc.0.weight'].shape[0]
 
-    model = CVAE(
-        N          = N,
-        theta_dim  = 6,
-        latent_dim = cfg['latent_dim'],
-        beta       = cfg['beta'],
-        free_bits  = cfg['free_bits'],
-    ).to(device)
+    base = int((fc_out / 256) ** 0.5)
+    N    = base * 16
+
+    if model_type == 'decoder':
+        model = Decoder(N=N, theta_dim=6).to(device)
+    else:
+        cfg   = ckpt['config']
+        model = CVAE(
+            N          = N,
+            theta_dim  = 6,
+            latent_dim = cfg['latent_dim'],
+            beta       = cfg['beta'],
+            free_bits  = cfg['free_bits'],
+        ).to(device)
 
     model.load_state_dict(state)
     model.eval()

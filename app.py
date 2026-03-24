@@ -135,6 +135,7 @@ gt_btn = st.sidebar.button('Comparer a la ground truth', use_container_width=Tru
 
 # Inference live — re-run automatique a chaque slider
 model, ckpt, device = get_model(selected_ckpt)
+model_type = ckpt.get('model_type', 'cvae')
 U_pred = run_predict(theta_vals, model, ckpt, device)
 
 # Memoriser l'etat GT entre les re-runs
@@ -159,7 +160,7 @@ if True:
         rmse = float(np.sqrt(np.mean(err ** 2)))
         grids = {
             f'Ground truth (idx {idx})': U_gt,
-            'Prediction CVAE':           U_pred,
+            f'Prediction {model_type.upper()}':   U_pred,
             f'|Erreur| RMSE={rmse:.4f}': err,
         }
         st.caption(
@@ -167,6 +168,6 @@ if True:
             f'theta = {[f"{v:.3f}" for v in theta_all[idx].tolist()]}'
         )
     else:
-        grids = {'Prediction CVAE': U_pred}
+        grids = {f'Prediction {model_type.upper()}': U_pred}
 
     st.plotly_chart(make_heatmap_fig(grids, cmap_name), use_container_width=True)
