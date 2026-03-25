@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from abc import abstractmethod
+from typing import Union
 
 
 class BaseAutoEncoder(nn.Module):
@@ -21,6 +22,28 @@ class BaseAutoEncoder(nn.Module):
     @abstractmethod
     def loss(self, *args, **kwargs):
         raise NotImplementedError
+
+    def _latent_picker(self, n_sample, device: torch.device, theta: Union[None, torch.Tensor] = None, ) -> torch.Tensor:
+        """
+        Retourne un element de l'espace latent à partir de theta, si nécessaire.
+        Par défaut : retourne un tenseur aleatoire de dimension (B, latent_dim).
+        Les sous-classes peuvent surcharger cette méthode si la logique de sampling
+        est plus complexe (ex. : VAE avec reparametrization).
+        """
+        return torch.randn(n_sample, self.latent_dim, device=device)
+
+    
+    @torch.no_grad()
+    def generate(self, n_samples: int = 1, theta: Union[None, torch.Tensor] = None, grad: bool = False) -> torch.Tensor:
+        """
+        Génère n_samples échantillons à partir du modèle.
+        Par défaut : échantillonnage aléatoire dans l'espace latent, puis décodage.
+        Les sous-classes peuvent surcharger cette méthode si la génération diffère
+        (ex. : conditionnement sur des paramètres).
+        """
+        self.eval()
+        z = self._latent_picker(n_samples, next(self.parameters()).device, theta)  # (n_samples, latent_dim)
+        return self.decoder(z)
 
     def __repr__(self) -> str:
         n_enc = sum(p.numel() for p in self.encoder.parameters() if p.requires_grad)
