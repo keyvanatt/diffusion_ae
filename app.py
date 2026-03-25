@@ -18,8 +18,6 @@ THETA_PARAMS = [
     ('D   - diffusivite',         0.001,  0.10,  0.02),
     ('|b| - intensite advection',  0.0,    2.83,  0.0),
     ('angle b (deg)',              0.0,  360.0,   0.0),
-    ('x0x - source centre x',      0.1,    0.9,   0.5),
-    ('x0y - source centre y',      0.1,    0.9,   0.5),
     ('f   - intensite source',     1.0,   20.0,  10.0),
 ]
 DATASET_PATH  = 'dataset/dataset.npz'
@@ -53,7 +51,7 @@ def run_predict(theta_raw, model, ckpt, device):
     U_max      = float(ckpt['U_max'])
     theta_t    = torch.tensor(theta_raw, dtype=torch.float32, device=device)
     theta_norm = (theta_t - theta_mean) / theta_std
-    U_hat_norm = model.generate(theta_norm, n_samples=1)
+    U_hat_norm = model.generate(theta_norm)
     U_pred     = (U_hat_norm + 1.0) / 2.0 * (U_max - U_min) + U_min
     return U_pred[0, 0].cpu().numpy()
 
@@ -104,8 +102,8 @@ def make_heatmap_fig(grids, cmap):
 
 
 # ── Page ─────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title='CVAE Diffusion', layout='wide')
-st.title('CVAE — Diffusion-Advection')
+st.set_page_config(page_title='Diffusion-Advection', layout='wide')
+st.title('DirectDecoder — Diffusion-Advection')
 
 checkpoints = list_checkpoints()
 if not checkpoints:
@@ -122,11 +120,11 @@ for label, lo, hi, default in THETA_PARAMS:
     slider_vals.append(v)
 
 # Convertir (|b|, angle) -> (bx, by)
-D, b_mag, b_angle_deg, x0x, x0y, f = slider_vals
+D, b_mag, b_angle_deg, f = slider_vals
 b_rad = np.deg2rad(b_angle_deg)
 bx    = b_mag * np.cos(b_rad)
 by    = b_mag * np.sin(b_rad)
-theta_vals = [D, bx, by, x0x, x0y, f]
+theta_vals = [D, bx, by, f]
 
 st.sidebar.markdown('---')
 cmap_name = st.sidebar.selectbox('Colormap',
@@ -135,7 +133,6 @@ gt_btn = st.sidebar.button('Comparer a la ground truth', use_container_width=Tru
 
 # Inference live — re-run automatique a chaque slider
 model, ckpt, device = get_model(selected_ckpt)
-model_type = ckpt.get('model_type', 'cvae')
 U_pred = run_predict(theta_vals, model, ckpt, device)
 
 # Memoriser l'etat GT entre les re-runs
@@ -160,7 +157,7 @@ if True:
         rmse = float(np.sqrt(np.mean(err ** 2)))
         grids = {
             f'Ground truth (idx {idx})': U_gt,
-            f'Prediction {model_type.upper()}':   U_pred,
+            'Prediction DirectDecoder':  U_pred,
             f'|Erreur| RMSE={rmse:.4f}': err,
         }
         st.caption(
@@ -168,6 +165,6 @@ if True:
             f'theta = {[f"{v:.3f}" for v in theta_all[idx].tolist()]}'
         )
     else:
-        grids = {f'Prediction {model_type.upper()}': U_pred}
+        grids = {'Prediction DirectDecoder': U_pred}
 
     st.plotly_chart(make_heatmap_fig(grids, cmap_name), use_container_width=True)

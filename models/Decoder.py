@@ -1,9 +1,11 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn as nn
+
+from models.base import BaseModel
 
 
-class DirectDecoder(nn.Module):
+class DirectDecoder(BaseModel):
     """
     theta → Û
 
@@ -79,20 +81,6 @@ class DirectDecoder(nn.Module):
 
         total = recon_loss + lambda_grad * grad_loss
         return total, recon_loss, grad_loss
-
-    @torch.no_grad()
-    def generate(self, theta: torch.Tensor, n_samples: int = 1) -> torch.Tensor:
-        """
-        Interface identique à CVAE.generate pour compatibilité app.py.
-        n_samples est ignoré (pas d'espace latent stochastique).
-
-        theta : (4,) ou (B, 4)  paramètres normalisés
-        Retourne : (B, 1, N, N)
-        """
-        self.eval()
-        if theta.dim() == 1:
-            theta = theta.unsqueeze(0)
-        return self(theta)
 
     def __repr__(self) -> str:
         n = sum(p.numel() for p in self.parameters() if p.requires_grad)

@@ -26,7 +26,7 @@ CONFIG = {
     'dataset'       : 'dataset/dataset.npz',
 
     # Modèle
-    'lambda_grad'   : 1.0,    # poids du terme gradient dans la loss
+    'lambda_grad'   : 5.0,    # poids du terme gradient dans la loss
 
     # Entraînement
     'epochs'        : 500,
