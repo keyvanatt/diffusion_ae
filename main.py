@@ -14,8 +14,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import numpy as np
 import torch
+from models.base import BaseDecoder
 
-from models.direct_decoder import DirectDecoder
+from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
 
 
 def load_model(ckpt_path: str, device: torch.device):
@@ -23,18 +24,44 @@ def load_model(ckpt_path: str, device: torch.device):
     state = ckpt['model_state']
 
     model_type = ckpt.get('model_type', 'decoder')
-    if model_type != 'decoder':
-        raise ValueError(f"Checkpoint de type '{model_type}' non supporté (CVAE est deprecated).")
 
     fc_out = state['fc.0.weight'].shape[0]   # 256 * base**2
     base   = int((fc_out / 256) ** 0.5)
-    N      = base * 16
 
-    model = DirectDecoder(N=N, theta_dim=4).to(device)
+    if model_type in ('decoder', 'DirectDecoder'):
+        N     = base * 16
+        model = DirectDecoder(N=N, theta_dim=4).to(device)
+    elif model_type == 'DirectDecoderDenseOut':
+        N     = base * 32
+        model = DirectDecoderDenseOut(N=N, theta_dim=4).to(device)
+    else:
+        raise ValueError(f"Checkpoint de type '{model_type}' non supporté.")
+
     model.load_state_dict(state)
     model.eval()
 
     return model, ckpt
+
+
+@torch.no_grad()
+def run_inference(theta_raw: list[float], model: BaseDecoder,
+                  ckpt: dict, device: torch.device) -> np.ndarray:
+    """
+    Inference avec un modèle déjà chargé.
+
+    Retourne U_pred : np.ndarray shape (N, N) en valeurs physiques.
+    """
+    theta_mean = ckpt['theta_mean'].to(device)
+    theta_std  = ckpt['theta_std'].to(device)
+    U_min      = float(ckpt['U_min'])
+    U_max      = float(ckpt['U_max'])
+    U_mean = torch.tensor(ckpt['U_mean'], dtype=torch.float32, device=device) if 'U_mean' in ckpt else torch.tensor(0.0, dtype=torch.float32, device=device)
+
+    theta_t    = torch.tensor(theta_raw, dtype=torch.float32, device=device)
+    theta_norm = (theta_t - theta_mean) / theta_std
+    U_hat_norm = model.generate(theta_norm)                           # (1, 1, N, N)
+    U_pred     = (U_hat_norm + 1.0) / 2.0 * (U_max - U_min) + U_min + U_mean
+    return U_pred[0, 0].cpu().numpy()                                 # (N, N)
 
 
 def predict(theta_raw: list[float], ckpt_path: str = 'checkpoints/decoder_best.pt',
@@ -48,7 +75,7 @@ def predict(theta_raw: list[float], ckpt_path: str = 'checkpoints/decoder_best.p
 
     Retourne
     --------
-    U_pred : np.ndarray  shape (1, N, N)  en valeurs physiques
+    U_pred : np.ndarray  shape (N, N)  en valeurs physiques
     """
     if device_str == 'auto':
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -56,19 +83,7 @@ def predict(theta_raw: list[float], ckpt_path: str = 'checkpoints/decoder_best.p
         device = torch.device(device_str)
 
     model, ckpt = load_model(ckpt_path, device)
-
-    theta_mean = ckpt['theta_mean'].to(device)
-    theta_std  = ckpt['theta_std'].to(device)
-    U_min      = float(ckpt['U_min'])
-    U_max      = float(ckpt['U_max'])
-
-    theta_raw_t = torch.tensor(theta_raw, dtype=torch.float32, device=device)
-    theta_norm  = (theta_raw_t - theta_mean) / theta_std              # (4,)
-
-    U_hat_norm = model.generate(theta_norm)                           # (1, 1, N, N)
-
-    U_pred = (U_hat_norm + 1.0) / 2.0 * (U_max - U_min) + U_min
-    return U_pred[:, 0, :, :].cpu().numpy()                           # (1, N, N)
+    return run_inference(theta_raw, model, ckpt, device)
 
 
 def main():

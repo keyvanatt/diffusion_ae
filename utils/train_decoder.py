@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, random_split
 import wandb
 
 from models.base import BaseDecoder
-from models.direct_decoder import DirectDecoder
+from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -251,7 +251,7 @@ def train(
 
 if __name__ == '__main__':
     dataset = ConvDiffDataset('dataset/dataset.npz')
-    model   = DirectDecoder(N=dataset.N, theta_dim=4, lambda_grad=5.0)
+    model   = DirectDecoderDenseOut(N=dataset.N, theta_dim=4, lambda_grad=5.0)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',

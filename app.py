@@ -12,7 +12,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from main import load_model
+from main import load_model, run_inference
 
 THETA_PARAMS = [
     ('D   - diffusivite',         0.001,  0.10,  0.02),
@@ -43,18 +43,6 @@ def get_dataset():
     return d['U'].astype(np.float32), d['theta'].astype(np.float32)
 
 
-@torch.no_grad()
-def run_predict(theta_raw, model, ckpt, device):
-    theta_mean = ckpt['theta_mean'].to(device)
-    theta_std  = ckpt['theta_std'].to(device)
-    U_min      = float(ckpt['U_min'])
-    U_max      = float(ckpt['U_max'])
-    theta_t    = torch.tensor(theta_raw, dtype=torch.float32, device=device)
-    theta_norm = (theta_t - theta_mean) / theta_std
-    U_hat_norm = model.generate(theta_norm)
-    U_pred     = (U_hat_norm + 1.0) / 2.0 * (U_max - U_min) + U_min
-    return U_pred[0, 0].cpu().numpy()
-
 
 def find_nearest(theta_raw, theta_all):
     theta_raw = np.array(theta_raw, dtype=np.float32)
@@ -76,13 +64,12 @@ def make_heatmap_fig(grids, cmap):
     for i, (title, arr) in enumerate(grids.items(), start=1):
         is_err     = 'Erreur' in title
         colorscale = 'Reds' if is_err else cmap
-        zmin = float(arr.min()) if is_err else zmin_s
-        zmax = float(arr.max()) if is_err else zmax_s
+
         fig.add_trace(
             go.Heatmap(
                 z=arr,
                 colorscale=colorscale,
-                zmin=zmin, zmax=zmax,
+                zmin=zmin_s, zmax=zmax_s,
                 showscale=True,
                 colorbar=dict(len=0.3, thickness=12, y=1 - (i-1)/n - 0.15,
                               tickfont=dict(size=10)),
@@ -101,9 +88,8 @@ def make_heatmap_fig(grids, cmap):
     return fig
 
 
-# ── Page ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title='Diffusion-Advection', layout='wide')
-st.title('DirectDecoder — Diffusion-Advection')
+st.title('Diffusion-Advection')
 
 checkpoints = list_checkpoints()
 if not checkpoints:
@@ -133,7 +119,12 @@ gt_btn = st.sidebar.button('Comparer a la ground truth', use_container_width=Tru
 
 # Inference live — re-run automatique a chaque slider
 model, ckpt, device = get_model(selected_ckpt)
-U_pred = run_predict(theta_vals, model, ckpt, device)
+U_pred = run_inference(theta_vals, model, ckpt, device)
+
+# Effacer la GT si les sliders ont bougé depuis le clic
+if st.session_state.get('show_gt') and theta_vals != st.session_state.get('gt_theta'):
+    del st.session_state['show_gt']
+    del st.session_state['gt_theta']
 
 # Memoriser l'etat GT entre les re-runs
 if gt_btn:
