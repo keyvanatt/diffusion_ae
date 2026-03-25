@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from models.CVAE import CVAE
-from models.Decoder import Decoder
+from models.Decoder import DirectDecoder
 
 
 def load_model(ckpt_path: str, device: torch.device):
@@ -43,7 +43,7 @@ def load_model(ckpt_path: str, device: torch.device):
     N    = base * 16
 
     if model_type == 'decoder':
-        model = Decoder(N=N, theta_dim=6).to(device)
+        model = DirectDecoder(N=N, theta_dim=6).to(device)
     else:
         cfg   = ckpt['config']
         model = CVAE(

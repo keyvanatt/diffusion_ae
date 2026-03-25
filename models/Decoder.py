@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class Decoder(nn.Module):
+class DirectDecoder(nn.Module):
     """
     theta → Û
 
@@ -96,11 +96,11 @@ class Decoder(nn.Module):
 
     def __repr__(self) -> str:
         n = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        return f"Decoder(N={self.N}, params={n:,})"
+        return f"DirectDecoder(N={self.N}, params={n:,})"
 
 
 if __name__ == "__main__":
-    model = Decoder(N=64, theta_dim=4)
+    model = DirectDecoder(N=64, theta_dim=4)
     print(model)
     theta = torch.randn(4, 4)
     out   = model(theta)

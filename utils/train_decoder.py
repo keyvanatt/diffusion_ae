@@ -15,7 +15,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 import wandb
 
-from models.Decoder import Decoder
+from models.Decoder import DirectDecoder
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -150,7 +150,7 @@ def train():
 
     print(f'Train: {n_train}  Val: {n_val}  Test: {n_test}')
 
-    model = Decoder(N=dataset.N, theta_dim=4).to(device)
+    model = DirectDecoder(N=dataset.N, theta_dim=4).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Paramètres entraînables : {n_params:,}')
