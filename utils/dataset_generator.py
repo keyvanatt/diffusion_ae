@@ -192,7 +192,7 @@ def check_dataset(path='dataset.npz'):
 if __name__ == '__main__':
 
     generate_dataset(
-        n_samples   = 5000,
+        n_samples   = 10_000,
         N_grid      = 64,
         N_mesh      = 64,
         output_path = 'dataset.npz',
