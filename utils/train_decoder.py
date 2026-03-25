@@ -104,13 +104,12 @@ def train(
     lr          : float = 1e-3,
     patience    : int   = 40,
     seed        : int   = 42,
-    project     : str   = 'decoder-convdiff',
-    run_name    : str   = None,
+    project     : str   = 'convdiff',
     ckpt_dir    : str   = 'checkpoints',
     log_img_every: int  = 10,
 ):
     model_name = type(model).__name__
-
+    run_name= f'{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
     wandb.init(
         project = project,
         name    = run_name,
@@ -209,6 +208,7 @@ def train(
                 'val_loss'   : best_val,
                 'U_min'      : dataset.U_min,
                 'U_max'      : dataset.U_max,
+                'U_mean'     : dataset.U_mean,
                 'theta_mean' : dataset.theta_mean,
                 'theta_std'  : dataset.theta_std,
             }, best_path)
@@ -256,11 +256,11 @@ if __name__ == '__main__':
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
-        batch_size    = 32,
+        batch_size    = 128,
         lr            = 1e-3,
         patience      = 40,
         seed          = 42,
-        project       = 'decoder-convdiff',
+        project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
         log_img_every = 50,
     )
