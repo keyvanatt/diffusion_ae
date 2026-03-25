@@ -190,11 +190,22 @@ def check_dataset(path='dataset.npz'):
 
 
 if __name__ == '__main__':
+    import argparse
 
-    generate_dataset(
-        n_samples   = 10_000,
-        N_grid      = 64,
-        N_mesh      = 64,
-        output_path = 'dataset.npz',
-    )
-    check_dataset('dataset.npz')
+    DEFAULT_PATH = 'dataset/dataset.npz'
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--check', nargs='?', const=DEFAULT_PATH, default=None,
+                        metavar='PATH',
+                        help=f'Inspecter un dataset existant (défaut : {DEFAULT_PATH})')
+    args = parser.parse_args()
+
+    if args.check is not None:
+        check_dataset(args.check)
+    else:
+        generate_dataset(
+            n_samples   = 10_000,
+            N_grid      = 64,
+            N_mesh      = 64,
+            output_path = DEFAULT_PATH,
+        )
