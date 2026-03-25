@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import numpy as np
 import torch
 
-from models.Decoder import DirectDecoder
+from models.direct_decoder import DirectDecoder
 
 
 def load_model(ckpt_path: str, device: torch.device):

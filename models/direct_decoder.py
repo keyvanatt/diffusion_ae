@@ -2,10 +2,10 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-from models.base import BaseModel
+from models.base import BaseDecoder
 
 
-class DirectDecoder(BaseModel):
+class DirectDecoder(BaseDecoder):
     """
     theta → Û
 
@@ -15,10 +15,11 @@ class DirectDecoder(BaseModel):
     Û     : (B, 1, N, N)
     """
 
-    def __init__(self, N: int = 64, theta_dim: int = 4):
+    def __init__(self, N: int = 64, theta_dim: int = 4, lambda_grad: float = 1.0):
         super().__init__()
-        self.N    = N
-        self.base = N // 16
+        self.N           = N
+        self.base        = N // 16
+        self.lambda_grad = lambda_grad
 
         self.fc = nn.Sequential(
             nn.Linear(theta_dim, 256 * self.base ** 2),
@@ -56,7 +57,6 @@ class DirectDecoder(BaseModel):
         self,
         U_hat : torch.Tensor,
         U     : torch.Tensor,
-        lambda_grad: float = 1.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Loss mixte : MSE(U) + lambda_grad * MSE(gradients spatiaux)
@@ -79,7 +79,7 @@ class DirectDecoder(BaseModel):
             F.mse_loss(dy_hat, dy_gt)
         ) * 0.5
 
-        total = recon_loss + lambda_grad * grad_loss
+        total = recon_loss + self.lambda_grad * grad_loss
         return total, recon_loss, grad_loss
 
     def __repr__(self) -> str:

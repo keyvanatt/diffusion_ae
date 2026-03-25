@@ -1,6 +1,6 @@
 """
-train_decoder.py — Entraînement du Decoder direct (theta → U)
-==============================================================
+train_decoder.py — Entraînement générique pour tout BaseDecoder
+=============================================================
 Usage :
     python utils/train_decoder.py
 """
@@ -15,43 +15,22 @@ import torch
 from torch.utils.data import DataLoader, random_split
 import wandb
 
-from models.Decoder import DirectDecoder
+from models.base import BaseDecoder
+from models.direct_decoder import DirectDecoder
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
 
 
-CONFIG = {
-    # Données
-    'dataset'       : 'dataset/dataset.npz',
-
-    # Modèle
-    'lambda_grad'   : 5.0,    # poids du terme gradient dans la loss
-
-    # Entraînement
-    'epochs'        : 500,
-    'batch_size'    : 32,
-    'lr'            : 1e-3,
-    'patience'      : 40,
-    'seed'          : 42,
-
-    # Logging
-    'project'       : 'decoder-convdiff',
-    'run_name'      : None,
-    'ckpt_dir'      : 'checkpoints',
-    'log_img_every' : 10,
-}
-
-
-def train_epoch(model, loader, optimizer, device, lambda_grad):
+def train_epoch(model: BaseDecoder, loader, optimizer, device):
     model.train()
     metrics = dict(loss=0., recon=0., grad=0.)
 
     for theta, U in loader:
         theta, U = theta.to(device), U.to(device)
 
-        U_hat                   = model(theta)
-        loss, recon, grad       = model.loss(U_hat, U, lambda_grad)
+        U_hat             = model(theta)
+        loss, recon, grad = model.loss(U_hat, U)
 
         optimizer.zero_grad()
         loss.backward()
@@ -67,7 +46,7 @@ def train_epoch(model, loader, optimizer, device, lambda_grad):
 
 
 @torch.no_grad()
-def val_epoch(model, loader, device, lambda_grad):
+def val_epoch(model: BaseDecoder, loader, device):
     model.eval()
     metrics = dict(loss=0., recon=0., grad=0.)
 
@@ -75,7 +54,7 @@ def val_epoch(model, loader, device, lambda_grad):
         theta, U = theta.to(device), U.to(device)
 
         U_hat             = model(theta)
-        loss, recon, grad = model.loss(U_hat, U, lambda_grad)
+        loss, recon, grad = model.loss(U_hat, U)
 
         metrics['loss']  += loss.item()
         metrics['recon'] += recon.item()
@@ -86,7 +65,7 @@ def val_epoch(model, loader, device, lambda_grad):
 
 
 @torch.no_grad()
-def log_reconstructions(model, loader, dataset, device, n_show=4):
+def log_reconstructions(model: BaseDecoder, loader, dataset, device, n_show=4):
     model.eval()
     theta, U = next(iter(loader))
     theta, U = theta[:n_show].to(device), U[:n_show].to(device)
@@ -117,18 +96,41 @@ def log_reconstructions(model, loader, dataset, device, n_show=4):
     return images
 
 
-def train():
+def train(
+    model       : BaseDecoder,
+    dataset_path: str   = 'dataset/dataset.npz',
+    epochs      : int   = 500,
+    batch_size  : int   = 32,
+    lr          : float = 1e-3,
+    patience    : int   = 40,
+    seed        : int   = 42,
+    project     : str   = 'decoder-convdiff',
+    run_name    : str   = None,
+    ckpt_dir    : str   = 'checkpoints',
+    log_img_every: int  = 10,
+):
+    model_name = type(model).__name__
+
     wandb.init(
-        project = CONFIG['project'],
-        name    = CONFIG['run_name'],
-        config  = CONFIG,
+        project = project,
+        name    = run_name,
+        config  = dict(
+            dataset_path  = dataset_path,
+            epochs        = epochs,
+            batch_size    = batch_size,
+            lr            = lr,
+            patience      = patience,
+            seed          = seed,
+            model         = model_name,
+        ),
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device : {device}')
+    model = model.to(device)
 
     # Dataset + splits
-    dataset = ConvDiffDataset(CONFIG['dataset'])
+    dataset = ConvDiffDataset(dataset_path)
     n       = len(dataset)
     n_train = int(0.8 * n)
     n_val   = int(0.1 * n)
@@ -136,46 +138,42 @@ def train():
 
     train_set, val_set, test_set = random_split(
         dataset, [n_train, n_val, n_test],
-        generator=torch.Generator().manual_seed(CONFIG['seed'])
+        generator=torch.Generator().manual_seed(seed)
     )
 
     dataset.fit(train_set.indices)
 
-    train_loader = DataLoader(train_set, batch_size=CONFIG['batch_size'],
+    train_loader = DataLoader(train_set, batch_size=batch_size,
                               shuffle=True,  num_workers=2, pin_memory=True)
-    val_loader   = DataLoader(val_set,   batch_size=CONFIG['batch_size'],
+    val_loader   = DataLoader(val_set,   batch_size=batch_size,
                               shuffle=False, num_workers=2)
-    test_loader  = DataLoader(test_set,  batch_size=CONFIG['batch_size'],
+    test_loader  = DataLoader(test_set,  batch_size=batch_size,
                               shuffle=False, num_workers=2)
 
     print(f'Train: {n_train}  Val: {n_val}  Test: {n_test}')
-
-    model = DirectDecoder(N=dataset.N, theta_dim=4).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Paramètres entraînables : {n_params:,}')
     wandb.config.update({'n_params': n_params, 'device': str(device)})
     wandb.watch(model, log='gradients', log_freq=50)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=CONFIG['lr'], weight_decay=1e-5
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=7
     )
 
-    ckpt_dir  = Path(CONFIG['ckpt_dir'])
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    best_path = ckpt_dir / 'decoder_best.pt'
+    ckpt_dir_ = Path(ckpt_dir)
+    ckpt_dir_.mkdir(parents=True, exist_ok=True)
+    best_path = ckpt_dir_ / f'{model_name}_best.pt'
 
     best_val  = float('inf')
     patience_ = 0
 
-    for epoch in tqdm(range(1, CONFIG['epochs'] + 1)):
+    for epoch in tqdm(range(1, epochs + 1)):
         t0 = time.perf_counter()
 
-        tr = train_epoch(model, train_loader, optimizer, device, CONFIG['lambda_grad'])
-        va = val_epoch(model, val_loader, device, CONFIG['lambda_grad'])
+        tr = train_epoch(model, train_loader, optimizer, device)
+        va = val_epoch(model, val_loader, device)
         scheduler.step(va['recon'])
 
         epoch_time = time.perf_counter() - t0
@@ -193,7 +191,7 @@ def train():
             'val/grad'     : va['grad'],
         }
 
-        if epoch % CONFIG['log_img_every'] == 0:
+        if epoch % log_img_every == 0:
             log['reconstructions'] = log_reconstructions(
                 model, val_loader, dataset, device
             )
@@ -204,12 +202,11 @@ def train():
             best_val  = va['recon']
             patience_ = 0
             torch.save({
-                'model_type' : 'decoder',
+                'model_type' : model_name,
                 'epoch'      : epoch,
                 'model_state': model.state_dict(),
                 'optimizer'  : optimizer.state_dict(),
                 'val_loss'   : best_val,
-                'config'     : CONFIG,
                 'U_min'      : dataset.U_min,
                 'U_max'      : dataset.U_max,
                 'theta_mean' : dataset.theta_mean,
@@ -218,14 +215,14 @@ def train():
             wandb.save(str(best_path))
         else:
             patience_ += 1
-            if patience_ >= CONFIG['patience']:
+            if patience_ >= patience:
                 print(f'Early stopping à l\'époque {epoch}')
                 break
 
     ckpt = torch.load(best_path, map_location=device)
     model.load_state_dict(ckpt['model_state'])
 
-    te = val_epoch(model, test_loader, device, CONFIG['lambda_grad'])
+    te = val_epoch(model, test_loader, device)
 
     all_U, all_U_hat = [], []
     with torch.no_grad():
@@ -253,4 +250,17 @@ def train():
 
 
 if __name__ == '__main__':
-    train()
+    dataset = ConvDiffDataset('dataset/dataset.npz')
+    model   = DirectDecoder(N=dataset.N, theta_dim=4, lambda_grad=5.0)
+    train(
+        model,
+        dataset_path  = 'dataset/dataset.npz',
+        epochs        = 500,
+        batch_size    = 32,
+        lr            = 1e-3,
+        patience      = 40,
+        seed          = 42,
+        project       = 'decoder-convdiff',
+        ckpt_dir      = 'checkpoints',
+        log_img_every = 50,
+    )

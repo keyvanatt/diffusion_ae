@@ -3,7 +3,7 @@ import torch.nn as nn
 from abc import abstractmethod
 
 
-class BaseModel(nn.Module):
+class BaseDecoder(nn.Module):
     """
     Classe de base pour tous les modèles du projet.
 
