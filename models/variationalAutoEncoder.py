@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.base import BaseAutoEncoder
+from models.base import BaseAutoEncoder, BaseDecoder
 
 class Encoder(nn.Module):
     """
@@ -172,10 +172,7 @@ class VAE(BaseAutoEncoder):
         neg_elbo = recon_loss + grad_loss + self.beta * kl_loss
 
         return neg_elbo, recon_loss, kl_loss, grad_loss
-
-
-
-
+    
     def loss(
         self,
         U      : torch.Tensor,
@@ -186,19 +183,52 @@ class VAE(BaseAutoEncoder):
         total, recon, kl, grad = self.elbo(U, U_hat, mu, logvar)
         return total, {'recon': recon, 'kl': kl, 'grad': grad}
 
-    def __repr__(self) -> str:
-        n = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        return (
-            f"CVAE(\n"
-            f"  N={self.decoder.N}, "
-            f"latent_dim={self.latent_dim}, "
-            f"beta={self.beta}\n"
-            f"  params entraînables : {n:,}\n"
-            f"Encoder : {self.encoder}\n"
-            f"Decoder : {self.decoder}\n"
-            f")"
+class IndirectDecoder(BaseDecoder):
+    """
+    Projete theta dans l'espace latent, puis decode avec le decoder du VAE.
+    """
+
+    def __init__(self, trained_AE: BaseAutoEncoder, N: int, theta_dim: int, latent_dim: int = 64):
+        super().__init__()
+        self.N = N
+        self.theta_proj = nn.Sequential(
+            nn.Linear(theta_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, latent_dim),
         )
+        self.decoder = trained_AE.decoder
+        self.decoder.requires_grad_(False) # à refléchir : geler le decoder ou pas ?
+
+
+    def forward(self, theta: torch.Tensor) -> torch.Tensor:
+        z = self.theta_proj(theta)
+        return self.decoder(z)
+
+    def loss(
+        self,
+        U_hat : torch.Tensor,
+        U     : torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        recon_loss = F.mse_loss(U_hat, U)
+
+        def spatial_grads(x):
+            dx = x[:, :, :, 1:] - x[:, :, :, :-1]
+            dy = x[:, :, 1:, :] - x[:, :, :-1, :]
+            return dx, dy
+
+        dx_gt,  dy_gt  = spatial_grads(U)
+        dx_hat, dy_hat = spatial_grads(U_hat)
+        grad_loss = (
+            F.mse_loss(dx_hat, dx_gt) +
+            F.mse_loss(dy_hat, dy_gt)
+        ) * 0.5
+
+        total = recon_loss + grad_loss
+        return total, recon_loss, grad_loss
 
 if __name__ == "__main__":
-    model = CVAE()
+    model = VAE()
+    rand_U = torch.randn(2, 1, 64, 64)
+    U_hat, mu, logvar = model(rand_U)
     print(model)
+    print("U_hat shape:", U_hat.shape)

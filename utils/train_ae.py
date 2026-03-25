@@ -241,12 +241,12 @@ def train(
 
 if __name__ == '__main__':
     dataset = ConvDiffDataset('dataset/dataset.npz')
-    model   = VAE(N=dataset.N, latent_dim=16)
+    model   = VAE(N=dataset.N, latent_dim=64)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
-        batch_size    = 32,
+        batch_size    = 128,
         lr            = 1e-3,
         patience      = 40,
         seed          = 42,
