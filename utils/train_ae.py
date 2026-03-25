@@ -107,9 +107,12 @@ def train(
     project      : str   = 'convdiff',
     ckpt_dir     : str   = 'checkpoints',
     log_img_every: int   = 10,
+    beta_warmup  : int   = 80,    # époques pour monter beta de 0 → model.beta
 ):
     model_name = type(model).__name__
     run_name   = f'{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
+    model_hparams = {k: v for k, v in vars(model).items()
+                     if isinstance(v, (int, float, bool, str))}
     wandb.init(
         project = project,
         name    = run_name,
@@ -120,7 +123,9 @@ def train(
             lr            = lr,
             patience      = patience,
             seed          = seed,
+            beta_warmup   = beta_warmup,
             model         = model_name,
+            **model_hparams,
         ),
     )
 
@@ -168,8 +173,13 @@ def train(
     best_val  = float('inf')
     patience_ = 0
 
+    beta_target = getattr(model, 'beta', None)
+
     for epoch in tqdm(range(1, epochs + 1)):
         t0 = time.perf_counter()
+
+        if beta_target is not None:
+            model.beta = beta_target * min(1.0, epoch / beta_warmup)
 
         tr = train_epoch(model, train_loader, optimizer, device)
         va = val_epoch(model, val_loader, device)
@@ -182,6 +192,7 @@ def train(
             'epoch'        : epoch,
             'lr'           : lr_now,
             'epoch_time_s' : epoch_time,
+            **({'beta': model.beta} if beta_target is not None else {}),
             **{f'train/{k}': v for k, v in tr.items()},
             **{f'val/{k}':   v for k, v in va.items()},
         }
@@ -240,15 +251,14 @@ def train(
 
 
 if __name__ == '__main__':
-    dataset = ConvDiffDataset('dataset/dataset.npz')
-    model   = VAE(N=dataset.N, latent_dim=64)
+    model = VAE(N=64, latent_dim=64)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
         batch_size    = 128,
         lr            = 1e-3,
-        patience      = 40,
+        patience      = 150,
         seed          = 42,
         project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
