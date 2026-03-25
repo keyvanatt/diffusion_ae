@@ -36,10 +36,19 @@ class Decoder(nn.Module):
             nn.ConvTranspose2d(32,  1,   kernel_size=4, stride=2, padding=1),
         )
 
+        self.dense_out = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(N * N, N * N),
+            nn.ReLU(),
+            nn.Linear(N * N, N * N),
+        )
+
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
         x = self.fc(theta)                             # (B, 256*base**2)
         x = x.view(-1, 256, self.base, self.base)      # (B, 256, base, base)
-        return self.deconv(x)                          # (B, 1, N, N)
+        x = self.deconv(x)                             # (B, 1, N, N)
+        x = self.dense_out(x)                          # (B, N*N)
+        return x.view(-1, 1, self.N, self.N)           # (B, 1, N, N)
 
     def loss(
         self,
