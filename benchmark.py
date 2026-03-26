@@ -19,7 +19,7 @@ from utils.dataset import ConvDiffDataset
 from models.base import BaseDecoder
 from main import load_model, denorm_U
 from tqdm import tqdm
-from utils.sim import simulate, to_grid
+from utils.sim import ConvDiffSimulator, to_grid
 
 
 
@@ -91,6 +91,9 @@ def sim_timing(dataset: ConvDiffDataset, test_indices, n_samples: int, N_mesh: i
     indices = list(test_indices)[:n_samples]
     times   = []
 
+    # Compilation JIT une seule fois avant la boucle de timing
+    sim = ConvDiffSimulator(n=N_mesh)
+
     # Dénormalise theta : theta_raw = theta_norm * std + mean
     for idx in tqdm(indices, desc='Sim baseline'):
         theta_norm = dataset.theta[idx].numpy()
@@ -99,8 +102,7 @@ def sim_timing(dataset: ConvDiffDataset, test_indices, n_samples: int, N_mesh: i
                        float(theta_raw[2]), float(theta_raw[3])
 
         t0    = time.perf_counter_ns()
-        u_sol = simulate(D=D, b_val=np.array([bx, by]), f=f,
-                         x0=np.array([0.5, 0.5]), n=N_mesh)
+        u_sol = sim.solve(D=D, b_val=np.array([bx, by]), f=f, x0=np.array([0.5, 0.5]))
         to_grid(u_sol, N_out=dataset.N)
         times.append((time.perf_counter_ns() - t0) / 1e6)  # ms
 

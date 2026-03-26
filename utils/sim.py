@@ -59,90 +59,111 @@ def add_point_source(b_vec, V, x0_2d, magnitude):
     b_vec.assemble()
 
 
+class ConvDiffSimulator:
+    """
+    Compile les formes FEM une seule fois à la construction, puis résout
+    pour des paramètres (D, b, f, x0) différents sans recompilation JIT.
+
+    Usage
+    -----
+    sim = ConvDiffSimulator(n=64)
+    u_sol = sim.solve(D=0.01, b_val=np.array([1.0, 0.3]), f=10.0, x0=np.array([0.5, 0.5]))
+    """
+
+    def __init__(self, n: int = 64, use_supg: bool = True):
+        self.msh = dolfinx.mesh.create_unit_square(
+            MPI.COMM_WORLD, n, n,
+            cell_type=dolfinx.mesh.CellType.triangle
+        )
+        self.V = dolfinx.fem.functionspace(self.msh, ("Lagrange", 1))
+
+        # Constantes mutables — pas de recompilation quand on change leur valeur
+        self.D_c = dolfinx.fem.Constant(self.msh, PETSc.ScalarType(1e-2))
+        self.b_c = dolfinx.fem.Constant(
+            self.msh, np.array([1.0, 0.0], dtype=float)
+        )
+        zero_c = dolfinx.fem.Constant(self.msh, PETSc.ScalarType(0.0))
+
+        u = TrialFunction(self.V)
+        v = TestFunction(self.V)
+
+        a_std = (self.D_c * dot(grad(u), grad(v)) * dx
+                 + dot(self.b_c, grad(u)) * v * dx)  # type: ignore
+
+        if use_supg:
+            h      = CellDiameter(self.msh)
+            b_norm = sqrt(dot(self.b_c, self.b_c))
+            tau    = conditional(gt(b_norm, 1e-10), h / (2 * b_norm), 0.0)
+            a_supg = tau * dot(self.b_c, grad(v)) * dot(self.b_c, grad(u)) * dx
+        else:
+            a_supg = 0.0
+
+        a = a_std + a_supg
+        L = zero_c * v * dx
+
+        # Dirichlet u=0 sur tout le bord (fixe)
+        self.msh.topology.create_connectivity(
+            self.msh.topology.dim - 1, self.msh.topology.dim
+        )
+        boundary_facets = dolfinx.mesh.exterior_facet_indices(self.msh.topology)
+        boundary_dofs   = dolfinx.fem.locate_dofs_topological(
+            self.V, self.msh.topology.dim - 1, boundary_facets
+        )
+        self.bc = dolfinx.fem.dirichletbc(PETSc.ScalarType(0.0), boundary_dofs, self.V)
+
+        # Compilation JIT — une seule fois
+        self.a_form = dolfinx.fem.form(a)
+        self.L_form = dolfinx.fem.form(L)
+
+        # Pré-allocation
+        self.A     = dolfinx.fem.petsc.create_matrix(self.a_form)
+        self.b_rhs = dolfinx.fem.petsc.create_vector(self.L_form)
+
+        # Solveur KSP réutilisé
+        self.ksp = PETSc.KSP().create(self.msh.comm)
+        self.ksp.setType("gmres")
+        self.ksp.getPC().setType("ilu")
+        self.ksp.setTolerances(rtol=1e-10)
+        self.ksp.setFromOptions()
+
+    def solve(self, D: float, b_val: np.ndarray, f: float,
+              x0: np.ndarray) -> dolfinx.fem.Function:
+        # Mise à jour des constantes
+        self.D_c.value    = D
+        self.b_c.value[:] = b_val
+
+        # Réassemblage de A
+        self.A.zeroEntries()
+        dolfinx.fem.petsc.assemble_matrix(self.A, self.a_form, bcs=[self.bc])
+        self.A.assemble()
+
+        # Réassemblage du RHS
+        with self.b_rhs.localForm() as loc:
+            loc.set(0)
+        dolfinx.fem.petsc.assemble_vector(self.b_rhs, self.L_form)
+        dolfinx.fem.petsc.apply_lifting(self.b_rhs, [self.a_form], bcs=[[self.bc]])
+        self.b_rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        add_point_source(self.b_rhs, self.V, x0, f)
+        dolfinx.fem.petsc.set_bc(self.b_rhs, [self.bc])
+
+        u_sol = dolfinx.fem.Function(self.V)
+        self.ksp.setOperators(self.A)
+        self.ksp.solve(self.b_rhs, u_sol.x.petsc_vec)
+        u_sol.x.scatter_forward()
+        return u_sol
+
+
 def simulate(
-    D=1e-2, 
-    b_val=np.array([1.0, 0.3]), 
-    f=10.0, 
-    x0=np.array([0.3, 0.5]), 
-    n=64, 
+    D=1e-2,
+    b_val=np.array([1.0, 0.3]),
+    f=10.0,
+    x0=np.array([0.3, 0.5]),
+    n=64,
     use_supg=True,
 ):
-    # Création du maillage
-    msh = dolfinx.mesh.create_unit_square(
-        MPI.COMM_WORLD, n, n,
-        cell_type=dolfinx.mesh.CellType.triangle
-    )
-
-    
-    # Espaces de fonctions
-    V = dolfinx.fem.functionspace(msh, ("Lagrange", 1))
-    
-    # Fonctions test et essai
-    u = TrialFunction(V)
-    v = TestFunction(V)
-    
-    # Coefficients de l'équation
-    b = ufl.as_vector(b_val)
-    
-    # Forme bilinéaire standard
-    a_std = D * dot(grad(u), grad(v)) * dx + dot(b, grad(u)) * v * dx # type: ignore
-    
-    # Calcul du paramètre de stabilisation SUPG
-    if use_supg:
-        h = CellDiameter(msh)
-        b_norm = sqrt(dot(b, b))
-        tau = conditional(gt(b_norm, 1e-10), h / (2 * b_norm), 0.0)
-        a_supg = tau * dot(b, grad(v)) * dot(b, grad(u)) * dx
-    else:
-        a_supg = 0.0
-    a = a_std + a_supg
-
-    # L(v) = 0 pour l'instant — la source ponctuelle sera injectée dans le RHS
-    zero = dolfinx.fem.Constant(msh, PETSc.ScalarType(0.0))
-    L = zero * v * dx
-
-    # Dirichlet u=0 sur tout le bord
-    msh.topology.create_connectivity(msh.topology.dim - 1, msh.topology.dim)
-    boundary_facets = dolfinx.mesh.exterior_facet_indices(msh.topology)
-    boundary_dofs   = dolfinx.fem.locate_dofs_topological(
-        V, msh.topology.dim - 1, boundary_facets
-    )
-    bc = dolfinx.fem.dirichletbc(PETSc.ScalarType(0.0), boundary_dofs, V)
-
-
-    a_form = dolfinx.fem.form(a)
-    L_form = dolfinx.fem.form(L)
-
-    # Matrice de rigidité
-    A = dolfinx.fem.petsc.assemble_matrix(a_form, bcs=[bc])
-    A.assemble()
-
-    # Vecteur RHS
-    b_rhs = dolfinx.fem.petsc.assemble_vector(L_form)
-
-    # Appliquer les corrections Dirichlet sur le RHS
-    dolfinx.fem.petsc.apply_lifting(b_rhs, [a_form], bcs=[[bc]])
-    b_rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-
-
-    # Injecter la source ponctuelle dans le RHS
-    add_point_source(b_rhs, V, x0, f)
-    # Imposer les valeurs Dirichlet dans le RHS
-    dolfinx.fem.petsc.set_bc(b_rhs, [bc])
-
-    u_sol = dolfinx.fem.Function(V)
-
-    ksp = PETSc.KSP().create(msh.comm)
-    ksp.setOperators(A)
-    ksp.setType("gmres")        # GMRES : adapté aux matrices non-symétriques
-    ksp.getPC().setType("ilu")  # préconditionneur ILU
-    ksp.setTolerances(rtol=1e-10)
-    ksp.setFromOptions()
-
-    ksp.solve(b_rhs, u_sol.x.petsc_vec)
-    u_sol.x.scatter_forward()
-
-    return u_sol
+    """Wrapper one-shot — pour les appels ponctuels (benchmark, tests).
+    Pour générer un dataset, préférer ConvDiffSimulator."""
+    return ConvDiffSimulator(n=n, use_supg=use_supg).solve(D, b_val, f, x0)
 
 def to_grid(u_sol, N_out=64):
     """

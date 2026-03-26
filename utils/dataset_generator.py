@@ -14,7 +14,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 
-from sim import simulate, to_grid
+from sim import ConvDiffSimulator, to_grid
 
 
 
@@ -76,6 +76,9 @@ def generate_dataset(
     n_ok   = 0   # simulations réussies
     n_fail = 0   # simulations échouées
 
+    # Compilation JIT une seule fois
+    sim = ConvDiffSimulator(n=N_mesh, use_supg=use_supg)
+
     pbar = tqdm(total=n_samples, desc='Génération dataset')
 
     while n_ok < n_samples:
@@ -83,14 +86,12 @@ def generate_dataset(
         p = sample_params(rng)
 
         try:
-            # Résoudre l'EDP
-            u_sol = simulate(
-                D      = p['D'],
-                b_val  = np.array([p['bx'], p['by']]),
-                f      = p['f'],
-                x0     = X0_FIXED,
-                n      = N_mesh,
-                use_supg = use_supg,
+            # Résoudre l'EDP (réutilise le maillage et les formes compilées)
+            u_sol = sim.solve(
+                D     = p['D'],
+                b_val = np.array([p['bx'], p['by']]),
+                f     = p['f'],
+                x0    = X0_FIXED,
             )
 
             # Interpoler sur grille N×N
