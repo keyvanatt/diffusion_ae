@@ -115,7 +115,7 @@ theta_vals = [D, bx, by, f]
 st.sidebar.markdown('---')
 cmap_name = st.sidebar.selectbox('Colormap',
     ['Viridis', 'Plasma', 'Inferno', 'RdBu', 'Turbo'], index=0)
-gt_btn = st.sidebar.button('Comparer a la ground truth', use_container_width=True)
+gt_btn = st.sidebar.button('Comparer a la ground truth', width='stretch')
 
 # Inference live — re-run automatique a chaque slider
 model, ckpt, device = get_model(selected_ckpt)
@@ -158,4 +158,4 @@ if True:
     else:
         grids = {'Prediction DirectDecoder': U_pred}
 
-    st.plotly_chart(make_heatmap_fig(grids, cmap_name), use_container_width=True)
+    st.plotly_chart(make_heatmap_fig(grids, cmap_name), width='stretch')
