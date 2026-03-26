@@ -17,6 +17,7 @@ import wandb
 
 from models.base import BaseAutoEncoder
 from models.variationalAutoEncoder import VAE
+from models.AE_SVD import AutoencoderSVD
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -253,7 +254,9 @@ def train(
 
 
 if __name__ == '__main__':
-    model = VAE(N=64, latent_dim=32)
+    model = AutoencoderSVD(N=64, 
+                           latent_dim=32, 
+                           kmax=3)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
