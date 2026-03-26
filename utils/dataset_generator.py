@@ -191,7 +191,7 @@ def check_dataset(path='dataset.npz'):
 
 if __name__ == '__main__':
     import argparse
-    DEFAULT_PATH = 'dataset/dataset.npz'
+    DEFAULT_PATH = 'dataset/dataset_huge.npz'
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', nargs='?', const=DEFAULT_PATH, default=None,
@@ -203,7 +203,7 @@ if __name__ == '__main__':
         check_dataset(args.check)
     else:
         generate_dataset(
-            n_samples   = 10_000,
+            n_samples   = 50_000,
             N_grid      = 64,
             N_mesh      = 64,
             output_path = DEFAULT_PATH,
