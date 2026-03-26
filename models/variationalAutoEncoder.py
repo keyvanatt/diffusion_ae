@@ -16,28 +16,28 @@ class Encoder(nn.Module):
         self.N = N
 
         self.conv = nn.Sequential(
-            nn.Conv2d(1, 32,  kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(1,  16, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(32,            64,  kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(64,            128, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(128,           256, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
         )
 
-        conv_out = 256 * (N // 16) ** 2
+        conv_out = 128 * (N // 16) ** 2
 
         self.fc_mu     = nn.Sequential(
-            nn.Linear(conv_out, 128),
+            nn.Linear(conv_out, 64),
             nn.ReLU(),
-            nn.Linear(128, latent_dim),
+            nn.Linear(64, latent_dim),
         )
 
         self.fc_logvar = nn.Sequential(
-            nn.Linear(conv_out, 128),
+            nn.Linear(conv_out, 64),
             nn.ReLU(),
-            nn.Linear(128, latent_dim),
+            nn.Linear(64, latent_dim),
         )
 
     def forward(self, U: torch.Tensor):
@@ -61,34 +61,34 @@ class Decoder(nn.Module):
         self.lambda_grad = lambda_grad
 
         self.fc = nn.Sequential(
-            nn.Linear(theta_dim, 256 * self.base ** 2),
+            nn.Linear(theta_dim, 128 * self.base ** 2),
             nn.ReLU(),
         )
 
         self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64,  kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.ConvTranspose2d(64,  32,  kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(64,  32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.ConvTranspose2d(32,  1,   kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(32,  16, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.ConvTranspose2d(16,  1,  kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
         )
         self.out_fc = nn.Sequential(
             nn.Flatten(),
-            nn.Linear((self.N//2)**2, self.N**2),
+            nn.Linear((self.N//2)**2, 256),
             nn.ReLU(),
-            nn.Linear(self.N**2, self.N**2),
+            nn.Linear(256, self.N**2),
         )
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
-        x = self.fc(theta)                             # (B, 256*base**2)
-        x = x.view(-1, 256, self.base, self.base)      # (B, 256, base, base)
-        x = self.deconv(x)                             # (B, 1, N, N)
+        x = self.fc(theta)                             # (B, 128*base**2)
+        x = x.view(-1, 128, self.base, self.base)      # (B, 128, base, base)
+        x = self.deconv(x)                             # (B, 1, N//2, N//2)
         x = self.out_fc(x)
         return x.view(-1, 1, self.N, self.N)           # (B, 1, N, N)
 
@@ -108,7 +108,7 @@ class VAE(BaseAutoEncoder):
     def __init__(
         self,
         N          : int   = 64,
-        latent_dim : int   = 64,
+        latent_dim : int   = 32,
         beta       : float = 1.0,
         free_bits  : float = 0.1,   # seuil KL min par dimension latente
     ):
@@ -251,8 +251,10 @@ class IndirectDecoder(BaseDecoder):
         return total, recon_loss, grad_loss
 
 if __name__ == "__main__":
-    model = VAE()
+    model = VAE(N=64, latent_dim=32)
     rand_U = torch.randn(2, 1, 64, 64)
     U_hat, mu, logvar = model(rand_U)
     print(model)
     print("U_hat shape:", U_hat.shape)
+    n = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Paramètres : {n:,}")

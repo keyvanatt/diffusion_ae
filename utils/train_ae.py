@@ -253,7 +253,7 @@ def train(
 
 
 if __name__ == '__main__':
-    model = VAE(N=64, latent_dim=64)
+    model = VAE(N=64, latent_dim=32)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
