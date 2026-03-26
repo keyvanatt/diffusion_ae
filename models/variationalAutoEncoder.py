@@ -223,6 +223,10 @@ class IndirectDecoder(BaseDecoder):
         self.decoder = trained_AE.decoder
         self.decoder.requires_grad_(False) # à refléchir : geler le decoder ou pas ?
 
+    def toogle_grad_decoder(self):
+        requires_grad = not next(self.decoder.parameters()).requires_grad
+        self.decoder.requires_grad_(requires_grad)
+        print(f"Decoder requires_grad set to {requires_grad}")
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
         z = self.theta_proj(theta)

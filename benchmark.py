@@ -18,11 +18,9 @@ from torch.utils.data import DataLoader, random_split
 from utils.dataset import ConvDiffDataset
 from models.base import BaseDecoder
 from main import load_model, denorm_U
+from tqdm import tqdm
 
 
-# ---------------------------------------------------------------------------
-# Métriques par sample
-# ---------------------------------------------------------------------------
 
 def _grad_loss_per_sample(U: torch.Tensor, U_hat: torch.Tensor) -> torch.Tensor:
     """MSE sur les gradients spatiaux, retourne (B,)."""
@@ -76,9 +74,6 @@ def evaluate(model: BaseDecoder, ckpt: dict, loader,
     }
 
 
-# ---------------------------------------------------------------------------
-# Boucle principale
-# ---------------------------------------------------------------------------
 
 def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int) -> dict:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -97,7 +92,7 @@ def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int) -
 
     results = {}
 
-    for ckpt_path in ckpt_paths:
+    for ckpt_path in tqdm(ckpt_paths):
         label = Path(ckpt_path).stem
         print(f'── {label}')
 
@@ -124,9 +119,6 @@ def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int) -
     return results
 
 
-# ---------------------------------------------------------------------------
-# Visualisation
-# ---------------------------------------------------------------------------
 
 def plot_results(results: dict, out_path: str = 'plots/benchmark.png'):
     labels      = list(results.keys())
@@ -172,6 +164,8 @@ if __name__ == '__main__':
     results = benchmark(
         ckpt_paths   = [
             'checkpoints/DirectDecoderDenseOut_best.pt',
+            'checkpoints/IndirectDecoder_best.pt',
+            'checkpoints/finetune_IndirectDecoder_best.pt',
         ],
         dataset_path = 'dataset/dataset.npz',
         batch_size   = 64,

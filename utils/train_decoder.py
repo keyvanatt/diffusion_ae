@@ -17,6 +17,7 @@ import wandb
 
 from models.base import BaseDecoder
 from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
+from models.variationalAutoEncoder import VAE, IndirectDecoder
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -106,10 +107,11 @@ def train(
     seed        : int   = 42,
     project     : str   = 'convdiff',
     ckpt_dir    : str   = 'checkpoints',
+    prefix      : str   = "",
     log_img_every: int  = 10,
 ):
     model_name = type(model).__name__
-    run_name= f'{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
+    run_name= f'{prefix}_{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
     wandb.init(
         project = project,
         name    = run_name,
@@ -163,7 +165,7 @@ def train(
 
     ckpt_dir_ = Path(ckpt_dir)
     ckpt_dir_.mkdir(parents=True, exist_ok=True)
-    best_path = ckpt_dir_ / f'{model_name}_best.pt'
+    best_path = ckpt_dir_ / f'{prefix}_{model_name}_best.pt'
 
     best_val  = float('inf')
     patience_ = 0
@@ -250,16 +252,20 @@ def train(
 
 if __name__ == '__main__':
     dataset = ConvDiffDataset('dataset/dataset.npz')
-    model   = DirectDecoderDenseOut(N=dataset.N, theta_dim=4, lambda_grad=5.0)
+    trained_AE = VAE(N=dataset.N, latent_dim=32)
+    trained_AE.load_state_dict(torch.load('checkpoints/VAE_best.pt')['model_state'])
+    model   = IndirectDecoder(trained_AE, N=dataset.N, theta_dim=4, latent_dim=32)
+    model.toogle_grad_decoder() #finetune
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
         batch_size    = 128,
-        lr            = 1e-3,
-        patience      = 40,
+        lr            = 1e-4,
+        patience      = 100,
         seed          = 42,
         project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
+        prefix = "finetune",
         log_img_every = 50,
     )
