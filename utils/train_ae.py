@@ -107,11 +107,12 @@ def train(
     seed         : int   = 42,
     project      : str   = 'convdiff',
     ckpt_dir     : str   = 'checkpoints',
+    prefix       : str   = "",
     log_img_every: int   = 10,
     beta_warmup  : int   = 80,    # époques pour monter beta de 0 → model.beta
 ):
     model_name = type(model).__name__
-    run_name   = f'{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
+    run_name   = f'{prefix}_{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
     model_hparams = {k: v for k, v in vars(model).items()
                      if isinstance(v, (int, float, bool, str))}
     wandb.init(
@@ -169,7 +170,7 @@ def train(
 
     ckpt_dir_ = Path(ckpt_dir)
     ckpt_dir_.mkdir(parents=True, exist_ok=True)
-    best_path = ckpt_dir_ / f'{model_name}_best.pt'
+    best_path = ckpt_dir_ / f'{prefix}_{model_name}_best.pt'
 
     best_val  = float('inf')
     patience_ = 0
@@ -267,5 +268,6 @@ if __name__ == '__main__':
         seed          = 42,
         project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
+        prefix = "",
         log_img_every = 50,
     )
