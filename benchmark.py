@@ -241,7 +241,7 @@ if __name__ == '__main__':
             'checkpoints/DirectDecoderDenseOut_best.pt',
             'checkpoints/IndirectDecoder_best.pt',
             'checkpoints/finetune_IndirectDecoder_best.pt',
-            "checkpoints/finetune2_IndirectDecoderSVD_best.pt",
+            "checkpoints/finetune_IndirectDecoderSVD_best.pt",
             "checkpoints/finetune_smallLD_IndirectDecoder_best.pt"
         ],
         dataset_path   = 'dataset/dataset.npz',

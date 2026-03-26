@@ -146,16 +146,17 @@ if True:
         U_gt = U_all[idx]
         err  = np.abs(U_pred - U_gt)
         rmse = float(np.sqrt(np.mean(err ** 2)))
+        model_label = Path(selected_ckpt).stem
         grids = {
-            f'Ground truth (idx {idx})': U_gt,
-            'Prediction DirectDecoder':  U_pred,
-            f'|Erreur| RMSE={rmse:.4f}': err,
+            f'Ground truth (idx {idx})':       U_gt,
+            f'Prediction ({model_label})':     U_pred,
+            f'|Erreur| RMSE={rmse:.4f}':       err,
         }
         st.caption(
             f'Voisin le plus proche : idx **{idx}** — '
             f'theta = {[f"{v:.3f}" for v in theta_all[idx].tolist()]}'
         )
     else:
-        grids = {'Prediction DirectDecoder': U_pred}
+        grids = {f'Prediction ({Path(selected_ckpt).stem})': U_pred}
 
     st.plotly_chart(make_heatmap_fig(grids, cmap_name), width='stretch')
