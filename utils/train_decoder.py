@@ -18,6 +18,7 @@ import wandb
 from models.base import BaseDecoder
 from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
 from models.variationalAutoEncoder import VAE, IndirectDecoder
+from models.AE_SVD import AutoencoderSVD, IndirectDecoderSVD, compute_fixed_svd_basis
 from utils.dataset import ConvDiffDataset
 
 from tqdm import tqdm
@@ -158,7 +159,17 @@ def train(
     wandb.config.update({'n_params': n_params, 'device': str(device)})
     wandb.watch(model, log='gradients', log_freq=50)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    if model.__class__.__name__ == "IndirectDecoderSVD":
+        U_train = dataset.U[train_set.indices]                  # (N_train, 1, N, N)
+        U_train = dataset.denorm_U(U_train.cpu()).numpy()       # type: ignore
+        model.compute_and_set_fixed_basis(U_train)              # type: ignore
+        optimizer = torch.optim.AdamW([
+            {'params': model.theta_proj.parameters(), 'lr': lr},
+            {'params': model.decoder.parameters(),    'lr': lr * 0.01},
+        ], weight_decay=1e-5)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=7
     )
@@ -252,16 +263,21 @@ def train(
 
 if __name__ == '__main__':
     dataset = ConvDiffDataset('dataset/dataset.npz')
-    trained_AE = VAE(N=dataset.N, latent_dim=32)
-    trained_AE.load_state_dict(torch.load('checkpoints/VAE_best.pt')['model_state'])
-    model   = IndirectDecoder(trained_AE, N=dataset.N, theta_dim=4, latent_dim=32)
-    model.toogle_grad_decoder() #finetune
+    trained_AE = AutoencoderSVD(N=64, latent_dim=32, kmax=3)
+    trained_AE.load_state_dict(torch.load('checkpoints/AutoencoderSVD_best.pt')['model_state'])
+    model = IndirectDecoderSVD(
+        N=64,
+        kmax=3,
+        theta_dim=4,
+        latent_dim=32,
+        trained_autoencoder=trained_AE,
+    )
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
         batch_size    = 128,
-        lr            = 1e-4,
+        lr            = 1e-3,
         patience      = 100,
         seed          = 42,
         project       = 'convdiff',

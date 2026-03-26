@@ -41,6 +41,21 @@ def load_model(ckpt_path: str, device: torch.device):
         dummy_vae  = VAE(N=N, latent_dim=latent_dim)
         model      = IndirectDecoder(dummy_vae, N=N, theta_dim=theta_dim,
                                      latent_dim=latent_dim).to(device)
+    elif model_type == 'IndirectDecoderSVD':
+        from models.AE_SVD import AutoencoderSVD, IndirectDecoderSVD
+        theta_dim  = state['theta_proj.0.weight'].shape[1]
+        latent_dim = state['theta_proj.2.weight'].shape[0]
+        N          = int(state['decoder.out_fc.3.weight'].shape[0] ** 0.5)
+        kmax       = state['svd_proj.fixed_basis_buffer'].shape[1]
+        dummy_ae   = AutoencoderSVD(N=N, latent_dim=latent_dim, kmax=kmax)
+        model      = IndirectDecoderSVD(N=N, kmax=kmax, theta_dim=theta_dim,
+                                        latent_dim=latent_dim,
+                                        trained_autoencoder=dummy_ae).to(device)
+        # Le buffer None n'apparaît pas dans les clés attendues — on l'initialise
+        # pour que load_state_dict puisse le reconnaître et le remplacer.
+        model.svd_proj.set_fixed_basis(
+            torch.zeros(latent_dim, kmax, device=device)
+        )
     else:
         raise ValueError(f"Checkpoint de type '{model_type}' non supporté.")
 

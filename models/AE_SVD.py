@@ -182,11 +182,11 @@ def compute_fixed_svd_basis(model, x_train, kmax):
         return U_k.to(device)
 
 class IndirectDecoderSVD(BaseDecoder):
-    def __init__(self, N, kmax,theta_dim,latent_dim, learned_basis, trained_decoder):
+    def __init__(self, N, kmax,theta_dim,latent_dim, trained_autoencoder):
         super(IndirectDecoderSVD, self).__init__()
         self.svd_proj = SVDProjection(kmax)
-        self.svd_proj.set_fixed_basis(learned_basis)
-        self.decoder = trained_decoder
+        self.trained_autoencoder = trained_autoencoder
+        self.decoder = trained_autoencoder.decoder
         self.svd_proj.requires_grad_(False)
 
         self.N = N
@@ -195,17 +195,14 @@ class IndirectDecoderSVD(BaseDecoder):
             nn.ReLU(),
             nn.Linear(128, latent_dim),
         )
+    def compute_and_set_fixed_basis(self,U_train):
+        U_k = compute_fixed_svd_basis(self.trained_autoencoder, U_train, self.svd_proj.kmax)
+        self.svd_proj.set_fixed_basis(U_k)
 
-    def set_finetune_lr(self,optimiser):
-        """Reduces the learning rate for the decoder parameters to 1% of the original."""
-        for param_group in optimiser.param_groups:
-            if any(name in str(self.decoder.named_parameters()) for name, _ in self.decoder.named_parameters()):
-                param_group['lr'] *= 0.01
-
-    def forward(self, z):
-        z_k = self.svd_proj(z)  # Proyección con SVD
-        x_recon = self.decoder(z_k)
-        return x_recon
+    def forward(self, theta):
+        z   = self.theta_proj(theta)  # theta (theta_dim,) → latent (latent_dim,)
+        z_k = self.svd_proj(z)        # projection sur la base SVD fixe
+        return self.decoder(z_k)
 
     def loss(
         self,
