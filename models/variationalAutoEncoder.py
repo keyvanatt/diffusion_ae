@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.base import BaseAutoEncoder, BaseDecoder
 
-class Encoder(nn.Module):
+class VariationalEncoder(nn.Module):
     """
     U → (mu, log var)
 
@@ -54,14 +54,14 @@ class Decoder(nn.Module):
     z : (B, latent_dim)
     """
 
-    def __init__(self, N: int = 64, theta_dim: int = 4, lambda_grad: float = 1.0):
+    def __init__(self, N: int = 64, latent_dim: int = 64, lambda_grad: float = 1.0):
         super().__init__()
         self.N           = N
         self.base        = N // 32
         self.lambda_grad = lambda_grad
 
         self.fc = nn.Sequential(
-            nn.Linear(theta_dim, 128 * self.base ** 2),
+            nn.Linear(latent_dim, 128 * self.base ** 2),
             nn.ReLU(),
         )
 
@@ -85,8 +85,8 @@ class Decoder(nn.Module):
             nn.Linear(256, self.N**2),
         )
 
-    def forward(self, theta: torch.Tensor) -> torch.Tensor:
-        x = self.fc(theta)                             # (B, 128*base**2)
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        x = self.fc(z)                                 # (B, 128*base**2)
         x = x.view(-1, 128, self.base, self.base)      # (B, 128, base, base)
         x = self.deconv(x)                             # (B, 1, N//2, N//2)
         x = self.out_fc(x)
@@ -118,7 +118,7 @@ class VAE(BaseAutoEncoder):
         self.free_bits = free_bits
         self.latent_dim = latent_dim
 
-        self.encoder = Encoder(N, latent_dim)
+        self.encoder = VariationalEncoder(N, latent_dim)
         self.decoder = Decoder(N, latent_dim)
 
 
