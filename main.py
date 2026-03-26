@@ -25,15 +25,22 @@ def load_model(ckpt_path: str, device: torch.device):
 
     model_type = ckpt.get('model_type', 'decoder')
 
-    fc_out = state['fc.0.weight'].shape[0]   # 256 * base**2
-    base   = int((fc_out / 256) ** 0.5)
-
     if model_type in ('decoder', 'DirectDecoder'):
-        N     = base * 16
-        model = DirectDecoder(N=N, theta_dim=4).to(device)
+        fc_out = state['fc.0.weight'].shape[0]
+        base   = int((fc_out / 256) ** 0.5)
+        model  = DirectDecoder(N=base * 16, theta_dim=4).to(device)
     elif model_type == 'DirectDecoderDenseOut':
-        N     = base * 32
-        model = DirectDecoderDenseOut(N=N, theta_dim=4).to(device)
+        fc_out = state['fc.0.weight'].shape[0]
+        base   = int((fc_out / 256) ** 0.5)
+        model  = DirectDecoderDenseOut(N=base * 32, theta_dim=4).to(device)
+    elif model_type == 'IndirectDecoder':
+        from models.variationalAutoEncoder import VAE, IndirectDecoder
+        latent_dim = state['theta_proj.2.weight'].shape[0]
+        theta_dim  = state['theta_proj.0.weight'].shape[1]
+        N          = int(state['decoder.out_fc.3.weight'].shape[0] ** 0.5)
+        dummy_vae  = VAE(N=N, latent_dim=latent_dim)
+        model      = IndirectDecoder(dummy_vae, N=N, theta_dim=theta_dim,
+                                     latent_dim=latent_dim).to(device)
     else:
         raise ValueError(f"Checkpoint de type '{model_type}' non supporté.")
 
@@ -44,8 +51,18 @@ def load_model(ckpt_path: str, device: torch.device):
 
 
 def denorm_U(U_norm: torch.Tensor, ckpt: dict) -> torch.Tensor:
-    """Inverse la standardisation Z-score avec les stats du checkpoint."""
-    return U_norm * float(ckpt['U_std']) + ckpt['U_mean']
+    """Inverse la normalisation avec les stats du checkpoint.
+    Supporte les deux formats :
+      - nouveau : U_mean (grille), U_std (scalaire) — Z-score
+      - ancien  : U_mean (grille), U_min, U_max     — min-max centré
+    """
+    U_mean = ckpt['U_mean'].cpu() if torch.is_tensor(ckpt['U_mean']) else ckpt['U_mean']
+    if 'U_std' in ckpt:
+        return U_norm * float(ckpt['U_std']) + U_mean
+    else:
+        U_min = float(ckpt['U_min'])
+        U_max = float(ckpt['U_max'])
+        return (U_norm + 1.0) / 2.0 * (U_max - U_min) + U_min + U_mean
 
 
 @torch.no_grad()

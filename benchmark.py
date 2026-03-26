@@ -19,6 +19,7 @@ from utils.dataset import ConvDiffDataset
 from models.base import BaseDecoder
 from main import load_model, denorm_U
 from tqdm import tqdm
+from utils.sim import simulate, to_grid
 
 
 
@@ -36,46 +37,85 @@ def _grad_loss_per_sample(U: torch.Tensor, U_hat: torch.Tensor) -> torch.Tensor:
 
 @torch.no_grad()
 def evaluate(model: BaseDecoder, ckpt: dict, loader,
-             device: torch.device) -> dict:
-    """Évalue le modèle sur loader. Retourne des arrays numpy par sample."""
-    # Warmup
-    theta_dummy, _ = next(iter(loader))
-    model(theta_dummy[:1].to(device))
+             device: torch.device, n_timing_batches: int = 10) -> dict:
+    """Évalue le modèle sur loader. Retourne des arrays numpy par sample + temps moyen sur n_timing_batches."""
+    # Erreurs sur tous les batches
+    mse_all, mae_all, grad_all = [], [], []
+    timing_batches = []   # batches réservés pour le timing
 
-    mse_all, mae_all, grad_all, time_all = [], [], [], []
-
-    for theta, U_norm in loader:
-        theta  = theta.to(device)
-        B      = theta.shape[0]
-
-        if device.type == 'cuda':
-            torch.cuda.synchronize()
-        t0 = time.perf_counter()
-
-        U_hat_norm = model(theta)
-
-        if device.type == 'cuda':
-            torch.cuda.synchronize()
-        ms_per_sample = (time.perf_counter() - t0) / B * 1000
-
-        U_phys     = denorm_U(U_norm,            ckpt)
-        U_hat_phys = denorm_U(U_hat_norm.cpu(),  ckpt)
-
+    def _record(U_norm, U_hat_norm):
+        U_phys     = denorm_U(U_norm,           ckpt)
+        U_hat_phys = denorm_U(U_hat_norm.cpu(), ckpt)
         mse_all.append( (U_phys - U_hat_phys).pow(2).mean(dim=(1, 2, 3)).numpy())
         mae_all.append( (U_phys - U_hat_phys).abs().mean(dim=(1, 2, 3)).numpy())
         grad_all.append(_grad_loss_per_sample(U_phys, U_hat_phys).numpy())
-        time_all.extend([ms_per_sample] * B)
+
+    for i, (theta, U_norm) in enumerate(loader):
+        theta_dev  = theta.to(device)
+        U_hat_norm = model(theta_dev)
+        _record(U_norm, U_hat_norm)
+        if i < n_timing_batches:
+            timing_batches.append(theta_dev)
+
+    # Warmup
+    model(timing_batches[0][:1])
+
+    # Timing sur n_timing_batches batches
+    times_us = []
+    B = timing_batches[0].shape[0]
+    for t_batch in timing_batches:
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+        t0 = time.perf_counter_ns()
+        model(t_batch)
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+        times_us.append((time.perf_counter_ns() - t0) / 1e3 / B)
+
+    batch_time_us = float(np.mean(times_us))
 
     return {
         'MSE'              : np.concatenate(mse_all),
         'MAE'              : np.concatenate(mae_all),
         'Grad loss'        : np.concatenate(grad_all),
-        'Temps (ms/sample)': np.array(time_all),
+        'Temps (µs/sample)': batch_time_us,
     }
 
 
 
-def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int) -> dict:
+def sim_timing(dataset: ConvDiffDataset, test_indices, n_samples: int, N_mesh: int = 64) -> dict:
+    """
+    Mesure le temps d'exécution du simulateur FEniCS sur n_samples du test set.
+    Les métriques d'erreur sont NaN (sim = ground truth).
+    """
+    indices = list(test_indices)[:n_samples]
+    times   = []
+
+    # Dénormalise theta : theta_raw = theta_norm * std + mean
+    for idx in tqdm(indices, desc='Sim baseline'):
+        theta_norm = dataset.theta[idx].numpy()
+        theta_raw  = theta_norm * dataset.theta_std.numpy() + dataset.theta_mean.numpy()
+        D, bx, by, f = float(theta_raw[0]), float(theta_raw[1]), \
+                       float(theta_raw[2]), float(theta_raw[3])
+
+        t0    = time.perf_counter_ns()
+        u_sol = simulate(D=D, b_val=np.array([bx, by]), f=f,
+                         x0=np.array([0.5, 0.5]), n=N_mesh)
+        to_grid(u_sol, N_out=dataset.N)
+        times.append((time.perf_counter_ns() - t0) / 1e6)  # ms
+
+    nan = np.full(len(times), np.nan)
+    print(f'   Temps (ms/sample)     : {np.mean(times):.1f} ± {np.std(times):.1f}')
+    return {
+        'MSE'              : nan,
+        'MAE'              : nan,
+        'Grad loss'        : nan,
+        'Temps (ms/sample)': np.array(times),
+    }
+
+
+def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int | None,
+              n_sim_samples: int = 0, N_mesh: int = 64) -> dict:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device : {device}\n')
 
@@ -85,23 +125,29 @@ def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int) -
     n_val   = int(0.1 * n)
     n_test  = n - n_train - n_val
 
+    generator = torch.Generator().manual_seed(seed) if seed is not None else None
     _, _, test_set = random_split(
         dataset, [n_train, n_val, n_test],
-        generator=torch.Generator().manual_seed(seed)
+        generator=generator
     )
 
     results = {}
 
-    for ckpt_path in tqdm(ckpt_paths):
+    for ckpt_path in ckpt_paths:
         label = Path(ckpt_path).stem
         print(f'── {label}')
 
         model, ckpt = load_model(ckpt_path, device)
 
-        # Normalise le dataset avec les stats de ce checkpoint
-        dataset.U_mean = ckpt['U_mean']
-        dataset.U_std  = ckpt['U_std']
-        dataset.U      = (dataset.U_raw - dataset.U_mean) / dataset.U_std
+        # Normalise le dataset avec les stats de ce checkpoint (deux formats supportés)
+        dataset.U_mean = ckpt['U_mean'].cpu()
+        if 'U_std' in ckpt:
+            dataset.U_std = ckpt['U_std']
+            dataset.U     = (dataset.U_raw - dataset.U_mean) / float(dataset.U_std)
+        else:
+            U_min = float(ckpt['U_min'])
+            U_max = float(ckpt['U_max'])
+            dataset.U = 2.0 * (dataset.U_raw - dataset.U_mean - U_min) / (U_max - U_min) - 1.0
 
         loader = DataLoader(test_set, batch_size=batch_size,
                             shuffle=False, num_workers=2)
@@ -112,46 +158,73 @@ def benchmark(ckpt_paths: list, dataset_path: str, batch_size: int, seed: int) -
         metrics = evaluate(model, ckpt, loader, device)
         results[label] = metrics
 
-        for key, vals in metrics.items():
-            print(f'   {key:<22s}: {vals.mean():.4f} ± {vals.std():.4f}')
+        for key, val in metrics.items():
+            if np.isscalar(val):
+                print(f'   {key:<22s}: {val:.1f} µs')
+            else:
+                print(f'   {key:<22s}: {val.mean():.4f} ± {val.std():.4f}')
+        print()
+
+    if n_sim_samples > 0:
+        print('── Sim (FEniCS)')
+        results['Sim (FEniCS)'] = sim_timing(dataset, test_set.indices,
+                                             n_sim_samples, N_mesh)
         print()
 
     return results
 
 
 
-def plot_results(results: dict, out_path: str = 'plots/benchmark.png'):
-    labels      = list(results.keys())
-    metric_keys = list(next(iter(results.values())).keys())
-    colors      = [plt.cm.get_cmap('tab10')(i) for i in range(len(labels))]
+def plot_results(results: dict, batch_size: int, n_timing_batches: int = 10,
+                 out_path: str = 'plots/benchmark.png'):
+    sim_time_ms = None
+    if 'Sim (FEniCS)' in results:
+        sim_time_ms = np.nanmean(results['Sim (FEniCS)']['Temps (ms/sample)'])
 
-    fig, axes = plt.subplots(1, len(metric_keys), figsize=(4 * len(metric_keys), 5))
-    if len(metric_keys) == 1:
-        axes = [axes]
+    labels      = [lbl for lbl in results if lbl != 'Sim (FEniCS)']
+    error_keys  = ['MSE', 'MAE', 'Grad loss']
+    colors      = [plt.colormaps['tab10'](i) for i in range(len(labels))]
 
-    for ax, key in zip(axes, metric_keys):
+    fig, axes = plt.subplots(1, len(error_keys) + 1,
+                             figsize=(4 * (len(error_keys) + 1), 5))
+
+    # Violins pour les métriques d'erreur
+    for ax, key in zip(axes[:len(error_keys)], error_keys):
         data  = [results[lbl][key] for lbl in labels]
         parts = ax.violinplot(data, positions=range(len(labels)),
                               showmedians=True, showextrema=True)
-
         for i, pc in enumerate(parts['bodies']):
             pc.set_facecolor(colors[i])
             pc.set_alpha(0.75)
         parts['cmedians'].set_color('black')
         parts['cmedians'].set_linewidth(1.5)
-
         for i, d in enumerate(data):
             ax.text(i, np.median(d), f'{np.median(d):.3g}',
                     ha='center', va='bottom', fontsize=7)
-
         ax.set_xticks(range(len(labels)))
         ax.set_xticklabels(labels, rotation=20, ha='right', fontsize=9)
         ax.set_title(key, fontsize=10)
+        ax.set_yscale('log')
         ax.grid(axis='y', alpha=0.3, linestyle='--')
-        if key != 'Temps (ms/sample)':
-            ax.set_yscale('log')
 
-    plt.suptitle('Benchmark — test set (espace physique)', fontsize=11, y=1.02)
+    # Bar chart pour le temps
+    ax_t = axes[-1]
+    times = [results[lbl]['Temps (µs/sample)'] for lbl in labels]
+    bars  = ax_t.bar(range(len(labels)), times, color=colors[:len(labels)], alpha=0.8)
+    ax_t.bar_label(bars, fmt='%.1f µs', fontsize=8, padding=3)
+    ax_t.set_xticks(range(len(labels)))
+    ax_t.set_xticklabels(labels, rotation=20, ha='right', fontsize=9)
+    time_title = 'Temps / sample'
+    if sim_time_ms is not None:
+        time_title += f'\nSim (FEniCS) : {sim_time_ms:.1f} ms/sample'
+    ax_t.set_title(time_title, fontsize=10)
+    ax_t.set_ylabel('µs')
+    ax_t.grid(axis='y', alpha=0.3, linestyle='--')
+
+    plt.suptitle(
+        f'Benchmark — test set | batch B={batch_size}, timing moyenné sur {n_timing_batches} batches',
+        fontsize=11, y=1.02,
+    )
     plt.tight_layout()
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -167,8 +240,10 @@ if __name__ == '__main__':
             'checkpoints/IndirectDecoder_best.pt',
             'checkpoints/finetune_IndirectDecoder_best.pt',
         ],
-        dataset_path = 'dataset/dataset.npz',
-        batch_size   = 64,
-        seed         = 42,
+        dataset_path   = 'dataset/dataset.npz',
+        batch_size     = 256,
+        seed           = None,
+        n_sim_samples  = 20,   # nb de simulations FEniCS pour la baseline temps
+        N_mesh         = 64,
     )
-    plot_results(results, out_path='plots/benchmark.png')
+    plot_results(results, batch_size=256, n_timing_batches=10, out_path='plots/benchmark.png')
