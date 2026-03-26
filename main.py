@@ -43,6 +43,11 @@ def load_model(ckpt_path: str, device: torch.device):
     return model, ckpt
 
 
+def denorm_U(U_norm: torch.Tensor, ckpt: dict) -> torch.Tensor:
+    """Inverse la standardisation Z-score avec les stats du checkpoint."""
+    return U_norm * float(ckpt['U_std']) + ckpt['U_mean']
+
+
 @torch.no_grad()
 def run_inference(theta_raw: list[float], model: BaseDecoder,
                   ckpt: dict, device: torch.device) -> np.ndarray:
@@ -53,14 +58,11 @@ def run_inference(theta_raw: list[float], model: BaseDecoder,
     """
     theta_mean = ckpt['theta_mean'].to(device)
     theta_std  = ckpt['theta_std'].to(device)
-    U_mean     = torch.tensor(ckpt['U_mean'], dtype=torch.float32, device=device)
-    U_std      = torch.tensor(ckpt['U_std'],  dtype=torch.float32, device=device)
 
     theta_t    = torch.tensor(theta_raw, dtype=torch.float32, device=device)
     theta_norm = (theta_t - theta_mean) / theta_std
     U_hat_norm = model.generate(theta_norm)                           # (1, 1, N, N)
-    U_pred     = U_hat_norm * U_std + U_mean
-    return U_pred[0, 0].cpu().numpy()                                 # (N, N)
+    return denorm_U(U_hat_norm.cpu(), ckpt)[0, 0].numpy()            # (N, N)
 
 
 def predict(theta_raw: list[float], ckpt_path: str = 'checkpoints/decoder_best.pt',

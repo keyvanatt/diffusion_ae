@@ -60,9 +60,11 @@ Both `VAE.Decoder` and `DirectDecoderDenseOut` use `base = N // 32`, so **N must
 
 ## Inference and visualization
 
-`main.py` exposes two functions used by other modules:
+`main.py` exposes two functions that must be reused by any new script needing inference:
 - `load_model(ckpt_path, device)` — auto-detects model type from checkpoint, reconstructs the model.
 - `run_inference(theta_raw, model, ckpt, device)` — normalizes θ, runs the decoder, denormalizes U back to physical values.
+
+**Always import and reuse these functions** rather than reimplementing model loading or denormalization logic.
 
 `app.py` is a Streamlit app that wraps these two functions. It exposes sliders for θ (D, |b|, angle, f — the app converts polar to (bx, by) internally), lets the user pick a checkpoint, and optionally compares the prediction against the nearest dataset sample. The app uses `@st.cache_resource` for the model and `@st.cache_data` for the dataset.
 
