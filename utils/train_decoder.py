@@ -206,9 +206,8 @@ def train(
                 'model_state': model.state_dict(),
                 'optimizer'  : optimizer.state_dict(),
                 'val_loss'   : best_val,
-                'U_min'      : dataset.U_min,
-                'U_max'      : dataset.U_max,
                 'U_mean'     : dataset.U_mean,
+                'U_std'      : dataset.U_std,
                 'theta_mean' : dataset.theta_mean,
                 'theta_std'  : dataset.theta_std,
             }, best_path)

@@ -183,7 +183,9 @@ def train(
 
         tr = train_epoch(model, train_loader, optimizer, device)
         va = val_epoch(model, val_loader, device)
-        scheduler.step(va['recon'])
+
+        val_metric = va.get('recon', va['loss'])
+        scheduler.step(val_metric)
 
         epoch_time = time.perf_counter() - t0
         lr_now     = optimizer.param_groups[0]['lr']
@@ -204,8 +206,8 @@ def train(
 
         wandb.log(log)
 
-        if va['recon'] < best_val:
-            best_val  = va['recon']
+        if val_metric < best_val:
+            best_val  = val_metric
             patience_ = 0
             torch.save({
                 'model_type' : model_name,
@@ -213,8 +215,8 @@ def train(
                 'model_state': model.state_dict(),
                 'optimizer'  : optimizer.state_dict(),
                 'val_loss'   : best_val,
-                'U_min'      : dataset.U_min,
-                'U_max'      : dataset.U_max,
+                'U_mean'     : dataset.U_mean,
+                'U_std'      : dataset.U_std,
                 'theta_mean' : dataset.theta_mean,
                 'theta_std'  : dataset.theta_std,
             }, best_path)

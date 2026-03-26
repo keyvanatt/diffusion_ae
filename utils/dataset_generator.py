@@ -191,7 +191,6 @@ def check_dataset(path='dataset.npz'):
 
 if __name__ == '__main__':
     import argparse
-
     DEFAULT_PATH = 'dataset/dataset.npz'
 
     parser = argparse.ArgumentParser()

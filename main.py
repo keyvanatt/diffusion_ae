@@ -53,14 +53,13 @@ def run_inference(theta_raw: list[float], model: BaseDecoder,
     """
     theta_mean = ckpt['theta_mean'].to(device)
     theta_std  = ckpt['theta_std'].to(device)
-    U_min      = float(ckpt['U_min'])
-    U_max      = float(ckpt['U_max'])
-    U_mean = torch.tensor(ckpt['U_mean'], dtype=torch.float32, device=device) if 'U_mean' in ckpt else torch.tensor(0.0, dtype=torch.float32, device=device)
+    U_mean     = torch.tensor(ckpt['U_mean'], dtype=torch.float32, device=device)
+    U_std      = torch.tensor(ckpt['U_std'],  dtype=torch.float32, device=device)
 
     theta_t    = torch.tensor(theta_raw, dtype=torch.float32, device=device)
     theta_norm = (theta_t - theta_mean) / theta_std
     U_hat_norm = model.generate(theta_norm)                           # (1, 1, N, N)
-    U_pred     = (U_hat_norm + 1.0) / 2.0 * (U_max - U_min) + U_min + U_mean
+    U_pred     = U_hat_norm * U_std + U_mean
     return U_pred[0, 0].cpu().numpy()                                 # (N, N)
 
 

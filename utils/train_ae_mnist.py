@@ -104,7 +104,7 @@ def train(
     lr           : float = 1e-3,
     patience     : int   = 20,
     seed         : int   = 42,
-    project      : str   = 'mnist-ae',
+    project      : str   = 'convdiff',
     ckpt_dir     : str   = 'checkpoints',
     log_img_every: int   = 10,
     beta_warmup  : int   = 20,
@@ -250,17 +250,16 @@ if __name__ == '__main__':
     model = VAE(N=32, 
             latent_dim=64,
             beta=1.0,
-            free_bits=0.1
+            free_bits=0
             )
     train(
         model,
         data_root     = 'dataset/mnist',
-        epochs        = 100,
+        epochs        = 150,
         batch_size    = 128,
         lr            = 1e-3,
-        patience      = 20,
+        patience      = 100,
         seed          = 42,
-        project       = 'mnist-ae',
         ckpt_dir      = 'checkpoints',
         log_img_every = 10,
         img_size      = 32,

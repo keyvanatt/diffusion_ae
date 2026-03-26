@@ -110,7 +110,7 @@ class VAE(BaseAutoEncoder):
         N          : int   = 64,
         latent_dim : int   = 64,
         beta       : float = 1.0,
-        free_bits  : float = 0.5,   # seuil KL min par dimension latente
+        free_bits  : float = 0.1,   # seuil KL min par dimension latente
     ):
         super().__init__()
 
@@ -165,7 +165,9 @@ class VAE(BaseAutoEncoder):
         kl_loss    : terme KL seul
         grad_loss  : terme gradient
         """
-        recon_loss = F.mse_loss(U_hat, U, reduction='mean')
+        mse = F.mse_loss(U_hat, U, reduction='none')
+        # Somme sur les dimensions (C, H, W), moyenne sur le batch (B)
+        recon_loss = mse.view(U.shape[0], -1).sum(dim=1).mean()
 
         # Gradient MSE : penalise les erreurs sur les gradients spatiaux
         def spatial_grads(x):
@@ -178,9 +180,12 @@ class VAE(BaseAutoEncoder):
         eps = 1e-6
         w_x = dx_gt.abs().detach() + eps
         w_y = dy_gt.abs().detach() + eps
+        grad_loss_x = w_x * (dx_hat - dx_gt).pow(2)
+        grad_loss_y = w_y * (dy_hat - dy_gt).pow(2)
+        # Somme sur les dimensions spatiales, moyenne sur le batch
         grad_loss = (
-            (w_x * (dx_hat - dx_gt).pow(2)).mean() / w_x.mean() +
-            (w_y * (dy_hat - dy_gt).pow(2)).mean() / w_y.mean()
+            (grad_loss_x.view(U.shape[0], -1).sum(dim=1).mean() / w_x.mean()) +
+            (grad_loss_y.view(U.shape[0], -1).sum(dim=1).mean() / w_y.mean())
         ) * 0.5
 
         # KL : free-bits — on ne pénalise pas en dessous de free_bits par dim
