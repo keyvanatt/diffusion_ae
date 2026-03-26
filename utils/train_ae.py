@@ -255,9 +255,7 @@ def train(
 
 
 if __name__ == '__main__':
-    model = AutoencoderSVD(N=64, 
-                           latent_dim=32, 
-                           kmax=3)
+    model = VAE(N=64, latent_dim=3, beta=1.0)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
@@ -268,6 +266,6 @@ if __name__ == '__main__':
         seed          = 42,
         project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
-        prefix = "",
+        prefix = "smallLD",
         log_img_every = 50,
     )

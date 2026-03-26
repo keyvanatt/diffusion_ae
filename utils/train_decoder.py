@@ -263,25 +263,20 @@ def train(
 
 if __name__ == '__main__':
     dataset = ConvDiffDataset('dataset/dataset.npz')
-    trained_AE = AutoencoderSVD(N=64, latent_dim=32, kmax=3)
-    trained_AE.load_state_dict(torch.load('checkpoints/AutoencoderSVD_best.pt')['model_state'])
-    model = IndirectDecoderSVD(
-        N=64,
-        kmax=3,
-        theta_dim=4,
-        latent_dim=32,
-        trained_autoencoder=trained_AE,
-    )
+    trained_AE = VAE(N=64, latent_dim=3)
+    trained_AE.load_state_dict(torch.load('checkpoints/smallLD_VAE_best.pt')['model_state'])
+    model = IndirectDecoder(trained_AE, N=64, theta_dim=4, latent_dim=3)
+    model.toogle_grad_decoder()
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
         batch_size    = 128,
-        lr            = 1e-3,
+        lr            = 1e-4,
         patience      = 100,
         seed          = 42,
         project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
-        prefix = "finetune",
+        prefix = "finetune_smallLD",
         log_img_every = 50,
     )
