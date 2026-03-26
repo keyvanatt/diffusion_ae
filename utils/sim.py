@@ -157,7 +157,7 @@ def simulate(
     D=1e-2,
     b_val=np.array([1.0, 0.3]),
     f=10.0,
-    x0=np.array([0.3, 0.5]),
+    x0=np.array([0.5, 0.5]),
     n=64,
     use_supg=True,
 ):
@@ -224,7 +224,6 @@ if __name__ == "__main__":
     u_sol = simulate()
     plot_sol(u_sol)
     grid = to_grid(u_sol, N_out=64)
-    print(grid.shape)
     plt.imsave("plots/convdiff_grid.png", grid, cmap="hot", vmin=0.0, vmax=grid.max())
     print("Grille sauvegardée → plots/convdiff_grid.png")
 
