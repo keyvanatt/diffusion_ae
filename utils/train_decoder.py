@@ -163,10 +163,7 @@ def train(
         U_train = dataset.U[train_set.indices]                  # (N_train, 1, N, N)
         U_train = dataset.denorm_U(U_train.cpu()).numpy()       # type: ignore
         model.compute_and_set_fixed_basis(U_train)              # type: ignore
-        optimizer = torch.optim.AdamW([
-            {'params': model.theta_proj.parameters(), 'lr': lr},
-            {'params': model.decoder.parameters(),    'lr': lr * 0.01},
-        ], weight_decay=1e-5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
 
@@ -263,10 +260,11 @@ def train(
 
 if __name__ == '__main__':
     dataset = ConvDiffDataset('dataset/dataset.npz')
-    trained_AE = VAE(N=64, latent_dim=3)
-    trained_AE.load_state_dict(torch.load('checkpoints/smallLD_VAE_best.pt')['model_state'])
-    model = IndirectDecoder(trained_AE, N=64, theta_dim=4, latent_dim=3)
-    model.toogle_grad_decoder()
+    trained_AE = AutoencoderSVD(N=64, latent_dim=32, kmax=3)
+    trained_AE.load_state_dict(torch.load('checkpoints/AutoencoderSVD_best.pt')['model_state'])
+    model = IndirectDecoderSVD(trained_autoencoder=trained_AE, 
+                               N=64, theta_dim=4, latent_dim=32,
+                               kmax=3)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
