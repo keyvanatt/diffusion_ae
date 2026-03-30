@@ -24,9 +24,20 @@ DATASET_PATH  = 'dataset/dataset.npz'
 CKPT_DIR      = 'checkpoints'
 
 
+SUPPORTED_MODEL_TYPES = {'decoder', 'DirectDecoder', 'DirectDecoderDenseOut',
+                         'IndirectDecoder', 'IndirectDecoderSVD'}
+
 def list_checkpoints():
     ckpt_dir = Path(CKPT_DIR)
-    return sorted([p.name for p in ckpt_dir.glob('*.pt')])
+    result = []
+    for p in sorted(ckpt_dir.glob('*.pt')):
+        try:
+            ckpt = torch.load(str(p), map_location='cpu', weights_only=False)
+            if ckpt.get('model_type', 'decoder') in SUPPORTED_MODEL_TYPES:
+                result.append(p.name)
+        except Exception:
+            pass
+    return result
 
 
 @st.cache_resource
