@@ -108,7 +108,6 @@ if __name__ == '__main__':
         theta_raw  = random_theta(),
         ckpt_paths = [
             'checkpoints/DirectDecoderDenseOut_best.pt',
-            'checkpoints/IndirectDecoder_best.pt',
             'checkpoints/finetune_IndirectDecoder_best.pt',
             'checkpoints/finetune_IndirectDecoderSVD_best.pt',
             'checkpoints/finetune_smallLD_IndirectDecoder_best.pt',
