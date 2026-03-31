@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 # --- Config ---
 DATA_DIR = "dataset/Results"
-N_ROTATIONS = 10
+N_ROTATIONS = 2
 
 # --- Load data ---
 ch4 = np.load(os.path.join(DATA_DIR, "CH4.npy"))   # (N, T, H, W)
@@ -26,7 +26,7 @@ print(f"CH4 shape: {ch4.shape}, dtype: {ch4.dtype}")
 print(f"doe shape: {doe.shape}, fields: {doe.dtype.names}")
 
 # --- Uniform rotation angles ---
-angles = np.linspace(0, 360, N_ROTATIONS, endpoint=False)  # step = 7.2°
+angles = np.linspace(0, 360, N_ROTATIONS, endpoint=False) 
 
 # --- Output: memmap to disk (float32 to halve memory) ---
 out_path = os.path.join(DATA_DIR, "ch4_rotated.npy")
