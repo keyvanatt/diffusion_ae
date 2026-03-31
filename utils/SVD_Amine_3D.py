@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 def svd_inverse_3d(F, G, P, alph):
@@ -88,7 +89,7 @@ def svd_amine_3d(HH, nf, erreur):
             RST_new = np.kron(T, np.kron(S, R)).reshape(nr, ns, nt, order='F')
             err = np.sqrt(np.sum((RST - RST_new) ** 2))
 
-            if err < 1e-8:
+            if err < 1e-6:
                 break
 
         nR, nS, nT = np.linalg.norm(R), np.linalg.norm(S), np.linalg.norm(T)
@@ -111,5 +112,82 @@ def svd_amine_3d(HH, nf, erreur):
     G = np.column_stack(G) if G else np.empty((ns, 0))
     P = np.column_stack(P) if P else np.empty((nt, 0))
     alph = np.array(alph)
+
+    return F, G, P, alph, Hist_ErrL2
+
+
+def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
+    """
+    Version GPU de svd_amine_3d. Remplace les kron+reshape(order='F') par
+    des einsum et du broadcasting PyTorch.
+
+    Les equivalences mathematiques utilisees :
+      Hrst.reshape(nr, ns*nt, order='F') @ kron(T,S)  ->  einsum('rst,s,t->r', HH, S, T)
+      Hstr.reshape(ns, nt*nr, order='F') @ kron(R,T)  ->  einsum('rst,r,t->s', HH, R, T)
+      Htrs.reshape(nt, nr*ns, order='F') @ kron(S,R)  ->  einsum('rst,r,s->t', HH, R, S)
+      kron(T,kron(S,R)).reshape(nr,ns,nt,order='F')   ->  R[:,None,None]*S[None,:,None]*T[None,None,:]
+
+    Parametres
+    ----------
+    HH_np  : ndarray (nr, ns, nt)
+    nf     : int
+    erreur : float
+    device : torch.device ou str, ex. 'cuda', 'cuda:1'. Par defaut : cuda si dispo, sinon cpu.
+    dtype  : torch.float64 (defaut, precis) ou torch.float32 (plus rapide)
+
+    Retour  (memes formats que svd_amine_3d)
+    ------
+    F, G, P : ndarray
+    alph    : ndarray
+    Hist_ErrL2 : list[float]
+    """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(device)
+
+    HH = torch.tensor(HH_np, dtype=dtype, device=device)
+    nr, ns, nt = HH.shape
+    error_l2_ini = HH.norm()
+
+    Hist_ErrL2 = [1.0]
+    alph_list, F_list, G_list, P_list = [], [], [], []
+
+    for itglob in range(nf):
+        R = torch.rand(nr, dtype=dtype, device=device)
+        S = torch.rand(ns, dtype=dtype, device=device)
+        T = torch.rand(nt, dtype=dtype, device=device)
+
+        for itloc in range(500):
+            RST_old = R[:, None, None] * S[None, :, None] * T[None, None, :]
+
+            R = torch.einsum('rst,s,t->r', HH, S, T) / (S.dot(S) * T.dot(T))
+            S = torch.einsum('rst,r,t->s', HH, R, T) / (R.dot(R) * T.dot(T))
+            T = torch.einsum('rst,r,s->t', HH, R, S) / (R.dot(R) * S.dot(S))
+
+            RST_new = R[:, None, None] * S[None, :, None] * T[None, None, :]
+            if (RST_old - RST_new).norm() < 1e-6:
+                break
+
+        nR, nS, nT = R.norm(), S.norm(), T.norm()
+        amplitude = (nR * nS * nT).item()
+        alph_list.append(amplitude)
+        F_list.append((R / nR).cpu().numpy())
+        G_list.append((S / nS).cpu().numpy())
+        P_list.append((T / nT).cpu().numpy())
+
+        HH = HH - R[:, None, None] * S[None, :, None] * T[None, None, :]
+
+        error_l2 = (HH.norm() / error_l2_ini).item()
+        print(f"Err L2 = {error_l2:.6e}  [mode {itglob+1}, device={device}]")
+        Hist_ErrL2.append(error_l2)
+
+        if np.isnan(amplitude) or amplitude / alph_list[0] < erreur:
+            break
+
+    F = np.column_stack(F_list) if F_list else np.empty((nr, 0))
+    G = np.column_stack(G_list) if G_list else np.empty((ns, 0))
+    P = np.column_stack(P_list) if P_list else np.empty((nt, 0))
+    alph = np.array(alph_list)
 
     return F, G, P, alph, Hist_ErrL2
