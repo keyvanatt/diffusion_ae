@@ -66,6 +66,93 @@ def animate(
     print(f"Saved: {output_path}")
 
 
+def animate_comparaison(
+    frames_a: np.ndarray,
+    frames_b: np.ndarray,
+    output_path: str,
+    fps: int = 10,
+    cmap: str = "RdBu_r",
+    label: str = "value",
+    X: np.ndarray = None,
+    Y: np.ndarray = None,
+    title_a: str = "Original",
+    title_b: str = "Reconstruit",
+    title_err: str = "|Erreur|",
+    title_fn=None,
+) -> None:
+    """Save side-by-side comparison GIF: frames_a | frames_b | |frames_a - frames_b|.
+
+    Args:
+        frames_a:    Reference array of shape (T, H, W).
+        frames_b:    Compared array of shape (T, H, W).
+        output_path: Destination path for the GIF.
+        fps:         Frames per second.
+        cmap:        Colormap for the two main panels.
+        label:       Colorbar label for the two main panels.
+        X, Y:        Optional 2D meshgrid arrays. When provided, contourf is used.
+        title_a:     Title for the first panel.
+        title_b:     Title for the second panel.
+        title_err:   Title for the error panel.
+        title_fn:    Optional callable (t: int) -> str for the figure suptitle.
+    """
+    err = np.abs(frames_a - frames_b)
+
+    vmin = min(frames_a.min(), frames_b.min())
+    vmax = max(frames_a.max(), frames_b.max())
+    norm_ab  = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    norm_err = mcolors.Normalize(vmin=0, vmax=err.max())
+    cmap_ab  = matplotlib.colormaps[cmap]
+    cmap_err = matplotlib.colormaps["hot_r"]
+
+    use_contour = X is not None and Y is not None
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    ax_a, ax_b, ax_e = axes
+    for ax in axes:
+        ax.set_aspect("equal")
+
+    if use_contour:
+        ax_a.contourf(X, Y, frames_a[0], levels=50, cmap=cmap_ab, norm=norm_ab)
+        ax_b.contourf(X, Y, frames_b[0], levels=50, cmap=cmap_ab, norm=norm_ab)
+        ax_e.contourf(X, Y, err[0],      levels=50, cmap=cmap_err, norm=norm_err)
+    else:
+        im_a = ax_a.imshow(frames_a[0], cmap=cmap_ab,  norm=norm_ab,  origin="lower")
+        im_b = ax_b.imshow(frames_b[0], cmap=cmap_ab,  norm=norm_ab,  origin="lower")
+        im_e = ax_e.imshow(err[0],      cmap=cmap_err, norm=norm_err, origin="lower")
+
+    plt.colorbar(cm.ScalarMappable(norm=norm_ab,  cmap=cmap_ab),  ax=ax_a, label=label)
+    plt.colorbar(cm.ScalarMappable(norm=norm_ab,  cmap=cmap_ab),  ax=ax_b, label=label)
+    plt.colorbar(cm.ScalarMappable(norm=norm_err, cmap=cmap_err), ax=ax_e, label="|err|")
+
+    ax_a.set_title(title_a)
+    ax_b.set_title(title_b)
+    ax_e.set_title(title_err)
+
+    suptitle = fig.suptitle(title_fn(0) if title_fn else "t = 0")
+
+    def update(t):
+        if use_contour:
+            for ax in axes:
+                for c in ax.collections:
+                    c.remove()
+            ax_a.contourf(X, Y, frames_a[t], levels=50, cmap=cmap_ab,  norm=norm_ab)
+            ax_b.contourf(X, Y, frames_b[t], levels=50, cmap=cmap_ab,  norm=norm_ab)
+            ax_e.contourf(X, Y, err[t],      levels=50, cmap=cmap_err, norm=norm_err)
+        else:
+            im_a.set_data(frames_a[t])
+            im_b.set_data(frames_b[t])
+            im_e.set_data(err[t])
+        suptitle.set_text(title_fn(t) if title_fn else f"t = {t}")
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(frames_a), interval=1000 // fps, blit=False
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    ani.save(output_path, writer="pillow", fps=fps)
+    plt.close(fig)
+    print(f"Saved: {output_path}")
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

@@ -31,56 +31,6 @@ def svd_inverse_3d(F, G, P, alph):
     return HH_rec
 
 
-def svd_matrix(HH, nf, erreur):
-    """
-    SVD exacte pour tenseur (nr, 1, nt) — cas ns=1.
-
-    Equivalent a svd_amine_3d mais utilise np.linalg.svd au lieu de l'ALS
-    iteratif, ce qui donne la meilleure approximation rang-k exacte.
-
-    Parametres
-    ----------
-    HH     : ndarray (nr, 1, nt)
-    nf     : int   – nombre max de modes
-    erreur : float – seuil relatif d'arret sur la valeur singuliere
-
-    Retour
-    ------
-    F : ndarray (nr, nf_eff)
-    G : ndarray (1,  nf_eff)
-    P : ndarray (nt, nf_eff)
-    alph : ndarray (nf_eff,)
-    Hist_ErrL2 : list[float]
-    """
-    nr, ns, nt = HH.shape
-    assert ns == 1, "svd_matrix ne supporte que ns=1"
-
-    M = HH[:, 0, :]  # (nr, nt)
-    U, S, Vt = np.linalg.svd(M, full_matrices=False)  # U (nr,r), S (r,), Vt (r,nt)
-
-    nf_eff = min(nf, len(S))
-
-    # Critere d'arret : valeur singuliere relative < erreur
-    s0 = S[0]
-    keep = np.searchsorted(-S, -erreur * s0)  # premier index ou S[k]/S[0] < erreur
-    nf_eff = max(1, min(nf_eff, keep))
-
-    F = U[:, :nf_eff]           # (nr, nf_eff)
-    G = np.ones((1, nf_eff))    # (1,  nf_eff)  trivial
-    P = Vt[:nf_eff, :].T        # (nt, nf_eff)
-    alph = S[:nf_eff]           # (nf_eff,)
-
-    # Historique d'erreur L2 relative (energie residuelle)
-    energy_total = np.sum(S ** 2)
-    Hist_ErrL2 = [1.0]
-    for k in range(1, nf_eff + 1):
-        residual = np.sqrt(max(0.0, energy_total - np.sum(S[:k] ** 2)))
-        Hist_ErrL2.append(residual / np.sqrt(energy_total))
-
-    print(f"SVD exacte : {nf_eff} modes retenus  |  Err L2 = {Hist_ErrL2[-1]:.6e}")
-    return F, G, P, alph, Hist_ErrL2
-
-
 def svd_amine_3d(HH, nf, erreur):
     """
     Decomposition Tucker rang-1 iterative d'un tenseur 3D.
@@ -141,11 +91,12 @@ def svd_amine_3d(HH, nf, erreur):
             if err < 1e-8:
                 break
 
-        fact = (np.linalg.norm(R) * np.linalg.norm(S) * np.linalg.norm(T)) ** (1 / 3)
-        alph.append(fact ** 3)
-        F.append((R * fact / np.linalg.norm(R)).ravel())
-        G.append((S * fact / np.linalg.norm(S)).ravel())
-        P.append((T * fact / np.linalg.norm(T)).ravel())
+        nR, nS, nT = np.linalg.norm(R), np.linalg.norm(S), np.linalg.norm(T)
+        amplitude = nR * nS * nT
+        alph.append(amplitude)
+        F.append((R / nR).ravel())
+        G.append((S / nS).ravel())
+        P.append((T / nT).ravel())
 
         HH = HH - np.kron(T, np.kron(S, R)).reshape(nr, ns, nt, order='F')
 
@@ -153,7 +104,7 @@ def svd_amine_3d(HH, nf, erreur):
         print(f"Err L2 = {error_l2:.6e}")
         Hist_ErrL2.append(error_l2)
 
-        if np.isnan(fact) or fact ** 3 / alph[0] < erreur:
+        if np.isnan(amplitude) or amplitude / alph[0] < erreur:
             break
 
     F = np.column_stack(F) if F else np.empty((nr, 0))
