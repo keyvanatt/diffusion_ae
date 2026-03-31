@@ -165,6 +165,165 @@ def simulate(
     Pour générer un dataset, préférer ConvDiffSimulator."""
     return ConvDiffSimulator(n=n, use_supg=use_supg).solve(D, b_val, f, x0)
 
+
+class ConvDiffTransientSimulator:
+    """
+    Résout l'équation de convection-diffusion transitoire :
+
+        ∂u/∂t + b·∇u − D·Δu = f·δ(x−x0),  t > 0
+        u(x, 0) = 0   (source activée à t=0, conditions initiales nulles)
+        u = 0 sur ∂Ω
+
+    Schéma : Euler implicite (inconditionnellement stable).
+    Stabilisation SUPG sur la partie convective.
+
+    Usage
+    -----
+    sim = ConvDiffTransientSimulator(n=64, dt=0.01)
+    u_list = sim.solve(D=0.01, b_val=np.array([1.0, 0.3]), f=10.0,
+                       x0=np.array([0.5, 0.5]), n_steps=50)
+    # u_list[k] est la solution FEM à t=(k+1)*dt
+    """
+
+    def __init__(self, n: int = 64, dt: float = 0.01, use_supg: bool = True):
+        self.msh = dolfinx.mesh.create_unit_square(
+            MPI.COMM_WORLD, n, n,
+            cell_type=dolfinx.mesh.CellType.triangle
+        )
+        self.V = dolfinx.fem.functionspace(self.msh, ("Lagrange", 1))
+        self.dt_val = dt
+
+        # Constantes mutables
+        self.D_c  = dolfinx.fem.Constant(self.msh, PETSc.ScalarType(1e-2))
+        self.b_c  = dolfinx.fem.Constant(self.msh, np.array([1.0, 0.0], dtype=float))
+        self.dt_c = dolfinx.fem.Constant(self.msh, PETSc.ScalarType(dt))
+
+        u   = TrialFunction(self.V)
+        v   = TestFunction(self.V)
+
+        # u^n — solution au pas précédent, mise à jour à chaque itération
+        self.u_n = dolfinx.fem.Function(self.V)
+
+        # Forme bilinéaire : ∫ u v dx + dt [D ∫ ∇u·∇v dx + ∫ b·∇u v dx]
+        a_std = (u * v * dx
+                 + self.dt_c * self.D_c * dot(grad(u), grad(v)) * dx
+                 + self.dt_c * dot(self.b_c, grad(u)) * v * dx)  # type: ignore
+
+        if use_supg:
+            h      = CellDiameter(self.msh)
+            b_norm = sqrt(dot(self.b_c, self.b_c))
+            tau    = conditional(gt(b_norm, 1e-10), h / (2 * b_norm), 0.0)
+            # Stabilisation SUPG de la partie convective uniquement
+            a_supg = self.dt_c * tau * dot(self.b_c, grad(v)) * dot(self.b_c, grad(u)) * dx
+        else:
+            a_supg = 0.0
+
+        # Forme linéaire : ∫ u^n v dx  (source ponctuelle ajoutée manuellement)
+        L = self.u_n * v * dx
+
+        # Conditions de Dirichlet u=0 sur tout le bord
+        self.msh.topology.create_connectivity(
+            self.msh.topology.dim - 1, self.msh.topology.dim
+        )
+        boundary_facets = dolfinx.mesh.exterior_facet_indices(self.msh.topology)
+        boundary_dofs   = dolfinx.fem.locate_dofs_topological(
+            self.V, self.msh.topology.dim - 1, boundary_facets
+        )
+        self.bc = dolfinx.fem.dirichletbc(PETSc.ScalarType(0.0), boundary_dofs, self.V)
+
+        # Compilation JIT — une seule fois
+        self.a_form = dolfinx.fem.form(a_std + a_supg)
+        self.L_form = dolfinx.fem.form(L)
+
+        # Pré-allocation
+        self.A     = dolfinx.fem.petsc.create_matrix(self.a_form)
+        self.b_rhs = dolfinx.fem.petsc.create_vector(self.L_form)
+
+        # Solveur KSP — LU direct : factorisation une fois par sample,
+        # substitutions avant/arrière pour chaque pas de temps (pas d'itérations)
+        self.ksp = PETSc.KSP().create(self.msh.comm)
+        self.ksp.setType("preonly")
+        self.ksp.getPC().setType("lu")
+        self.ksp.setFromOptions()
+
+    def solve(
+        self, D: float, b_val: np.ndarray, f: float,
+        x0: np.ndarray, n_steps: int,
+        tol: float = 1e-4,
+    ) -> list:
+        """
+        Résout jusqu'à n_steps pas de temps (pas = dt).
+        Retourne la liste [u^1, ..., u^k] avec k ≤ n_steps.
+
+        Arrêt anticipé dès que ||u^{n+1} − u^n|| / ||u^n|| < tol
+        (régime stationnaire atteint). Mettre tol=0 pour désactiver.
+        """
+        self.D_c.value    = D
+        self.b_c.value[:] = b_val
+
+        # Condition initiale : u^0 = 0
+        self.u_n.x.array[:] = 0.0
+
+        # Matrice de gauche (ne dépend pas de t ni de u^n)
+        self.A.zeroEntries()
+        dolfinx.fem.petsc.assemble_matrix(self.A, self.a_form, bcs=[self.bc])
+        self.A.assemble()
+        self.ksp.setOperators(self.A)
+
+        solutions = []
+        for _ in range(n_steps):
+            with self.b_rhs.localForm() as loc:
+                loc.set(0)
+            dolfinx.fem.petsc.assemble_vector(self.b_rhs, self.L_form)
+            add_point_source(self.b_rhs, self.V, x0, self.dt_val * f)
+            dolfinx.fem.petsc.apply_lifting(self.b_rhs, [self.a_form], bcs=[[self.bc]])
+            self.b_rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+            dolfinx.fem.petsc.set_bc(self.b_rhs, [self.bc])
+
+            u_new = dolfinx.fem.Function(self.V)
+            self.ksp.solve(self.b_rhs, u_new.x.petsc_vec)
+            u_new.x.scatter_forward()
+
+            solutions.append(u_new)
+
+            if tol > 0:
+                diff  = np.linalg.norm(u_new.x.array - self.u_n.x.array)
+                scale = np.linalg.norm(self.u_n.x.array) + 1e-12
+                if diff / scale < tol:
+                    # Répéter le dernier pas pour garder la shape (n_steps, N, N)
+                    solutions += [u_new] * (n_steps - len(solutions))
+                    break
+
+            self.u_n.x.array[:] = u_new.x.array
+
+        return solutions
+
+
+def simulate_transient(
+    D=1e-2,
+    b_val=np.array([1.0, 0.3]),
+    f=10.0,
+    x0=np.array([0.5, 0.5]),
+    n=64,
+    dt=0.01,
+    n_steps=100,
+    use_supg=True,
+):
+    """Wrapper one-shot pour la simulation transitoire.
+    Pour générer un dataset, préférer ConvDiffTransientSimulator."""
+    return ConvDiffTransientSimulator(n=n, dt=dt, use_supg=use_supg).solve(
+        D, b_val, f, x0, n_steps
+    )
+
+
+def to_grid_sequence(u_list, N_out=64) -> np.ndarray:
+    """
+    Convertit une liste de solutions FEM (retournée par ConvDiffTransientSimulator.solve)
+    en tableau numpy de shape (n_steps, N_out, N_out).
+    """
+    frames = [to_grid(u, N_out) for u in u_list]
+    return np.stack(frames, axis=0)
+
 def to_grid(u_sol, N_out=64):
     """
     Version optimisée de fem_to_grid avec scipy — idéale pour générer
@@ -221,10 +380,36 @@ def plot_sol(u_sol):
     print("Figure sauvegardée → plots/convdiff_solution.png")
 
 if __name__ == "__main__":
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from utils.animate import animate
+
+    #stationaire
     u_sol = simulate()
     plot_sol(u_sol)
     grid = to_grid(u_sol, N_out=64)
     plt.imsave("plots/convdiff_grid.png", grid, cmap="hot", vmin=0.0, vmax=grid.max())
     print("Grille sauvegardée → plots/convdiff_grid.png")
+
+    #transitoire
+    dt= 0.05
+    u_list = simulate_transient(dt=dt, 
+                                n_steps=100,
+                                D=1e-3,
+                                b_val=np.array([0, 0]),
+                                f=1,
+                                )
+    grids  = to_grid_sequence(u_list, N_out=64)   # (n_steps, 64, 64)
+    print(f"Séquence transitoire : shape={grids.shape}, max={grids.max():.4f}")
+
+    animate(
+        grids,
+        output_path="plots/convdiff_transient.gif",
+        fps=10,
+        cmap="hot",
+        label="u",
+        title_fn=lambda t: f"t = {(t + 1) * dt:.3f}",
+    )
 
 

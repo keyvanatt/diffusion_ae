@@ -14,7 +14,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 
-from sim import ConvDiffSimulator, to_grid
+from sim import ConvDiffSimulator, to_grid, ConvDiffTransientSimulator, to_grid_sequence
 
 
 
@@ -190,22 +190,176 @@ def check_dataset(path='dataset.npz'):
 
 
 
+def generate_dataset_transient(
+    n_samples   = 5000,
+    N_grid      = 64,
+    N_mesh      = 32,
+    dt          = 0.02,
+    n_steps     = 50,
+    seed        = 42,
+    output_path = 'dataset.npz',
+    use_supg    = True,
+):
+    """
+    Génère n_samples séquences temporelles (θ, U) et les sauvegarde dans output_path.
+
+    Paramètres
+    ----------
+    n_samples   : nombre de simulations
+    N_grid      : résolution de la grille de sortie (N×N)
+    N_mesh      : résolution du maillage FEM interne
+    dt          : pas de temps
+    n_steps     : nombre de pas de temps par simulation
+    seed        : graine aléatoire
+    output_path : chemin du fichier .npz de sortie
+    use_supg    : activer la stabilisation SUPG
+    """
+    rng = np.random.default_rng(seed)
+
+    U_all     = np.zeros((n_samples, n_steps, N_grid, N_grid), dtype=np.float32)
+    theta_all = np.zeros((n_samples, 4),                       dtype=np.float32)
+
+    n_ok   = 0
+    n_fail = 0
+
+    sim = ConvDiffTransientSimulator(n=N_mesh, dt=dt, use_supg=use_supg)
+
+    pbar = tqdm(total=n_samples, desc='Génération dataset transitoire')
+
+    while n_ok < n_samples:
+        p = sample_params(rng)
+        try:
+            u_list = sim.solve(
+                D       = p['D'],
+                b_val   = np.array([p['bx'], p['by']]),
+                f       = p['f'],
+                x0      = X0_FIXED,
+                n_steps = n_steps,
+            )
+
+            U = to_grid_sequence(u_list, N_out=N_grid)  # (n_steps, N, N)
+
+            if not np.isfinite(U).all():
+                raise ValueError("Solution non finie")
+            if np.abs(U).max() > 1e6:
+                raise ValueError(f"Solution divergente : max={np.abs(U).max():.2e}")
+
+            U_all[n_ok]     = U
+            theta_all[n_ok] = params_to_vector(p)
+            n_ok += 1
+            pbar.update(1)
+
+        except Exception as e:
+            n_fail += 1
+            if n_fail % 50 == 0:
+                print(f"\n[warn] {n_fail} échecs cumulés. Dernier : {e}")
+
+    pbar.close()
+
+    theta_mean = theta_all.mean(axis=0)
+    theta_std  = theta_all.std(axis=0) + 1e-8
+    theta_norm = (theta_all - theta_mean) / theta_std
+
+    np.savez_compressed(
+        output_path,
+        U           = U_all,       # (n_samples, n_steps, N, N)  float32
+        theta       = theta_all,   # (n_samples, 4)               float32  brut
+        theta_norm  = theta_norm,  # (n_samples, 4)               float32  normalisé
+        theta_mean  = theta_mean,  # (4,)
+        theta_std   = theta_std,   # (4,)
+        param_names = np.array(['D', 'bx', 'by', 'f']),
+        N_grid      = np.array([N_grid]),
+        N_mesh      = np.array([N_mesh]),
+        dt          = np.array([dt]),
+        n_steps     = np.array([n_steps]),
+    )
+
+    print(f"\nDataset sauvegardé → {output_path}")
+    print(f"  Samples OK    : {n_ok}")
+    print(f"  Échecs        : {n_fail}")
+    print(f"  Shape U       : {U_all.shape}")
+    print(f"  Shape theta   : {theta_all.shape}")
+    print(f"  Taille disque : {Path(output_path).stat().st_size / 1e6:.1f} MB")
+
+    return U_all, theta_all, theta_norm
+
+
+def check_dataset_transient(path='dataset.npz'):
+    """Charge et inspecte un dataset transitoire."""
+    import matplotlib.pyplot as plt
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from utils.animate import animate
+
+    data        = np.load(path, allow_pickle=True)
+    U           = data['U']           # (n_samples, n_steps, N, N)
+    theta       = data['theta']
+    param_names = data['param_names']
+    dt          = float(data['dt'][0])
+    n_steps     = int(data['n_steps'][0])
+
+    print(f"U       : {U.shape}    min={U.min():.3f}  max={U.max():.3f}")
+    print(f"theta   : {theta.shape}")
+    print(f"dt={dt}  n_steps={n_steps}  T_end={dt * n_steps:.3f}")
+    print()
+
+    print("Statistiques des paramètres :")
+    for i, name in enumerate(param_names):
+        print(f"  {name:5s}  min={theta[:,i].min():.3e}  "
+              f"max={theta[:,i].max():.3e}  "
+              f"mean={theta[:,i].mean():.3e}")
+
+    # Aperçu statique : dernier pas de temps de 6 samples aléatoires
+    rng  = np.random.default_rng(0)
+    idxs = rng.choice(len(U), size=6, replace=False)
+
+    fig, axes = plt.subplots(2, 3, figsize=(12, 7))
+    for ax, idx in zip(axes.flat, idxs):
+        im = ax.imshow(U[idx, -1], origin='lower', cmap='hot', extent=[0, 1, 0, 1])
+        plt.colorbar(im, ax=ax, shrink=0.8)
+        p = theta[idx]
+        ax.set_title(f"D={p[0]:.3f}  b=({p[1]:.1f},{p[2]:.1f})  f={p[3]:.1f}", fontsize=8)
+        ax.plot(0.5, 0.5, 'co', markersize=6)
+
+    plt.suptitle(f'Dataset transitoire — {len(U)} samples — T_end={dt * n_steps:.2f}', fontsize=11)
+    plt.tight_layout()
+    plt.savefig('plots/dataset_transient_preview.png', dpi=150)
+    plt.show()
+
+    # GIF pour un sample aléatoire
+    animate(
+        U[idxs[0]],
+        output_path='plots/dataset_transient_check.gif',
+        fps=10,
+        cmap='hot',
+        label='u',
+        title_fn=lambda t: f"t = {(t + 1) * dt:.3f}",
+    )
+
+
 if __name__ == '__main__':
-    import argparse
-    DEFAULT_PATH = 'dataset/dataset_huge.npz'
+    CHECK        = False  
+    TRANSIENT    = True    
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--check', nargs='?', const=DEFAULT_PATH, default=None,
-                        metavar='PATH',
-                        help=f'Inspecter un dataset existant (défaut : {DEFAULT_PATH})')
-    args = parser.parse_args()
-
-    if args.check is not None:
-        check_dataset(args.check)
+    if CHECK:
+        if TRANSIENT:
+            check_dataset_transient('dataset/dataset_transient.npz')
+        else:
+            check_dataset('dataset/dataset_huge.npz')
     else:
-        generate_dataset(
-            n_samples   = 50_000,
-            N_grid      = 64,
-            N_mesh      = 64,
-            output_path = DEFAULT_PATH,
-        )
+        if TRANSIENT:
+            generate_dataset_transient(
+                n_samples   = 5_000,
+                N_grid      = 64,
+                N_mesh      = 64,
+                dt          = 0.05,
+                n_steps     = 100,
+                output_path = 'dataset/dataset_transient.npz',
+            )
+        else:
+            generate_dataset(
+                n_samples   = 50_000,
+                N_grid      = 64,
+                N_mesh      = 64,
+                output_path = 'dataset/dataset_huge.npz',
+            )
