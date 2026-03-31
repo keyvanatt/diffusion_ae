@@ -46,9 +46,9 @@ def learn_svd(concentration_path, step=5, erreur=1e-8):
 if __name__ == '__main__':
     results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'Results')
 
-    concentration_path = os.path.join(results_dir, 'ch4_rotated.npy')
+    concentration_path = os.path.join(results_dir, 'CH4.npy')
     step = 5
-    erreur = 1e-6
+    erreur = 1e-5
     example_idx = 2  # indice de simulation à sauvegarder pour vérification
 
     F, G, P, alph, Hist_ErrL2, HH, HH_rec, Hsub, Wsub = learn_svd(

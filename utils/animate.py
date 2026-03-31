@@ -156,14 +156,14 @@ def animate_comparaison(
 if __name__ == "__main__":
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-    results_dir = os.path.join(os.path.dirname(__file__), "..", "Results")
-    concentration = np.load(os.path.join(results_dir, "CH4.npy"))  # (cases, T, H, W)
-    doe = np.load(os.path.join(results_dir, "doe.npy"))             # (cases, 3)
+    results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'Results')
+    concentration = np.load(os.path.join(results_dir, "ch4_rotated.npy"))  # (cases, T, H, W)
+    doe = np.load(os.path.join(results_dir, "doe_rotated.npy"))             # (cases, 4)
 
     case_idx = 2
     frames = concentration[case_idx]  # (T, H, W)
-    D, angle, inj = doe[case_idx]
-    print(f"Case {case_idx}: D={D}, angle={angle}°, injection={inj} kg/m³/s")
+    doe = doe[case_idx]
+    print(f"Case {case_idx}, DOE param = {doe}")
     print(f"Frames shape: {frames.shape}")
 
     x = np.linspace(-100, 100, frames.shape[2])
@@ -179,5 +179,5 @@ if __name__ == "__main__":
         label="CH4 Concentration",
         X=X,
         Y=Y,
-        title_fn=lambda t: f"Case {case_idx} | t={t} | D={D}, angle={angle}°",
+        title_fn=lambda t: f"Case {case_idx} | t={t} | DOE param = {doe}",
     )
