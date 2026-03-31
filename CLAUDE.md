@@ -72,4 +72,29 @@ Both `VAE.Decoder` and `DirectDecoderDenseOut` use `base = N // 32`, so **N must
 
 All training scripts log to [Weights & Biases](https://wandb.ai) (project `convdiff`). Checkpoints are saved to `checkpoints/<ModelName>_best.pt`. The best model is selected on `val/recon` if available, else `val/loss`.
 
+## SVD-based surrogate pipeline (Amine dataset)
+
+A second pipeline operates on a separate dataset of CH4 concentration fields `(ns, T, H, W)` with parameters `doe` = `(k, A, C, theta)`.
+
+**Data:** `dataset/Results/CH4.npy` (or `ch4_rotated.npy`), `dataset/Results/doe.npy` (or `doe_rotated.npy`)
+
+**Step 1 — Tucker SVD decomposition** (`utils/learn_svd.py`):
+- Spatial subsampling (default `step=5`), reshape to `HH (nr, ns, Nt)`
+- `svd_3d_gpu` from `utils/SVD_Amine_3D.py` decomposes HH into `F (nr, nf_eff)`, `G (ns, nf_eff)`, `P (Nt, nf_eff)`, `alph (nf_eff,)`
+- `G` encodes per-simulation coefficients — this is what the surrogate must learn to predict from theta
+- Saves `dataset/Results/svd_train.npz`; also saves a comparison GIF in `plots/` for visual check
+
+**Step 2 — Surrogate training** (two versions):
+- `utils/train_surrogate_svd.py` — MLP PyTorch (`SVDSurrogate` in `models/svd_surrogate.py`), logs to W&B, saves `test_idx` in checkpoint
+- `utils/train_surrogate_svd_sklearn.py` — sklearn Pipeline (`PolynomialFeatures + StandardScaler + Ridge`), saved with `joblib`
+
+**Evaluation** (both scripts):
+- Metrics computed against two references: SVD reconstruction (G_true → field) and original concentration
+- Key metric: **L2 relative error** (comparable to `learn_svd` output)
+- Histograms (log x-scale) and animations (best/median/worst) saved in `plots/`
+
+**Known limitation:** With ~150 samples, both surrogates give ~60% L2rel error vs ~13-17% for SVD alone. The bottleneck is likely that G does not vary smoothly with theta at this sample size. Consider per-simulation SVD or more samples.
+
+**SVD implementation note:** In `svd_3d_gpu`, denominators must be recomputed sequentially after each R/S/T update (not precomputed) to avoid NaN divergence.
+
 
