@@ -11,7 +11,7 @@ def learn_svd(concentration_path, step=5, erreur=1e-8):
     Charge un fichier .npy de concentration (ns, T, H, W), applique une décomposition
     Tucker rang-1 (SVD 3D), et sauvegarde le résultat dans le même répertoire.
     """
-    concentration = np.load(concentration_path)  # (ns, T, H, W)
+    concentration = np.load(concentration_path)["U"]  # (ns, T, H, W)
     ns, Nt, H, W = concentration.shape
 
     concentration_sub = concentration[:, :, ::step, ::step]
@@ -36,7 +36,7 @@ def learn_svd(concentration_path, step=5, erreur=1e-8):
     rel_err = np.linalg.norm(HH_rec - HH) / (np.linalg.norm(HH) + 1e-12)
     print(f"  Erreur L2 globale  : {rel_err:.6e}")
 
-    save_path = os.path.join(os.path.dirname(concentration_path), 'svd_train.npz')
+    save_path = os.path.join(os.path.dirname(concentration_path), 'svd_train_diff.npz')
     np.savez(save_path, F=F, G=G, P=P, alph=alph, Hist_ErrL2=Hist_ErrL2)
     print(f"Décomposition sauvegardée : {save_path}")
 
@@ -44,10 +44,10 @@ def learn_svd(concentration_path, step=5, erreur=1e-8):
 
 
 if __name__ == '__main__':
-    results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'Results')
+    results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset')
 
-    concentration_path = os.path.join(results_dir, 'ch4_rotated.npy')
-    step = 5
+    concentration_path = os.path.join(results_dir, 'dataset_transient.npz')
+    step = 2
     erreur = 1e-5
     example_idx = 2  # indice de simulation à sauvegarder pour vérification
 

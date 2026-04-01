@@ -8,28 +8,33 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
+from xgboost import XGBRegressor
 
 from utils.SVD_Amine_3D import svd_inverse_3d
 from utils.animate import animate_comparaison
 
 
-def load_data(svd_path, doe_path):
-    svd = np.load(svd_path)
-    G   = svd['G'].astype(np.float64)          # (ns, nf_eff)
-
-    doe = np.load(doe_path)
-    if doe.dtype.names:
-        theta = np.column_stack([doe[k] for k in doe.dtype.names]).astype(np.float64)
-    else:
-        theta = doe.astype(np.float64)          # (ns, theta_dim)
+def load_data(svd_path, theta):
+    svd   = np.load(svd_path)
+    G     = svd['G'].astype(np.float64)          # (ns, nf_eff)
+    theta = np.asarray(theta, dtype=np.float64)  # (ns, theta_dim)
 
     assert theta.shape[0] == G.shape[0]
     return theta, G, svd
 
 
-def train_and_evaluate(svd_path, doe_path, concentration_path, step=5, degree=2, alpha=1.0, seed=42, ckpt_path='checkpoints/SVDSurrogate_sklearn.pkl'):
-    theta, G, svd = load_data(svd_path, doe_path)
+def train_and_evaluate(svd_path, theta, concentration, step=5, seed=42, nf_max=None, ckpt_path='checkpoints/SVDSurrogate_sklearn.pkl'):
+    theta, G, svd = load_data(svd_path, theta)
+    if nf_max is not None:
+        G = G[:, :nf_max]
     ns = theta.shape[0]
+
+    # Pondérer G par alph : le modèle apprend G_tilde = G * alph
+    # (proportionnel à la contribution réelle au champ, métrique alignée avec L2 champ)
+    alph_train = svd['alph']
+    if nf_max is not None:
+        alph_train = alph_train[:nf_max]
+    G_tilde = G * alph_train[None, :]
 
     rng = np.random.default_rng(seed)
     idx = rng.permutation(ns)
@@ -39,22 +44,28 @@ def train_and_evaluate(svd_path, doe_path, concentration_path, step=5, degree=2,
     val_idx   = idx[n_train:n_train + n_val]
     test_idx  = idx[n_train + n_val:]
 
-    theta_train, G_train = theta[train_idx], G[train_idx]
-    theta_val,   G_val   = theta[val_idx],   G[val_idx]
-    theta_test,  G_test  = theta[test_idx],  G[test_idx]
+    theta_train, G_train = theta[train_idx], G_tilde[train_idx]
+    theta_val,   G_val   = theta[val_idx],   G_tilde[val_idx]
+    theta_test,  G_test  = theta[test_idx],  G[test_idx]  # G original pour évaluation via svd_inverse_3d
 
     # Pipeline : features polynomiales + régression Ridge
-    model = Pipeline([
-        ('poly',  PolynomialFeatures(degree=degree, include_bias=True)),
-        ('scale', StandardScaler()),
-        ('ridge', Ridge(alpha=alpha)),
-    ])
+    model = XGBRegressor(
+        n_estimators=200,
+        max_depth=5,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=seed,
+        n_jobs=-1,
+        verbosity=0,
+        device = "cuda:0"
+    )
 
     model.fit(theta_train, G_train)
 
     val_pred  = model.predict(theta_val)
     val_mse   = np.mean((val_pred - G_val) ** 2)
-    print(f"Degré={degree}  alpha={alpha}  |  Val MSE (espace G) : {val_mse:.4e}")
+    print(f"Val MSE (espace G) : {val_mse:.4e}")
 
     # Sauvegarde
     os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
@@ -63,15 +74,18 @@ def train_and_evaluate(svd_path, doe_path, concentration_path, step=5, degree=2,
 
     # Évaluation test
     F, P, alph = svd['F'], svd['P'], svd['alph']
+    if nf_max is not None:
+        F, P, alph = F[:, :nf_max], P[:, :nf_max], alph[:nf_max]
     nr, nf_eff = F.shape
     Nt         = P.shape[0]
     Hsub = Wsub = int(np.round(np.sqrt(nr)))
     assert Hsub * Wsub == nr, "Grille non carrée — ajuste Hsub/Wsub manuellement"
 
-    concentration = np.load(concentration_path)
-    conc_sub = concentration[:, :, ::step, ::step]  # (ns, Nt, Hsub, Wsub)
+    conc_sub = np.asarray(concentration)[:, :, ::step, ::step]
 
-    test_pred = model.predict(theta_test)   # (n_test, nf_eff)
+    # Le modèle prédit G_tilde = G * alph → diviser par alph pour retrouver G
+    test_pred_tilde = model.predict(theta_test)   # (n_test, nf_eff)
+    test_pred = test_pred_tilde / alph[None, :]
 
     def to_field(G_row):
         return svd_inverse_3d(F, G_row[None, :], P, alph)[:, 0, :].reshape(Hsub, Wsub, Nt).transpose(2, 0, 1)
@@ -143,16 +157,14 @@ def train_and_evaluate(svd_path, doe_path, concentration_path, step=5, degree=2,
 
 
 if __name__ == '__main__':
-    results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'Results')
-
-    svd_path  = os.path.join(results_dir, 'svd_train.npz')
-    doe_path  = os.path.join(results_dir, 'doe.npy')
+    svd_path  = os.path.join('dataset', 'svd_train_diff.npz')
     ckpt_path = os.path.join('checkpoints', 'SVDSurrogate_sklearn.pkl')
 
-    degree = 3
-    alpha  = 1.0   # régularisation Ridge
+    data          = np.load(os.path.join('dataset', 'dataset_transient.npz'))
+    theta         = data['theta']   # (ns, theta_dim)
+    concentration = data['U']       # (ns, Nt, H, W)
 
-    concentration_path = os.path.join(results_dir, 'CH4.npy')
-    step = 5
+    step   = 2
+    nf_max = 20  # ne garder que les 20 premiers modes SVD
 
-    train_and_evaluate(svd_path, doe_path, concentration_path, step=step, degree=degree, alpha=alpha, ckpt_path=ckpt_path)
+    train_and_evaluate(svd_path, theta, concentration, step=step, nf_max=nf_max, ckpt_path=ckpt_path)

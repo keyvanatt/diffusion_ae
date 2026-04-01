@@ -14,11 +14,18 @@ class SVDSurrogate(nn.Module):
         super().__init__()
         self.nf_eff = nf_eff
         self.fc = nn.Sequential(
-            nn.Linear(theta_dim, 128),
+            nn.Linear(theta_dim, 256),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Dropout(0.02),
+            nn.Linear(256, 512),
             nn.ReLU(),
-            nn.Linear(64, nf_eff),
+            nn.Dropout(0.02),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Dropout(0.02),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, nf_eff),
         )
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:

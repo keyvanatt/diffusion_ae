@@ -15,7 +15,7 @@ from models.svd_surrogate import SVDSurrogate
 
 def train(
     svd_path,
-    doe_path,
+    theta,
     epochs     = 500,
     batch_size = 64,
     lr         = 1e-3,
@@ -25,15 +25,15 @@ def train(
     ckpt_dir   = 'checkpoints',
 ):
     # --- Données ---
-    svd  = np.load(svd_path)
-    G    = svd['G'].astype(np.float32)       # (ns, nf_eff)
-    doe  = np.load(doe_path)
-    if doe.dtype.names:                       # structured array
-        theta = np.column_stack([doe[k] for k in doe.dtype.names]).astype(np.float32)
-    else:
-        theta = doe.astype(np.float32)        # (ns, theta_dim)
+    svd   = np.load(svd_path)
+    G     = svd['G'].astype(np.float32)       # (ns, nf_eff)
+    alph  = svd['alph'].astype(np.float32)    # (nf_eff,)
+    theta = np.asarray(theta, dtype=np.float32)  # (ns, theta_dim)
 
-    assert theta.shape[0] == G.shape[0], "doe et G doivent avoir le même nombre de simulations"
+    # Pondérer G par alph pour que la loss MSE soit alignée avec l'erreur L2 champ
+    G = G * alph[None, :]
+
+    assert theta.shape[0] == G.shape[0], "theta et G doivent avoir le même nombre de simulations"
     ns, nf_eff   = G.shape
     theta_dim    = theta.shape[1]
     print(f"ns={ns}  nf_eff={nf_eff}  theta_dim={theta_dim}")
@@ -82,8 +82,8 @@ def train(
     ))
     wandb.watch(model, log='gradients', log_freq=50)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=7)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=3e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=20, min_lr=1e-6)
     criterion = nn.MSELoss()
 
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -131,6 +131,7 @@ def train(
                 'theta_std': theta_std,
                 'G_mean': G_mean,
                 'G_std': G_std,
+                'alph': alph,
                 'test_idx': test_idx.numpy(),
             }, best_path)
         else:
@@ -154,7 +155,7 @@ def train(
     wandb.finish()
 
 
-def evaluate(svd_path, doe_path, concentration_path, ckpt_path, step=5, n_animate=3):
+def evaluate(svd_path, theta, concentration, ckpt_path, step=5, n_animate=3):
     """
     Évalue le surrogate sur le test set contre deux références :
       1. La reconstruction SVD (G_true → champ reconstruit)
@@ -180,26 +181,24 @@ def evaluate(svd_path, doe_path, concentration_path, ckpt_path, step=5, n_animat
     Hsub = Wsub = int(np.round(np.sqrt(nr)))
     assert Hsub * Wsub == nr, "Grille non carrée — ajuste Hsub/Wsub manuellement"
 
-    doe = np.load(doe_path)
-    if doe.dtype.names:
-        theta = np.column_stack([doe[k] for k in doe.dtype.names]).astype(np.float32)
-    else:
-        theta = doe.astype(np.float32)
+    theta = np.asarray(theta, dtype=np.float32)
 
     # Champ original sous-échantillonné : (ns, Nt, Hsub, Wsub)
-    concentration = np.load(concentration_path)
-    conc_sub = concentration[:, :, ::step, ::step]  # (ns, Nt, Hsub, Wsub)
+    conc_sub = np.asarray(concentration)[:, :, ::step, ::step]
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = SVDSurrogate(nf_eff=nf_eff, theta_dim=ckpt['theta_dim']).to(device)
     model.load_state_dict(ckpt['model_state'])
     model.eval()
 
+    alph_ckpt = ckpt['alph']  # pondération sauvegardée
+
     theta_test = theta[test_idx]
     theta_n    = (theta_test - theta_mean) / theta_std
     with torch.no_grad():
         G_pred_n = model(torch.tensor(theta_n).to(device)).cpu().numpy()
-    G_pred = G_pred_n * G_std + G_mean
+    # Dénormaliser z-score → G*alph, puis diviser par alph → G
+    G_pred = (G_pred_n * G_std + G_mean) / alph_ckpt[None, :]
     G_true = G_full[test_idx]
 
     def to_field(G_row):
@@ -275,22 +274,23 @@ def evaluate(svd_path, doe_path, concentration_path, ckpt_path, step=5, n_animat
 
 
 if __name__ == '__main__':
-    results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'Results')
+    dir = os.path.join(os.path.dirname(__file__), '..', 'dataset')
 
-    svd_path  = os.path.join(results_dir, 'svd_train.npz')
-    doe_path  = os.path.join(results_dir, 'doe_rotated.npy')
+    svd_path  = os.path.join("dataset", 'svd_train_diff.npz')
     ckpt_path = os.path.join('checkpoints', 'SVDSurrogate_best.pt')
 
+    theta = np.load(os.path.join("dataset", "dataset_transient.npz"))['theta']  # (ns, theta_dim)
     train(
         svd_path   = svd_path,
-        doe_path   = doe_path,
-        epochs     = 150,
-        batch_size = 64,
+        theta      = theta,
+        epochs     = 600,
+        batch_size = 256,
         lr         = 1e-3,
         patience   = 50,
     )
 
-    concentration_path = os.path.join(results_dir, 'ch4_rotated.npy')
-    step = 5
+    data = np.load(os.path.join("dataset", "dataset_transient.npz"))
+    concentration = data['U']  # (ns, Nt, H, W)
+    step = 2
 
-    evaluate(svd_path, doe_path, concentration_path, ckpt_path, step=step, n_animate=3)
+    evaluate(svd_path, theta, concentration, ckpt_path, step=step, n_animate=3)
