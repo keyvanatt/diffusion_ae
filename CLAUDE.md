@@ -93,7 +93,10 @@ A second pipeline operates on a separate dataset of CH4 concentration fields `(n
 - Key metric: **L2 relative error** (comparable to `learn_svd` output)
 - Histograms (log x-scale) and animations (best/median/worst) saved in `plots/`
 
-**Known limitation:** With ~150 samples, both surrogates give ~60% L2rel error vs ~13-17% for SVD alone. The bottleneck is likely that G does not vary smoothly with theta at this sample size. Consider per-simulation SVD or more samples.
+**Known limitation (ancien dataset):** Avec ~150 samples (`CH4.npy`), les deux surrogates donnent ~60% d'erreur L2rel vs ~13-17% pour le SVD seul. Le goulot d'étranglement est que G ne varie pas lissément avec theta à cette taille.
+
+**Nouveau dataset — `dataset_transient.npz` (~5 000 samples) :**
+Ce dataset transient remplace avantageusement les ~150 samples initiaux. La pipeline SVD (`utils/learn_svd.py`, `utils/train_surrogate_svd.py`, `utils/train_surrogate_svd_sklearn.py`) est **compatible telle quelle** — il suffit de pointer vers `dataset_transient.npz` à la place de `CH4.npy` / `doe.npy`. Le gain en samples devrait significativement réduire l'erreur surrogate.
 
 **SVD implementation note:** In `svd_3d_gpu`, denominators must be recomputed sequentially after each R/S/T update (not precomputed) to avoid NaN divergence.
 
