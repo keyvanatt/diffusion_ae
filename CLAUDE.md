@@ -11,93 +11,129 @@ The project uses a local conda environment at `.conda/`. Always run scripts with
 
 All scripts add their parent directory to `sys.path`, so they must be run from the repo root.
 
-## Running scripts
+---
+
+# Partie 1 — Dataset stationnaire (convection-diffusion 2D)
+
+Objectif : émuler un solveur EDP de convection-diffusion 2D. Donnés des paramètres physiques θ = (D, bx, by, f), prédire le champ de solution stationnaire U sur une grille N×N.
+
+## Données
+
+- `utils/sim.py` — solveur FEniCS/DOLFINx, produit des solutions FEM interpolées sur une grille N×N via scipy.
+- `utils/dataset_generator.py` — échantillonne des θ aléatoires, lance le simulateur, sauvegarde dans `dataset/dataset.npz`.
+- `utils/dataset.py` — `ConvDiffDataset` : charge `.npz`, applique une normalisation ajustée sur le train. Appeler `dataset.fit(train_indices)` avant l'entraînement. Retourne des paires `(theta_norm, U_norm)`.
+
+**Normalisation :** U est centré-normalisé (soustraction de la moyenne par pixel du train, puis min-max vers [-1, 1]). Les stats sont stockées dans les checkpoints. θ est normalisé z-score avec des stats pré-calculées lors de la génération.
+
+## Pipelines
+
+**Pipeline VAE + décodeur (deux étapes) :**
+1. **Étape AE** (`utils/train_ae.py`) : entraîne un VAE pour compresser les champs U dans un espace latent z.
+2. **Étape décodeur** (`utils/train_decoder.py`) : entraîne un décodeur θ → U (directement, ou via θ → z → U avec le décodeur VAE gelé).
+
+**Modèles :**
+- `models/base.py` — classes abstraites `BaseAutoEncoder` et `BaseDecoder`. Tous les modèles doivent implémenter `loss()`.
+- `models/variationalAutoEncoder.py` — `VAE` (encodeur + décodeur), plus `IndirectDecoder` qui projette θ dans l'espace latent du VAE et réutilise son décodeur gelé.
+- `models/direct_decoder.py` — `DirectDecoder` et `DirectDecoderDenseOut` (θ → U directement, sans AE).
+
+**Contrainte d'architecture :** `VAE.Decoder` et `DirectDecoderDenseOut` utilisent `base = N // 32` (N doit être multiple de 32, ex. N=32 pour MNIST, N=64 pour le dataset physique). `DirectDecoder` utilise `base = N // 16` (N multiple de 16).
+
+## Inférence et visualisation
+
+`main.py` expose deux fonctions à réutiliser dans tout nouveau script d'inférence :
+- `load_model(ckpt_path, device)` — détecte automatiquement le type de modèle depuis le checkpoint.
+- `run_inference(theta_raw, model, ckpt, device)` — normalise θ, lance le décodeur, dénormalise U vers les valeurs physiques.
+
+**Toujours importer et réutiliser ces fonctions** plutôt que de réimplémenter le chargement de modèle ou la dénormalisation.
+
+`app.py` est une app Streamlit qui enveloppe ces deux fonctions. Elle expose des sliders pour θ (D, |b|, angle, f — l'app convertit polaire → (bx, by) en interne), permet de choisir un checkpoint, et compare optionnellement la prédiction avec l'échantillon le plus proche du dataset. Utilise `@st.cache_resource` pour le modèle et `@st.cache_data` pour le dataset.
+
+## Commandes
 
 ```bash
-# Generate the physics dataset (requires FEniCS/DOLFINx)
+# Générer le dataset physique (requiert FEniCS/DOLFINx)
 .conda/bin/python utils/dataset_generator.py
 
-# Train the VAE on the physics dataset
+# Entraîner le VAE sur le dataset physique
 .conda/bin/python utils/train_ae.py
 
-# Train the VAE on MNIST
+# Entraîner le VAE sur MNIST
 .conda/bin/python utils/train_ae_mnist.py
 
-# Train a direct decoder (theta → U, no latent)
+# Entraîner un décodeur direct (theta → U, sans latent)
 .conda/bin/python utils/train_decoder.py
 
-# Run inference
+# Inférence
 .conda/bin/python main.py --theta 0.02 0.5 0.3 10.0 --plot
 
-# Launch the Streamlit visualization app
+# App Streamlit
 .conda/bin/streamlit run app.py
 ```
 
-## Architecture overview
-
-The project learns to emulate a 2D convection-diffusion PDE solver: given physics parameters θ = (D, bx, by, f), predict the solution field U on an N×N grid.
-
-**Two-stage pipeline:**
-1. **AE stage** (`utils/train_ae.py`): Train a VAE to compress U fields into a latent space z.
-2. **Decoder stage** (`utils/train_decoder.py`): Train a decoder that maps θ → U (either directly, or via θ → z → U using the frozen VAE decoder).
-
-**Model hierarchy:**
-- `models/base.py` — `BaseAutoEncoder` and `BaseDecoder` abstract base classes. All models must implement `loss()`.
-- `models/variationalAutoEncoder.py` — `VAE` (encoder + decoder), plus `IndirectDecoder` which projects θ into the VAE's latent space and reuses its frozen decoder.
-- `models/direct_decoder.py` — `DirectDecoder` and `DirectDecoderDenseOut` (θ → U directly, no AE).
-
-**Data flow:**
-- `utils/sim.py` — FEniCS/DOLFINx solver that produces FEM solutions, interpolated to N×N grids via scipy.
-- `utils/dataset_generator.py` — samples random θ, runs the simulator, saves to `dataset/dataset.npz`.
-- `utils/dataset.py` — `ConvDiffDataset`: loads `.npz`, applies train-set-fitted normalization. Must call `dataset.fit(train_indices)` before training. Returns `(theta_norm, U_norm)` pairs.
-
-**Normalization:**
-U is center-normalized (subtract per-pixel train mean, then min-max scale to [-1, 1]). Stats are stored in checkpoints. θ is z-score normalized using stats pre-computed during dataset generation.
-
-## Decoder architecture constraint
-
-Both `VAE.Decoder` and `DirectDecoderDenseOut` use `base = N // 32`, so **N must be a multiple of 32** (e.g. N=32 for MNIST, N=64 for the physics dataset). `DirectDecoder` uses `base = N // 16`, so N must be a multiple of 16.
-
-## Inference and visualization
-
-`main.py` exposes two functions that must be reused by any new script needing inference:
-- `load_model(ckpt_path, device)` — auto-detects model type from checkpoint, reconstructs the model.
-- `run_inference(theta_raw, model, ckpt, device)` — normalizes θ, runs the decoder, denormalizes U back to physical values.
-
-**Always import and reuse these functions** rather than reimplementing model loading or denormalization logic.
-
-`app.py` is a Streamlit app that wraps these two functions. It exposes sliders for θ (D, |b|, angle, f — the app converts polar to (bx, by) internally), lets the user pick a checkpoint, and optionally compares the prediction against the nearest dataset sample. The app uses `@st.cache_resource` for the model and `@st.cache_data` for the dataset.
-
 ## Experiment tracking
 
-All training scripts log to [Weights & Biases](https://wandb.ai) (project `convdiff`). Checkpoints are saved to `checkpoints/<ModelName>_best.pt`. The best model is selected on `val/recon` if available, else `val/loss`.
+Tous les scripts loggent sur [Weights & Biases](https://wandb.ai) (projet `convdiff`). Les checkpoints sont sauvegardés dans `checkpoints/<ModelName>_best.pt`. Le meilleur modèle est sélectionné sur `val/recon` si disponible, sinon `val/loss`.
 
-## SVD-based surrogate pipeline (Amine dataset)
+---
 
-A second pipeline operates on a separate dataset of CH4 concentration fields `(ns, T, H, W)` with parameters `doe` = `(k, A, C, theta)`.
+# Partie 2 — Dataset transitoire (champs temporels)
 
-**Data:** `dataset/Results/CH4.npy` (or `ch4_rotated.npy`), `dataset/Results/doe.npy` (or `doe_rotated.npy`)
+Objectif : émuler des champs de concentration CH4 transitoires `U(t)` en fonction de paramètres θ. Deux datasets disponibles, même objectif :
 
-**Step 1 — Tucker SVD decomposition** (`utils/learn_svd.py`):
-- Spatial subsampling (default `step=5`), reshape to `HH (nr, ns, Nt)`
-- `svd_3d_gpu` from `utils/SVD_Amine_3D.py` decomposes HH into `F (nr, nf_eff)`, `G (ns, nf_eff)`, `P (Nt, nf_eff)`, `alph (nf_eff,)`
-- `G` encodes per-simulation coefficients — this is what the surrogate must learn to predict from theta
-- Saves `dataset/Results/svd_train.npz`; also saves a comparison GIF in `plots/` for visual check
+- **CH4 (ancien, ~150 samples)** : `dataset/Results/CH4.npy` + `dataset/Results/doe.npy` (ou versions `_rotated`). Paramètres `doe = (k, A, C, theta)`. Format `(ns, T, H, W)`.
+- **dataset_transient (~5 000 samples)** : `dataset/dataset_transient.npz`. Contient `U (ns, Nt, N, N)`, `theta (ns, theta_dim)`, `dt`. À préférer — le gain en samples réduit significativement l'erreur surrogate.
 
-**Step 2 — Surrogate training** (two versions):
-- `utils/train_surrogate_svd.py` — MLP PyTorch (`SVDSurrogate` in `models/svd_surrogate.py`), logs to W&B, saves `test_idx` in checkpoint
-- `utils/train_surrogate_svd_sklearn.py` — sklearn Pipeline (`PolynomialFeatures + StandardScaler + Ridge`), saved with `joblib`
+## Pipeline 1 — SVD Tucker + surrogate
 
-**Evaluation** (both scripts):
-- Metrics computed against two references: SVD reconstruction (G_true → field) and original concentration
-- Key metric: **L2 relative error** (comparable to `learn_svd` output)
-- Histograms (log x-scale) and animations (best/median/worst) saved in `plots/`
+**Principe :** décomposer les champs via Tucker SVD pour extraire des coefficients `G` par simulation, puis apprendre θ → G.
 
-**Known limitation (ancien dataset):** Avec ~150 samples (`CH4.npy`), les deux surrogates donnent ~60% d'erreur L2rel vs ~13-17% pour le SVD seul. Le goulot d'étranglement est que G ne varie pas lissément avec theta à cette taille.
+**Étape 1 — Décomposition Tucker SVD** (`utils/learn_svd.py`) :
+- Sous-échantillonnage spatial (défaut `step=5`), reshape en `HH (nr, ns, Nt)`
+- `svd_3d_gpu` de `utils/SVD_Amine_3D.py` décompose HH en `F (nr, nf_eff)`, `G (ns, nf_eff)`, `P (Nt, nf_eff)`, `alph (nf_eff,)`
+- `G` encode les coefficients par simulation — c'est ce que le surrogate doit apprendre à prédire depuis theta
+- Sauvegarde `dataset/Results/svd_train.npz` ; sauvegarde aussi un GIF de comparaison dans `plots/`
 
-**Nouveau dataset — `dataset_transient.npz` (~5 000 samples) :**
-Ce dataset transient remplace avantageusement les ~150 samples initiaux. La pipeline SVD (`utils/learn_svd.py`, `utils/train_surrogate_svd.py`, `utils/train_surrogate_svd_sklearn.py`) est **compatible telle quelle** — il suffit de pointer vers `dataset_transient.npz` à la place de `CH4.npy` / `doe.npy`. Le gain en samples devrait significativement réduire l'erreur surrogate.
+**Étape 2 — Entraînement surrogate** (deux versions) :
+- `utils/train_surrogate_svd.py` — MLP PyTorch (`SVDSurrogate` dans `models/svd_surrogate.py`), logs W&B, sauvegarde `test_idx` dans le checkpoint
+- `utils/train_surrogate_svd_sklearn.py` — sklearn Pipeline (`PolynomialFeatures + StandardScaler + Ridge`), sauvegardé avec `joblib`
 
-**SVD implementation note:** In `svd_3d_gpu`, denominators must be recomputed sequentially after each R/S/T update (not precomputed) to avoid NaN divergence.
+**Évaluation** (les deux scripts) :
+- Métriques calculées par rapport à deux références : reconstruction SVD (G_true → champ) et concentration originale
+- Métrique clé : **erreur L2 relative** (comparable à la sortie de `learn_svd`)
+- Histogrammes (échelle log en x) et animations (meilleur/médian/pire) sauvegardés dans `plots/`
 
+**Limitation connue (CH4.npy) :** avec ~150 samples, les deux surrogates donnent ~60% d'erreur L2rel vs ~13-17% pour le SVD seul. Le goulot d'étranglement est que G ne varie pas lissément avec theta à cette taille.
 
+**Note d'implémentation SVD :** dans `svd_3d_gpu`, les dénominateurs doivent être recalculés séquentiellement après chaque mise à jour R/S/T (pas pré-calculés) pour éviter la divergence NaN.
+
+```bash
+.conda/bin/python utils/learn_svd.py
+.conda/bin/python utils/train_surrogate_svd.py
+# ou
+.conda/bin/python utils/train_surrogate_svd_sklearn.py
+```
+
+## Pipeline 2 — Surrogate dans l'espace de Laplace
+
+**Principe :** au lieu de prédire U(t) directement, prédire sa transformée de Laplace numérique $\hat{U}(s_k)$ pour chaque fréquence complexe $s_k = \gamma + i\omega_k$, puis reconstruire U(t) par transformée inverse. Un MLP indépendant est entraîné par fréquence.
+
+**Fichiers clés :**
+- `utils/laplace.py` — `laplace_forward` et `laplace_inverse` : quadrature trapézoïdale ou rectangulaire sur le signal discret.
+- `models/laplace_surrogate.py` — `LaplaceSurrogate(s, N, theta_dim)` : MLP → ConvTranspose2d, prédit `(Re(Û), Im(Û))` soit `(B, 2, N, N)`. Architecture : `base = N // 16` (N doit être multiple de 16). Une instance par fréquence.
+- `utils/train_laplace.py` — script principal avec 4 fonctions :
+  - `to_laplace(U, dt, gamma, rule)` → `(U_laplace (ns, Nt_half, 2, N, N), s, Nt)` — exploite la symétrie conjuguée (seules Nt/2+1 fréquences sont indépendantes).
+  - `train_one(k, s_k, ...)` → entraîne un `LaplaceSurrogate` pour la fréquence k, sauvegarde dans `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`.
+  - `train_all(U_laplace, theta, s, ...)` → boucle sur toutes les fréquences, log W&B global, retourne `test_idx`.
+  - `predict(theta, ckpt_dir, dt, gamma, rule)` → charge tous les checkpoints, reconstruit le spectre complet par symétrie conjuguée, inverse Laplace → `U_pred (B, Nt, N, N)`.
+  - `evaluate(U, theta, test_idx, ...)` → MSE + erreur L2 relative, histogramme + animations GIF dans `plots/`.
+
+**Checkpoints :** `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`, un par fréquence. Chaque checkpoint stocke `theta_mean/std`, `target_mean/std`, `N`, `Nt`, `theta_dim`, `freq_idx`, `s_k_real/imag`.
+
+**Normalisation :** theta z-score global (stats train) ; target z-score par fréquence (moyenne sur pixels et batch du train set).
+
+**Symétrie conjuguée :** seules les `Nt_half = Nt//2 + 1` premières fréquences sont entraînées. À l'inférence, le spectre complet est reconstruit par `M[Nt-k] = conj(M[k])`.
+
+```bash
+.conda/bin/python utils/train_laplace.py
+# Mettre EVALUATE = True dans __main__ pour évaluer sans réentraîner
+```
