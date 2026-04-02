@@ -20,6 +20,24 @@ import matplotlib.tri as mtri
 
 print(f"DOLFINx version : {dolfinx.__version__}") # pyright: ignore[reportPrivateImportUsage]
 
+def _obstacle_bc(V, rect):
+    """
+    Retourne un DirichletBC u=0 sur les dofs à l'intérieur du rectangle.
+
+    rect : (x0, y0, x1, y1) avec x0 < x1 et y0 < y1, en coordonnées du domaine [0,1]²
+    Retourne None si rect est None.
+    """
+    if rect is None:
+        return None
+    rx0, ry0, rx1, ry1 = rect
+    assert rx0 < rx1 and ry0 < ry1, \
+        f"Rectangle invalide : rect={rect} — vérifier que x0<x1 et y0<y1"
+    obs_dofs = dolfinx.fem.locate_dofs_geometrical(
+        V, lambda x: (x[0] >= rx0) & (x[0] <= rx1) & (x[1] >= ry0) & (x[1] <= ry1)
+    )
+    return dolfinx.fem.dirichletbc(PETSc.ScalarType(0.0), obs_dofs, V)
+
+
 def add_point_source(b_vec, V, x0_2d, magnitude):
     """
     Injecte f·δ(x−x0) dans le vecteur RHS.
@@ -127,24 +145,32 @@ class ConvDiffSimulator:
         self.ksp.setFromOptions()
 
     def solve(self, D: float, b_val: np.ndarray, f: float,
-              x0: np.ndarray) -> dolfinx.fem.Function:
+              x0: np.ndarray, rect=None) -> dolfinx.fem.Function:
+        if rect is not None:
+            assert not (rect[0] <= x0[0] <= rect[2] and rect[1] <= x0[1] <= rect[3]), \
+                f"La source x0={x0} est à l'intérieur de l'obstacle rect={rect}"
+        bcs = [self.bc]
+        obs_bc = _obstacle_bc(self.V, rect)
+        if obs_bc is not None:
+            bcs.append(obs_bc)
+
         # Mise à jour des constantes
         self.D_c.value    = D
         self.b_c.value[:] = b_val
 
         # Réassemblage de A
         self.A.zeroEntries()
-        dolfinx.fem.petsc.assemble_matrix(self.A, self.a_form, bcs=[self.bc])
+        dolfinx.fem.petsc.assemble_matrix(self.A, self.a_form, bcs=bcs)
         self.A.assemble()
 
         # Réassemblage du RHS
         with self.b_rhs.localForm() as loc:
             loc.set(0)
         dolfinx.fem.petsc.assemble_vector(self.b_rhs, self.L_form)
-        dolfinx.fem.petsc.apply_lifting(self.b_rhs, [self.a_form], bcs=[[self.bc]])
+        dolfinx.fem.petsc.apply_lifting(self.b_rhs, [self.a_form], bcs=[bcs])
         self.b_rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
         add_point_source(self.b_rhs, self.V, x0, f)
-        dolfinx.fem.petsc.set_bc(self.b_rhs, [self.bc])
+        dolfinx.fem.petsc.set_bc(self.b_rhs, bcs)
 
         u_sol = dolfinx.fem.Function(self.V)
         self.ksp.setOperators(self.A)
@@ -160,10 +186,11 @@ def simulate(
     x0=np.array([0.5, 0.5]),
     n=64,
     use_supg=True,
+    rect=None,
 ):
     """Wrapper one-shot — pour les appels ponctuels (benchmark, tests).
     Pour générer un dataset, préférer ConvDiffSimulator."""
-    return ConvDiffSimulator(n=n, use_supg=use_supg).solve(D, b_val, f, x0)
+    return ConvDiffSimulator(n=n, use_supg=use_supg).solve(D, b_val, f, x0, rect=rect)
 
 
 class ConvDiffTransientSimulator:
@@ -250,6 +277,7 @@ class ConvDiffTransientSimulator:
         self, D: float, b_val: np.ndarray, f: float,
         x0: np.ndarray, n_steps: int,
         tol: float = 1e-4,
+        rect=None,
     ) -> list:
         """
         Résout jusqu'à n_steps pas de temps (pas = dt).
@@ -257,7 +285,17 @@ class ConvDiffTransientSimulator:
 
         Arrêt anticipé dès que ||u^{n+1} − u^n|| / ||u^n|| < tol
         (régime stationnaire atteint). Mettre tol=0 pour désactiver.
+
+        rect : (x0, y0, x1, y1) — obstacle rectangulaire, u=0 à l'intérieur.
         """
+        if rect is not None:
+            assert not (rect[0] <= x0[0] <= rect[2] and rect[1] <= x0[1] <= rect[3]), \
+                f"La source x0={x0} est à l'intérieur de l'obstacle rect={rect}"
+        bcs = [self.bc]
+        obs_bc = _obstacle_bc(self.V, rect)
+        if obs_bc is not None:
+            bcs.append(obs_bc)
+
         self.D_c.value    = D
         self.b_c.value[:] = b_val
 
@@ -266,7 +304,7 @@ class ConvDiffTransientSimulator:
 
         # Matrice de gauche (ne dépend pas de t ni de u^n)
         self.A.zeroEntries()
-        dolfinx.fem.petsc.assemble_matrix(self.A, self.a_form, bcs=[self.bc])
+        dolfinx.fem.petsc.assemble_matrix(self.A, self.a_form, bcs=bcs)
         self.A.assemble()
         self.ksp.setOperators(self.A)
 
@@ -276,9 +314,9 @@ class ConvDiffTransientSimulator:
                 loc.set(0)
             dolfinx.fem.petsc.assemble_vector(self.b_rhs, self.L_form)
             add_point_source(self.b_rhs, self.V, x0, self.dt_val * f)
-            dolfinx.fem.petsc.apply_lifting(self.b_rhs, [self.a_form], bcs=[[self.bc]])
+            dolfinx.fem.petsc.apply_lifting(self.b_rhs, [self.a_form], bcs=[bcs])
             self.b_rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-            dolfinx.fem.petsc.set_bc(self.b_rhs, [self.bc])
+            dolfinx.fem.petsc.set_bc(self.b_rhs, bcs)
 
             u_new = dolfinx.fem.Function(self.V)
             self.ksp.solve(self.b_rhs, u_new.x.petsc_vec)
@@ -308,11 +346,12 @@ def simulate_transient(
     dt=0.01,
     n_steps=100,
     use_supg=True,
+    rect=None,
 ):
     """Wrapper one-shot pour la simulation transitoire.
     Pour générer un dataset, préférer ConvDiffTransientSimulator."""
     return ConvDiffTransientSimulator(n=n, dt=dt, use_supg=use_supg).solve(
-        D, b_val, f, x0, n_steps
+        D, b_val, f, x0, n_steps, rect=rect
     )
 
 
@@ -342,13 +381,14 @@ def to_grid(u_sol, N_out=64):
     U = griddata(coords, u_fem, (XX, YY), method='linear', fill_value=0.0)
     return U.astype(np.float32)
 
-def plot_sol(u_sol):
+def plot_sol(u_sol, rect=None):
     """
     Affiche la solution u_sol à l'aide de Matplotlib.
 
     u_sol : fonction FEM
+    rect  : (x0, y0, x1, y1) obstacle rectangulaire à superposer (optionnel)
     """
-
+    import matplotlib.patches as mpatches
 
     msh = u_sol.function_space.mesh
 
@@ -365,7 +405,6 @@ def plot_sol(u_sol):
     plt.colorbar(cf, ax=ax, label="u")
     ax.set_title("Solution u colormap")
     ax.set_aspect('equal')
-    ax.legend(loc='upper right', fontsize=8)
 
     # Courbes de niveau
     ax = axes[1]
@@ -373,6 +412,14 @@ def plot_sol(u_sol):
     plt.colorbar(ct, ax=ax, label="u")
     ax.set_title("Isolignes")
     ax.set_aspect('equal')
+
+    if rect is not None:
+        rx0, ry0, rx1, ry1 = rect
+        for ax in axes:
+            ax.add_patch(mpatches.Rectangle(
+                (rx0, ry0), rx1 - rx0, ry1 - ry0,
+                linewidth=1.5, edgecolor='white', facecolor='gray', alpha=0.7
+            ))
 
     plt.tight_layout()
     plt.savefig("plots/convdiff_solution.png", dpi=150, bbox_inches='tight')
@@ -385,20 +432,27 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from utils.animate import animate
 
+    rect = (0.7, 0.45, 0.8, 0.55)   # obstacle rectangulaire (x0, y0, x1, y1)
+
     #stationaire
-    u_sol = simulate()
-    plot_sol(u_sol)
+    u_sol = simulate(
+        D=1e-2,
+        b_val=np.array([2.0, 0.0]),
+        f=10.0,
+        rect=rect)
+    plot_sol(u_sol, rect=rect)
     grid = to_grid(u_sol, N_out=64)
     plt.imsave("plots/convdiff_grid.png", grid, cmap="hot", vmin=0.0, vmax=grid.max())
     print("Grille sauvegardée → plots/convdiff_grid.png")
 
     #transitoire
     dt= 0.05
-    u_list = simulate_transient(dt=dt, 
+    u_list = simulate_transient(dt=dt,
                                 n_steps=100,
-                                D=1e-3,
-                                b_val=np.array([0, 0]),
-                                f=1,
+                                D=1e-1,
+                                b_val=np.array([2.0, 0.0]),
+                                f=10,
+                                rect=rect,
                                 )
     grids  = to_grid_sequence(u_list, N_out=64)   # (n_steps, 64, 64)
     print(f"Séquence transitoire : shape={grids.shape}, max={grids.max():.4f}")
@@ -410,6 +464,7 @@ if __name__ == "__main__":
         cmap="hot",
         label="u",
         title_fn=lambda t: f"t = {(t + 1) * dt:.3f}",
+        rect=rect,
     )
 
 

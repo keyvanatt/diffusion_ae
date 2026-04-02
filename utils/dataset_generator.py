@@ -7,6 +7,11 @@ Chaque sample est une paire :
 
 La position source est fixée à x0 = (0.5, 0.5).
 
+Avec obstacles (with_obstacles=True) :
+  rect = (rx0, ry0, rx1, ry1) stocké séparément, zeros si pas de mur.
+  has_wall = booléen par sample.
+  theta reste (D, bx, by, f) — inchangé.
+
 Stockage : fichier .npz  (numpy compressé)
 """
 
@@ -46,66 +51,142 @@ def params_to_vector(p):
     return np.array([p['D'], p['bx'], p['by'], p['f']], dtype=np.float32)
 
 
+# Contraintes sur l'obstacle
+RECT_MIN_SIDE = 0.08    # côté minimum du rectangle
+RECT_MAX_SIDE = 0.30    # côté maximum
+RECT_MIN_AREA = 0.02    # aire minimale (fraction du domaine)
+RECT_MAX_AREA = 0.10    # aire maximale
+RECT_MARGIN   = 0.05    # distance minimale au bord du domaine
+
+
+def sample_rect(rng, x0=X0_FIXED, b=None, max_tries=100):
+    """
+    Échantillonne un rectangle obstacle garanti sur la trajectoire des particules.
+
+    Stratégie selon le régime :
+    - Convection dominante (|b| > 0.3) : centre sur la ligne de courant x0 + t·b̂,
+      avec bruit gaussien perpendiculaire faible. Le mur coupe le flux.
+    - Diffusion dominante (|b| ≤ 0.3) : centre à distance t de x0 dans une
+      direction aléatoire (le champ se propage radialement).
+
+    Contraintes géométriques :
+    - Aire dans [RECT_MIN_AREA, RECT_MAX_AREA]
+    - Côtés dans [RECT_MIN_SIDE, RECT_MAX_SIDE]
+    - Distance RECT_MARGIN aux bords
+    - Ne contient pas la source x0
+
+    Retourne (rx0, ry0, rx1, ry1) ou None si échec.
+    """
+    b_norm_val = np.linalg.norm(b) if b is not None else 0.0
+
+    for _ in range(max_tries):
+        if b_norm_val > 0.3:
+            # Régime convectif : placer sur la ligne de courant
+            b_hat = b / b_norm_val                        # direction du flux
+            b_perp = np.array([-b_hat[1], b_hat[0]])     # direction perpendiculaire
+
+            t     = rng.uniform(0.08, 0.35)               # distance le long du flux
+            noise = rng.normal(0.0, 0.04)                 # bruit latéral faible
+            cx = x0[0] + t * b_hat[0] + noise * b_perp[0]
+            cy = x0[1] + t * b_hat[1] + noise * b_perp[1]
+        else:
+            # Régime diffusif : direction aléatoire à distance t
+            angle = rng.uniform(0, 2 * np.pi)
+            t     = rng.uniform(0.08, 0.30)
+            cx    = x0[0] + t * np.cos(angle)
+            cy    = x0[1] + t * np.sin(angle)
+
+        cx = float(np.clip(cx, RECT_MARGIN + 0.05, 1 - RECT_MARGIN - 0.05))
+        cy = float(np.clip(cy, RECT_MARGIN + 0.05, 1 - RECT_MARGIN - 0.05))
+
+        hw = rng.uniform(RECT_MIN_SIDE / 2, RECT_MAX_SIDE / 2)
+        hh = rng.uniform(RECT_MIN_SIDE / 2, RECT_MAX_SIDE / 2)
+
+        rx0 = max(cx - hw, RECT_MARGIN)
+        ry0 = max(cy - hh, RECT_MARGIN)
+        rx1 = min(cx + hw, 1 - RECT_MARGIN)
+        ry1 = min(cy + hh, 1 - RECT_MARGIN)
+
+        if rx1 - rx0 < RECT_MIN_SIDE or ry1 - ry0 < RECT_MIN_SIDE:
+            continue
+        area = (rx1 - rx0) * (ry1 - ry0)
+        if not (RECT_MIN_AREA <= area <= RECT_MAX_AREA):
+            continue
+        if rx0 <= x0[0] <= rx1 and ry0 <= x0[1] <= ry1:
+            continue
+
+        return (rx0, ry0, rx1, ry1)
+
+    return None   # échec — appelant doit gérer
+
+
 
 def generate_dataset(
-    n_samples  = 5000,
-    N_grid     = 64,
-    N_mesh     = 32,
-    seed       = 42,
-    output_path= 'dataset.npz',
-    use_supg   = True,
+    n_samples    = 5000,
+    N_grid       = 64,
+    N_mesh       = 32,
+    seed         = 42,
+    output_path  = 'dataset.npz',
+    use_supg     = True,
+    with_obstacles = False,
+    p_wall       = 0.5,
 ):
     """
     Génère n_samples paires (θ, U) et les sauvegarde dans output_path.
 
     Paramètres
     ----------
-    n_samples   : nombre de simulations
-    N_grid      : résolution de la grille de sortie (N×N)
-    N_mesh      : résolution du maillage FEM interne
-    seed        : graine aléatoire
-    output_path : chemin du fichier .npz de sortie
-    use_supg    : activer la stabilisation SUPG
+    n_samples      : nombre de simulations
+    N_grid         : résolution de la grille de sortie (N×N)
+    N_mesh         : résolution du maillage FEM interne
+    seed           : graine aléatoire
+    output_path    : chemin du fichier .npz de sortie
+    use_supg       : activer la stabilisation SUPG
+    with_obstacles : activer le tirage d'obstacles rectangulaires
+    p_wall         : probabilité d'avoir un mur par sample
     """
     rng = np.random.default_rng(seed)
 
-    # Pré-allouer les tableaux
-    U_all     = np.zeros((n_samples, N_grid, N_grid), dtype=np.float32)
-    theta_all = np.zeros((n_samples, 4),              dtype=np.float32)
+    U_all      = np.zeros((n_samples, N_grid, N_grid), dtype=np.float32)
+    theta_all  = np.zeros((n_samples, 4),              dtype=np.float32)
+    rect_all   = np.zeros((n_samples, 4),              dtype=np.float32)  # zeros = pas de mur
+    wall_all   = np.zeros(n_samples,                   dtype=bool)
 
-    n_ok   = 0   # simulations réussies
-    n_fail = 0   # simulations échouées
+    n_ok   = 0
+    n_fail = 0
 
-    # Compilation JIT une seule fois
     sim = ConvDiffSimulator(n=N_mesh, use_supg=use_supg)
-
     pbar = tqdm(total=n_samples, desc='Génération dataset')
 
     while n_ok < n_samples:
-
         p = sample_params(rng)
+        b = np.array([p['bx'], p['by']])
+
+        rect = None
+        if with_obstacles and rng.random() < p_wall:
+            rect = sample_rect(rng, x0=X0_FIXED, b=b)
 
         try:
-            # Résoudre l'EDP (réutilise le maillage et les formes compilées)
             u_sol = sim.solve(
                 D     = p['D'],
-                b_val = np.array([p['bx'], p['by']]),
+                b_val = b,
                 f     = p['f'],
                 x0    = X0_FIXED,
+                rect  = rect,
             )
 
-            # Interpoler sur grille N×N
             U = to_grid(u_sol, N_out=N_grid)
 
-            # Vérification basique : la solution ne doit pas diverger
             if not np.isfinite(U).all():
                 raise ValueError("Solution non finie")
             if np.abs(U).max() > 1e6:
                 raise ValueError(f"Solution divergente : max={np.abs(U).max():.2e}")
 
-            # Stocker
             U_all[n_ok]     = U
             theta_all[n_ok] = params_to_vector(p)
+            if rect is not None:
+                rect_all[n_ok] = rect
+                wall_all[n_ok] = True
             n_ok += 1
             pbar.update(1)
 
@@ -116,29 +197,28 @@ def generate_dataset(
 
     pbar.close()
 
-    # Normalisation des paramètres
     theta_mean = theta_all.mean(axis=0)
-    theta_std  = theta_all.std(axis=0) + 1e-8   # éviter division par zéro
-
+    theta_std  = theta_all.std(axis=0) + 1e-8
     theta_norm = (theta_all - theta_mean) / theta_std
 
     np.savez_compressed(
         output_path,
-        U          = U_all,          # (n_samples, N, N)   float32
-        theta      = theta_all,      # (n_samples, 4)      float32  brut
-        theta_norm = theta_norm,      # (n_samples, 4)      float32  normalisé
-        theta_mean = theta_mean,      # (4,)  pour dénormaliser plus tard
-        theta_std  = theta_std,       # (4,)
+        U          = U_all,
+        theta      = theta_all,
+        theta_norm = theta_norm,
+        theta_mean = theta_mean,
+        theta_std  = theta_std,
+        rect       = rect_all,   # (n_samples, 4)  zeros si pas de mur
+        has_wall   = wall_all,   # (n_samples,)    bool
         param_names= np.array(['D', 'bx', 'by', 'f']),
         N_grid     = np.array([N_grid]),
         N_mesh     = np.array([N_mesh]),
     )
 
     print(f"\nDataset sauvegardé → {output_path}")
-    print(f"  Samples OK    : {n_ok}")
+    print(f"  Samples OK    : {n_ok}  (dont {wall_all.sum()} avec mur)")
     print(f"  Échecs        : {n_fail}")
     print(f"  Shape U       : {U_all.shape}")
-    print(f"  Shape theta   : {theta_all.shape}")
     print(f"  Taille disque : {Path(output_path).stat().st_size / 1e6:.1f} MB")
 
     return U_all, theta_all, theta_norm
@@ -191,50 +271,62 @@ def check_dataset(path='dataset.npz'):
 
 
 def generate_dataset_transient(
-    n_samples   = 5000,
-    N_grid      = 64,
-    N_mesh      = 32,
-    dt          = 0.02,
-    n_steps     = 50,
-    seed        = 42,
-    output_path = 'dataset.npz',
-    use_supg    = True,
+    n_samples      = 5000,
+    N_grid         = 64,
+    N_mesh         = 32,
+    dt             = 0.02,
+    n_steps        = 50,
+    seed           = 42,
+    output_path    = 'dataset.npz',
+    use_supg       = True,
+    with_obstacles = False,
+    p_wall         = 0.5,
 ):
     """
     Génère n_samples séquences temporelles (θ, U) et les sauvegarde dans output_path.
 
     Paramètres
     ----------
-    n_samples   : nombre de simulations
-    N_grid      : résolution de la grille de sortie (N×N)
-    N_mesh      : résolution du maillage FEM interne
-    dt          : pas de temps
-    n_steps     : nombre de pas de temps par simulation
-    seed        : graine aléatoire
-    output_path : chemin du fichier .npz de sortie
-    use_supg    : activer la stabilisation SUPG
+    n_samples      : nombre de simulations
+    N_grid         : résolution de la grille de sortie (N×N)
+    N_mesh         : résolution du maillage FEM interne
+    dt             : pas de temps
+    n_steps        : nombre de pas de temps par simulation
+    seed           : graine aléatoire
+    output_path    : chemin du fichier .npz de sortie
+    use_supg       : activer la stabilisation SUPG
+    with_obstacles : activer le tirage d'obstacles rectangulaires
+    p_wall         : probabilité d'avoir un mur par sample
     """
     rng = np.random.default_rng(seed)
 
     U_all     = np.zeros((n_samples, n_steps, N_grid, N_grid), dtype=np.float32)
     theta_all = np.zeros((n_samples, 4),                       dtype=np.float32)
+    rect_all  = np.zeros((n_samples, 4),                       dtype=np.float32)
+    wall_all  = np.zeros(n_samples,                            dtype=bool)
 
     n_ok   = 0
     n_fail = 0
 
     sim = ConvDiffTransientSimulator(n=N_mesh, dt=dt, use_supg=use_supg)
-
     pbar = tqdm(total=n_samples, desc='Génération dataset transitoire')
 
     while n_ok < n_samples:
         p = sample_params(rng)
+        b = np.array([p['bx'], p['by']])
+
+        rect = None
+        if with_obstacles and rng.random() < p_wall:
+            rect = sample_rect(rng, x0=X0_FIXED, b=b)
+
         try:
             u_list = sim.solve(
                 D       = p['D'],
-                b_val   = np.array([p['bx'], p['by']]),
+                b_val   = b,
                 f       = p['f'],
                 x0      = X0_FIXED,
                 n_steps = n_steps,
+                rect    = rect,
             )
 
             U = to_grid_sequence(u_list, N_out=N_grid)  # (n_steps, N, N)
@@ -246,6 +338,9 @@ def generate_dataset_transient(
 
             U_all[n_ok]     = U
             theta_all[n_ok] = params_to_vector(p)
+            if rect is not None:
+                rect_all[n_ok] = rect
+                wall_all[n_ok] = True
             n_ok += 1
             pbar.update(1)
 
@@ -262,11 +357,13 @@ def generate_dataset_transient(
 
     np.savez_compressed(
         output_path,
-        U           = U_all,       # (n_samples, n_steps, N, N)  float32
-        theta       = theta_all,   # (n_samples, 4)               float32  brut
-        theta_norm  = theta_norm,  # (n_samples, 4)               float32  normalisé
-        theta_mean  = theta_mean,  # (4,)
-        theta_std   = theta_std,   # (4,)
+        U           = U_all,
+        theta       = theta_all,
+        theta_norm  = theta_norm,
+        theta_mean  = theta_mean,
+        theta_std   = theta_std,
+        rect        = rect_all,
+        has_wall    = wall_all,
         param_names = np.array(['D', 'bx', 'by', 'f']),
         N_grid      = np.array([N_grid]),
         N_mesh      = np.array([N_mesh]),
@@ -275,10 +372,9 @@ def generate_dataset_transient(
     )
 
     print(f"\nDataset sauvegardé → {output_path}")
-    print(f"  Samples OK    : {n_ok}")
+    print(f"  Samples OK    : {n_ok}  (dont {wall_all.sum()} avec mur)")
     print(f"  Échecs        : {n_fail}")
     print(f"  Shape U       : {U_all.shape}")
-    print(f"  Shape theta   : {theta_all.shape}")
     print(f"  Taille disque : {Path(output_path).stat().st_size / 1e6:.1f} MB")
 
     return U_all, theta_all, theta_norm
@@ -338,8 +434,9 @@ def check_dataset_transient(path='dataset.npz'):
 
 
 if __name__ == '__main__':
-    CHECK        = False  
-    TRANSIENT    = True    
+    CHECK          = False
+    TRANSIENT      = True
+    WITH_OBSTACLES = True  
 
     if CHECK:
         if TRANSIENT:
@@ -349,17 +446,21 @@ if __name__ == '__main__':
     else:
         if TRANSIENT:
             generate_dataset_transient(
-                n_samples   = 5_000,
-                N_grid      = 64,
-                N_mesh      = 64,
-                dt          = 0.05,
-                n_steps     = 100,
-                output_path = 'dataset/dataset_transient.npz',
+                n_samples      = 5_000,
+                N_grid         = 64,
+                N_mesh         = 64,
+                dt             = 0.05,
+                n_steps        = 100,
+                output_path    = 'dataset/dataset_transient_obstacles.npz',
+                with_obstacles = WITH_OBSTACLES,
+                p_wall         = 0.8,
             )
         else:
             generate_dataset(
-                n_samples   = 50_000,
-                N_grid      = 64,
-                N_mesh      = 64,
-                output_path = 'dataset/dataset_huge.npz',
+                n_samples      = 50_000,
+                N_grid         = 64,
+                N_mesh         = 64,
+                output_path    = 'dataset/dataset_huge.npz',
+                with_obstacles = WITH_OBSTACLES,
+                p_wall         = 0.8,
             )

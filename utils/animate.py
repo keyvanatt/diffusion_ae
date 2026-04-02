@@ -6,6 +6,26 @@ import matplotlib.animation as animation
 import matplotlib.cm as cm
 import matplotlib
 import matplotlib.colors as mcolors
+from matplotlib.patches import Rectangle
+
+
+def _draw_rect_patch(ax, rect, use_contour, shape=None):
+    """Dessine le rectangle obstacle sur ax.
+
+    use_contour=True  → coordonnées physiques (mêmes que X, Y)
+    use_contour=False → coordonnées pixels, converties depuis [0,1]²  via shape=(H, W)
+    """
+    if rect is None:
+        return
+    rx0, ry0, rx1, ry1 = rect
+    if use_contour:
+        xy, w, h = (rx0, ry0), rx1 - rx0, ry1 - ry0
+    else:
+        H, W = shape
+        xy = (rx0 * W, ry0 * H)
+        w, h = (rx1 - rx0) * W, (ry1 - ry0) * H
+    ax.add_patch(Rectangle(xy, w, h, linewidth=1.5,
+                            edgecolor='white', facecolor='gray', alpha=0.7))
 
 
 def animate(
@@ -17,6 +37,7 @@ def animate(
     X: np.ndarray = None,
     Y: np.ndarray = None,
     title_fn=None,
+    rect=None,
 ) -> None:
     """Save a 3D [time, x, y] numpy array as a GIF.
 
@@ -29,6 +50,7 @@ def animate(
         X, Y:       Optional 2D meshgrid arrays for spatial axes. When provided,
                     contourf is used instead of imshow.
         title_fn:   Optional callable (t: int) -> str for per-frame titles.
+        rect:       Optional (x0, y0, x1, y1) obstacle rectangle to overlay.
     """
     vmin, vmax = frames.min(), frames.max()
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
@@ -46,6 +68,7 @@ def animate(
         im = ax.imshow(frames[0], cmap=cmap_obj, norm=norm, origin="lower")
         plt.colorbar(im, ax=ax, label=label)
 
+    _draw_rect_patch(ax, rect, use_contour, shape=frames.shape[1:])
     title = ax.set_title(title_fn(0) if title_fn else "t = 0")
 
     def update(t):
@@ -79,6 +102,7 @@ def animate_comparaison(
     title_b: str = "Reconstruit",
     title_err: str = "|Erreur|",
     title_fn=None,
+    rect=None,
 ) -> None:
     """Save side-by-side comparison GIF: frames_a | frames_b | |frames_a - frames_b|.
 
@@ -123,6 +147,10 @@ def animate_comparaison(
     plt.colorbar(cm.ScalarMappable(norm=norm_ab,  cmap=cmap_ab),  ax=ax_a, label=label)
     plt.colorbar(cm.ScalarMappable(norm=norm_ab,  cmap=cmap_ab),  ax=ax_b, label=label)
     plt.colorbar(cm.ScalarMappable(norm=norm_err, cmap=cmap_err), ax=ax_e, label="|err|")
+
+    shape = frames_a.shape[1:]
+    for ax in axes:
+        _draw_rect_patch(ax, rect, use_contour, shape=shape)
 
     ax_a.set_title(title_a)
     ax_b.set_title(title_b)
