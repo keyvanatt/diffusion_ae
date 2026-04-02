@@ -61,12 +61,12 @@ class SVDSurrogate(BaseDecoder):
     def loss(self, G_hat: torch.Tensor, G: torch.Tensor) -> torch.Tensor:
         return F.mse_loss(G_hat, G)
 
-    def _generate(self, theta_norm: torch.Tensor) -> torch.Tensor:
+    def _generate(self, theta: torch.Tensor, **kwargs) -> torch.Tensor:
         """
-        theta_norm : (B, theta_dim) — déjà normalisé
+        theta : (B, theta_dim) — déjà normalisé
         Retourne U_pred (B, Nt, Hsub, Wsub).
         """
-        G_pred_n = self.forward(theta_norm)                            # (B, nf_eff)
+        G_pred_n = self.forward(theta)                            # (B, nf_eff)
         G_pred   = (G_pred_n * self.G_std + self.G_mean) / self.alph  # (B, nf_eff)
 
         F_np = self.F.cpu().numpy()                                    # (nr, nf_eff)
