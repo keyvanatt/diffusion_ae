@@ -34,6 +34,7 @@ def train_vae(
     patience    = 30,
     ckpt_dir    = 'checkpoints/laplace_vae',
     project     = 'convdiff',
+    free_bits   = 0.1,
 ):
     """
     Entraîne LaplaceVAE sur TOUS les champs Laplace (toutes fréquences confondues).
@@ -64,7 +65,7 @@ def train_vae(
     train_loader = DataLoader(Subset(ds, train_idx_all), batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(Subset(ds, val_idx_all),   batch_size=batch_size)
 
-    model     = LaplaceVAE(N=N, latent_dim=latent_dim, beta=beta).to(device)
+    model     = LaplaceVAE(N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.5, patience=15, min_lr=1e-6
@@ -74,7 +75,7 @@ def train_vae(
     print(f"LaplaceVAE : {n_params:,} paramètres  |  device={device}")
 
     wandb.init(project=project, name='LaplaceVAE', config=dict(
-        N=N, latent_dim=latent_dim, beta=beta,
+        N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits,
         epochs=epochs, batch_size=batch_size, lr=lr,
         n_samples_train=len(train_idx_all),
     ))
@@ -85,34 +86,47 @@ def train_vae(
 
     for epoch in tqdm(range(1, epochs + 1), desc='LaplaceVAE'):
         model.train()
-        train_loss = 0.
+        train_elbo = train_recon = train_kl = 0.
         for u, freq in train_loader:
             u, freq = u.to(device), freq.to(device)
             u_hat, mu, logvar = model(u, freq)
-            loss, _ = model.loss(u, u_hat, mu, logvar)
+            loss, metrics = model.loss(u, u_hat, mu, logvar)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            train_loss += loss.item()
-        train_loss /= len(train_loader)
+            train_elbo  += loss.item()
+            train_recon += metrics['recon'].item()
+            train_kl    += metrics['kl'].item()
+        n = len(train_loader)
+        train_elbo /= n; train_recon /= n; train_kl /= n
 
         model.eval()
-        val_loss = 0.
+        val_elbo = val_recon = val_kl = 0.
         with torch.no_grad():
             for u, freq in val_loader:
                 u, freq = u.to(device), freq.to(device)
                 u_hat, mu, logvar = model(u, freq)
-                loss, _ = model.loss(u, u_hat, mu, logvar)
-                val_loss += loss.item()
-        val_loss /= len(val_loader)
+                loss, metrics = model.loss(u, u_hat, mu, logvar)
+                val_elbo  += loss.item()
+                val_recon += metrics['recon'].item()
+                val_kl    += metrics['kl'].item()
+        n = len(val_loader)
+        val_elbo /= n; val_recon /= n; val_kl /= n
 
-        scheduler.step(val_loss)
-        wandb.log({'vae/train': train_loss, 'vae/val': val_loss,
-                   'lr': optimizer.param_groups[0]['lr']}, step=epoch)
+        scheduler.step(val_elbo)
+        wandb.log({
+            'vae/train_elbo':  train_elbo,
+            'vae/train_recon': train_recon,
+            'vae/train_kl':    train_kl,
+            'vae/val_elbo':    val_elbo,
+            'vae/val_recon':   val_recon,
+            'vae/val_kl':      val_kl,
+            'lr': optimizer.param_groups[0]['lr'],
+        }, step=epoch)
 
-        if val_loss < best_val:
-            best_val  = val_loss
+        if val_elbo < best_val:
+            best_val  = val_elbo
             patience_ = 0
             torch.save({'model_state': model.state_dict(),
                         'N': N, 'latent_dim': latent_dim, 'val_loss': best_val}, ckpt_path)
@@ -138,11 +152,12 @@ def main(
     seed       = 42,
     gamma = 0.0, 
     rule = 'trap',
-    epochs      = 300,
-    batch_size  = 64,
+    epochs      = 100,
+    batch_size  = 512,
     lr          = 1e-3,
-    beta        = 1.0,
+    beta        = 0.05,
     patience    = 30,
+    free_bits   = 0.1,
     project     = 'convdiff',
 ):
     
@@ -166,5 +181,8 @@ def main(
     vae = train_vae(dataset, train_idx, val_idx,
                     latent_dim=latent_dim,
                     epochs=epochs, batch_size=batch_size,
-                    lr=lr, beta=beta, patience=patience,
+                    lr=lr, beta=beta, patience=patience, free_bits=free_bits,
                     ckpt_dir=ckpt_dir)
+
+if __name__ == "__main__":
+    main()

@@ -76,14 +76,14 @@ class LaplaceDecoder(nn.Module):
             nn.ConvTranspose2d(32,  16, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.ConvTranspose2d(16,  2,  kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(16,  1,  kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
         )
         self.out_fc = nn.Sequential(
             nn.Flatten(),
             nn.Linear((self.N//2)**2, 256),
             nn.ReLU(),
-            nn.Linear(256, self.N**2),
+            nn.Linear(256, 2 * self.N**2),
         )
 
     def forward(self, z: torch.Tensor, freq_norm: torch.Tensor) -> torch.Tensor:
@@ -91,7 +91,7 @@ class LaplaceDecoder(nn.Module):
         zs = torch.cat([z, freq_norm], dim=1)          # (B, latent_dim+1)
         x  = self.fc(zs)                               # (B, 128*base**2)
         x  = x.view(-1, 128, self.base, self.base)     # (B, 128, base, base)
-        x  = self.deconv(x)                            # (B, 2, N//2, N//2)
+        x  = self.deconv(x)                            # (B, 1, N//2, N//2)
         x  = self.out_fc(x)
         return x.view(-1, 2, self.N, self.N)           # (B, 2, N, N)
 
@@ -168,9 +168,7 @@ class LaplaceVAE(BaseAutoEncoder):
         recon_loss : terme reconstruction seul
         kl_loss    : terme KL seul
         """
-        mse = F.mse_loss(U_hat, U, reduction='none')
-        # Somme sur les dimensions (C, H, W), moyenne sur le batch (B)
-        recon_loss = mse.view(U.shape[0], -1).sum(dim=1).mean()
+        recon_loss = F.mse_loss(U_hat, U)
 
         # KL : free-bits — on ne pénalise pas en dessous de free_bits par dim
         kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())  # (B, latent)
@@ -275,3 +273,5 @@ class LaplaceLatentModel(LaplaceModel):
         return (f"LaplaceLatentModel(N_freq={self.N_freq}, N_half={self.N_half}, "
                 f"N={self.N}, theta_dim={self.theta_dim}, latent_dim={self.latent_dim})\n"
                 f"Surrogate par fréquence :\n{self.surrogates[0].__repr__()}")
+
+    
