@@ -81,4 +81,4 @@ class SVDSurrogate(BaseDecoder):
         Hsub = Wsub = int(np.round(np.sqrt(nr)))
         B    = G_np.shape[0]
         U_pred = fields.transpose(1, 2, 0).reshape(B, Nt, Hsub, Wsub).astype(np.float32)
-        return torch.from_numpy(U_pred).to(theta_norm.device)          # (B, Nt, Hsub, Wsub)
+        return torch.from_numpy(U_pred).to(theta.device)          # (B, Nt, Hsub, Wsub)
