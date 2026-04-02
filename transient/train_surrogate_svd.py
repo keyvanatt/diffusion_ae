@@ -131,21 +131,17 @@ def train(
         if val_loss < best_val:
             best_val  = val_loss
             patience_ = 0
+            model.set_bases(F, P, alph, G_mean, G_std)
             torch.save({
-                'model_type': 'SVDSurrogate',
+                'model_type':  'SVDSurrogate',
                 'model_state': model.state_dict(),
-                'epoch': epoch,
-                'val_loss': best_val,
-                'nf_eff': nf_eff,
-                'theta_dim': theta_dim,
-                'theta_mean': theta_mean,
-                'theta_std': theta_std,
-                'G_mean': G_mean,
-                'G_std': G_std,
-                'alph': alph,
-                'F': F,
-                'P': P,
-                'test_idx': test_idx.numpy(),
+                'epoch':       epoch,
+                'val_loss':    best_val,
+                'nf_eff':      nf_eff,
+                'theta_dim':   theta_dim,
+                'theta_mean':  theta_mean,
+                'theta_std':   theta_std,
+                'test_idx':    test_idx.numpy(),
             }, best_path)
         else:
             patience_ += 1

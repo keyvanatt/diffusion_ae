@@ -17,7 +17,7 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 from tqdm import tqdm
 import wandb
 
-from models.laplace_surrogate import LaplaceSurrogate
+from models.laplace_surrogate import LaplaceSurrogate, LaplaceModel, LaplaceModel
 
 
 def train_one(
@@ -193,7 +193,43 @@ def train_all(
     wandb.log({'best_val/mean': np.mean(best_vals)})
     wandb.finish()
     print(f"\nEntraînement terminé. Val loss moyenne : {np.mean(best_vals):.3e}")
+    assemble_model(dataset, ckpt_dir)
     return best_vals
+
+
+def assemble_model(dataset, ckpt_dir: str):
+    """
+    Charge les checkpoints individuels et assemble un LaplaceModel unique.
+    Sauvegarde dans <ckpt_dir>/LaplaceModel.pt avec toutes les stats de normalisation.
+    """
+    Nt_half   = dataset.Nt_half
+    N         = dataset.N
+    Nt        = dataset.Nt
+    theta_dim = dataset.theta_dim
+    gamma     = float(dataset.s[0].real) if hasattr(dataset, 's') else 0.0
+
+    model = LaplaceModel(N_freq=Nt, N_half=Nt_half, N=N, theta_dim=theta_dim)
+    for k in range(Nt_half):
+        path_k = os.path.join(ckpt_dir, f'LaplaceSurrogate_freq{k:03d}.pt')
+        ckpt_k = torch.load(path_k, map_location='cpu', weights_only=False)
+        model.surrogates[k].load_state_dict(ckpt_k['model_state'])
+
+    model.set_normalization(dataset.target_mean, dataset.target_std)
+
+    out_path = os.path.join(ckpt_dir, 'LaplaceModel.pt')
+    torch.save({
+        'model_state': model.state_dict(),
+        'model_type':  'LaplaceModel',
+        'N_freq':      Nt,
+        'N_half':      Nt_half,
+        'N':           N,
+        'theta_dim':   theta_dim,
+        'dt':          dataset.dt,
+        'gamma':       gamma,
+        'theta_mean':  dataset.theta_mean,
+        'theta_std':   dataset.theta_std,
+    }, out_path)
+    print(f"LaplaceModel assemblé → {out_path}")
 
 
 if __name__ == '__main__':
