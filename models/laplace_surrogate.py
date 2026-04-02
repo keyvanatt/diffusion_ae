@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from models.base import BaseDecoder
 
 class LaplaceSurrogate(nn.Module):
     """
@@ -10,10 +11,9 @@ class LaplaceSurrogate(nn.Module):
     out: B(B, 2, N, N) (Re(U), Im(U))
     """
 
-    def __init__(self, s, N, theta_dim: int = 4):
+    def __init__(self, N, theta_dim: int = 4):
         super().__init__()
         self.N = N
-        self.s = s
         self.base = N // 16
         self.fc = nn.Sequential(
             nn.Linear(theta_dim, 256 * self.base ** 2),

@@ -1,12 +1,12 @@
 """
-benchmark.py — Compare plusieurs checkpoints BaseDecoder sur le dataset de test
+stationary/benchmark.py — Compare plusieurs checkpoints BaseDecoder sur le dataset de test
 ================================================================================
 Usage :
-    python benchmark.py --ckpts checkpoints/DirectDecoder_best.pt checkpoints/DirectDecoderDenseOut_best.pt
+    python stationary/benchmark.py --ckpts checkpoints/DirectDecoder_best.pt checkpoints/DirectDecoderDenseOut_best.pt
 """
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import time
 
@@ -15,9 +15,9 @@ import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 
-from utils.dataset import ConvDiffDataset
+from stationary.dataset import ConvDiffDataset
 from models.base import BaseDecoder
-from main import load_model, denorm_U
+from stationary.main import load_model, denorm_U
 from tqdm import tqdm
 from utils.sim import ConvDiffSimulator, to_grid
 

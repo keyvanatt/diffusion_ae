@@ -1,10 +1,10 @@
 """
-app.py - Visualisation Streamlit : theta -> grille U predite par le CVAE
-Usage : streamlit run app.py
+stationary/app.py - Visualisation Streamlit : theta -> grille U predite par le CVAE
+Usage : streamlit run stationary/app.py
 """
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import torch
@@ -12,7 +12,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from main import load_model, run_inference
+from stationary.main import load_model, run_inference
 
 THETA_PARAMS = [
     ('D   - diffusivite',         0.001,  0.10,  0.02),

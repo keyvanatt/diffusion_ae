@@ -1,8 +1,8 @@
 """
-train_ae.py — Entraînement générique pour tout BaseAutoEncoder
-==============================================================
+train_decoder.py — Entraînement générique pour tout BaseDecoder
+=============================================================
 Usage :
-    python utils/train_ae.py
+    python utils/train_decoder.py
 """
 import sys
 from pathlib import Path
@@ -15,63 +15,64 @@ import torch
 from torch.utils.data import DataLoader, random_split
 import wandb
 
-from models.base import BaseAutoEncoder
-from models.variationalAutoEncoder import VAE
-from models.AE_SVD import AutoencoderSVD
-from utils.dataset import ConvDiffDataset
+from models.base import BaseDecoder
+from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
+from models.variationalAutoEncoder import VAE, IndirectDecoder
+from models.AE_SVD import AutoencoderSVD, IndirectDecoderSVD, compute_fixed_svd_basis
+from stationary.dataset import ConvDiffDataset
 
 from tqdm import tqdm
 
 
-def train_epoch(model: BaseAutoEncoder, loader, optimizer, device):
+def train_epoch(model: BaseDecoder, loader, optimizer, device):
     model.train()
-    totals = {}
+    metrics = dict(loss=0., recon=0., grad=0.)
 
     for theta, U in loader:
         theta, U = theta.to(device), U.to(device)
 
-        out            = model(U)          # (U_hat, *latent)
-        total, metrics = model.loss(U, *out)
+        U_hat             = model(theta)
+        loss, recon, grad = model.loss(U_hat, U)
 
         optimizer.zero_grad()
-        total.backward()
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        totals['loss'] = totals.get('loss', 0.) + total.item()
-        for k, v in metrics.items():
-            totals[k] = totals.get(k, 0.) + v.item()
+        metrics['loss']  += loss.item()
+        metrics['recon'] += recon.item()
+        metrics['grad']  += grad.item()
 
     n = len(loader)
-    return {k: v / n for k, v in totals.items()}
+    return {k: v / n for k, v in metrics.items()}
 
 
 @torch.no_grad()
-def val_epoch(model: BaseAutoEncoder, loader, device):
+def val_epoch(model: BaseDecoder, loader, device):
     model.eval()
-    totals = {}
+    metrics = dict(loss=0., recon=0., grad=0.)
 
     for theta, U in loader:
         theta, U = theta.to(device), U.to(device)
 
-        out            = model(U)
-        total, metrics = model.loss(U, *out)
+        U_hat             = model(theta)
+        loss, recon, grad = model.loss(U_hat, U)
 
-        totals['loss'] = totals.get('loss', 0.) + total.item()
-        for k, v in metrics.items():
-            totals[k] = totals.get(k, 0.) + v.item()
+        metrics['loss']  += loss.item()
+        metrics['recon'] += recon.item()
+        metrics['grad']  += grad.item()
 
     n = len(loader)
-    return {k: v / n for k, v in totals.items()}
+    return {k: v / n for k, v in metrics.items()}
 
 
 @torch.no_grad()
-def log_reconstructions(model: BaseAutoEncoder, loader, dataset, device, n_show=4):
+def log_reconstructions(model: BaseDecoder, loader, dataset, device, n_show=4):
     model.eval()
     theta, U = next(iter(loader))
     theta, U = theta[:n_show].to(device), U[:n_show].to(device)
 
-    U_hat = model(U)[0]
+    U_hat = model(theta)
 
     U_phys     = dataset.denorm_U(U.cpu())
     U_hat_phys = dataset.denorm_U(U_hat.cpu())
@@ -98,23 +99,20 @@ def log_reconstructions(model: BaseAutoEncoder, loader, dataset, device, n_show=
 
 
 def train(
-    model        : BaseAutoEncoder,
-    dataset_path : str   = 'dataset/dataset.npz',
-    epochs       : int   = 500,
-    batch_size   : int   = 32,
-    lr           : float = 1e-3,
-    patience     : int   = 40,
-    seed         : int   = 42,
-    project      : str   = 'convdiff',
-    ckpt_dir     : str   = 'checkpoints',
-    prefix       : str   = "",
-    log_img_every: int   = 10,
-    beta_warmup  : int   = 80,    # époques pour monter beta de 0 → model.beta
+    model       : BaseDecoder,
+    dataset_path: str   = 'dataset/dataset.npz',
+    epochs      : int   = 500,
+    batch_size  : int   = 32,
+    lr          : float = 1e-3,
+    patience    : int   = 40,
+    seed        : int   = 42,
+    project     : str   = 'convdiff',
+    ckpt_dir    : str   = 'checkpoints',
+    prefix      : str   = "",
+    log_img_every: int  = 10,
 ):
     model_name = type(model).__name__
-    run_name   = f'{prefix}_{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
-    model_hparams = {k: v for k, v in vars(model).items()
-                     if isinstance(v, (int, float, bool, str))}
+    run_name= f'{prefix}_{model_name}_{time.strftime("%Y%m%d-%H%M%S")}'
     wandb.init(
         project = project,
         name    = run_name,
@@ -125,9 +123,7 @@ def train(
             lr            = lr,
             patience      = patience,
             seed          = seed,
-            beta_warmup   = beta_warmup,
             model         = model_name,
-            **model_hparams,
         ),
     )
 
@@ -163,7 +159,14 @@ def train(
     wandb.config.update({'n_params': n_params, 'device': str(device)})
     wandb.watch(model, log='gradients', log_freq=50)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    if model.__class__.__name__ == "IndirectDecoderSVD":
+        U_train = dataset.U[train_set.indices]                  # (N_train, 1, N, N)
+        U_train = dataset.denorm_U(U_train.cpu()).numpy()       # type: ignore
+        model.compute_and_set_fixed_basis(U_train)              # type: ignore
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=7
     )
@@ -175,19 +178,12 @@ def train(
     best_val  = float('inf')
     patience_ = 0
 
-    beta_target = getattr(model, 'beta', None)
-
     for epoch in tqdm(range(1, epochs + 1)):
         t0 = time.perf_counter()
 
-        if beta_target is not None:
-            model.beta = beta_target * min(1.0, epoch / beta_warmup)
-
         tr = train_epoch(model, train_loader, optimizer, device)
         va = val_epoch(model, val_loader, device)
-
-        val_metric = va.get('recon', va['loss'])
-        scheduler.step(val_metric)
+        scheduler.step(va['recon'])
 
         epoch_time = time.perf_counter() - t0
         lr_now     = optimizer.param_groups[0]['lr']
@@ -196,9 +192,12 @@ def train(
             'epoch'        : epoch,
             'lr'           : lr_now,
             'epoch_time_s' : epoch_time,
-            **({'beta': model.beta} if beta_target is not None else {}),
-            **{f'train/{k}': v for k, v in tr.items()},
-            **{f'val/{k}':   v for k, v in va.items()},
+            'train/loss'   : tr['loss'],
+            'train/recon'  : tr['recon'],
+            'train/grad'   : tr['grad'],
+            'val/loss'     : va['loss'],
+            'val/recon'    : va['recon'],
+            'val/grad'     : va['grad'],
         }
 
         if epoch % log_img_every == 0:
@@ -208,8 +207,8 @@ def train(
 
         wandb.log(log)
 
-        if val_metric < best_val:
-            best_val  = val_metric
+        if va['recon'] < best_val:
+            best_val  = va['recon']
             patience_ = 0
             torch.save({
                 'model_type' : model_name,
@@ -238,7 +237,7 @@ def train(
     with torch.no_grad():
         for theta, U in test_loader:
             theta, U = theta.to(device), U.to(device)
-            U_hat = model(U)[0]
+            U_hat    = model(theta)
             all_U.append(dataset.denorm_U(U.cpu()))
             all_U_hat.append(dataset.denorm_U(U_hat.cpu()))
 
@@ -249,23 +248,33 @@ def train(
     r2     = 1.0 - ss_res / ss_tot
 
     print(f'\nTest  loss={te["loss"]:.4f}  recon={te["recon"]:.4f}  R²={r2:.4f}')
-    wandb.log({**{f'test/{k}': v for k, v in te.items()}, 'test/r2': r2})
+    wandb.log({
+        'test/loss'  : te['loss'],
+        'test/recon' : te['recon'],
+        'test/grad'  : te['grad'],
+        'test/r2'    : r2,
+    })
 
     wandb.finish()
 
 
 if __name__ == '__main__':
-    model = VAE(N=64, latent_dim=3, beta=1.0)
+    dataset = ConvDiffDataset('dataset/dataset.npz')
+    trained_AE = AutoencoderSVD(N=64, latent_dim=32, kmax=3)
+    trained_AE.load_state_dict(torch.load('checkpoints/AutoencoderSVD_best.pt')['model_state'])
+    model = IndirectDecoderSVD(trained_autoencoder=trained_AE, 
+                               N=64, theta_dim=4, latent_dim=32,
+                               kmax=3)
     train(
         model,
         dataset_path  = 'dataset/dataset.npz',
         epochs        = 500,
         batch_size    = 128,
-        lr            = 1e-3,
-        patience      = 150,
+        lr            = 1e-4,
+        patience      = 100,
         seed          = 42,
         project       = 'convdiff',
         ckpt_dir      = 'checkpoints',
-        prefix = "smallLD",
+        prefix = "finetune_smallLD",
         log_img_every = 50,
     )

@@ -21,15 +21,15 @@ Objectif : émuler un solveur EDP de convection-diffusion 2D. Donnés des param�
 
 - `utils/sim.py` — solveur FEniCS/DOLFINx, produit des solutions FEM interpolées sur une grille N×N via scipy.
 - `utils/dataset_generator.py` — échantillonne des θ aléatoires, lance le simulateur, sauvegarde dans `dataset/dataset.npz`.
-- `utils/dataset.py` — `ConvDiffDataset` : charge `.npz`, applique une normalisation ajustée sur le train. Appeler `dataset.fit(train_indices)` avant l'entraînement. Retourne des paires `(theta_norm, U_norm)`.
+- `stationary/dataset.py` — `ConvDiffDataset` : charge `.npz`, applique une normalisation ajustée sur le train. Appeler `dataset.fit(train_indices)` avant l'entraînement. Retourne des paires `(theta_norm, U_norm)`.
 
 **Normalisation :** U est centré-normalisé (soustraction de la moyenne par pixel du train, puis min-max vers [-1, 1]). Les stats sont stockées dans les checkpoints. θ est normalisé z-score avec des stats pré-calculées lors de la génération.
 
 ## Pipelines
 
 **Pipeline VAE + décodeur (deux étapes) :**
-1. **Étape AE** (`utils/train_ae.py`) : entraîne un VAE pour compresser les champs U dans un espace latent z.
-2. **Étape décodeur** (`utils/train_decoder.py`) : entraîne un décodeur θ → U (directement, ou via θ → z → U avec le décodeur VAE gelé).
+1. **Étape AE** (`stationary/train_ae.py`) : entraîne un VAE pour compresser les champs U dans un espace latent z.
+2. **Étape décodeur** (`stationary/train_decoder.py`) : entraîne un décodeur θ → U (directement, ou via θ → z → U avec le décodeur VAE gelé).
 
 **Modèles :**
 - `models/base.py` — classes abstraites `BaseAutoEncoder` et `BaseDecoder`. Tous les modèles doivent implémenter `loss()`.
@@ -40,13 +40,15 @@ Objectif : émuler un solveur EDP de convection-diffusion 2D. Donnés des param�
 
 ## Inférence et visualisation
 
-`main.py` expose deux fonctions à réutiliser dans tout nouveau script d'inférence :
+`stationary/main.py` expose deux fonctions à réutiliser dans tout nouveau script d'inférence :
 - `load_model(ckpt_path, device)` — détecte automatiquement le type de modèle depuis le checkpoint.
 - `run_inference(theta_raw, model, ckpt, device)` — normalise θ, lance le décodeur, dénormalise U vers les valeurs physiques.
 
 **Toujours importer et réutiliser ces fonctions** plutôt que de réimplémenter le chargement de modèle ou la dénormalisation.
 
-`app.py` est une app Streamlit qui enveloppe ces deux fonctions. Elle expose des sliders pour θ (D, |b|, angle, f — l'app convertit polaire → (bx, by) en interne), permet de choisir un checkpoint, et compare optionnellement la prédiction avec l'échantillon le plus proche du dataset. Utilise `@st.cache_resource` pour le modèle et `@st.cache_data` pour le dataset.
+`stationary/app.py` est une app Streamlit qui enveloppe ces deux fonctions. Elle expose des sliders pour θ (D, |b|, angle, f — l'app convertit polaire → (bx, by) en interne), permet de choisir un checkpoint, et compare optionnellement la prédiction avec l'échantillon le plus proche du dataset. Utilise `@st.cache_resource` pour le modèle et `@st.cache_data` pour le dataset.
+
+`transient/main.py` est l'équivalent pour le dataset transitoire : `predict(theta, ckpt, ...)` et `evaluate(U, theta, ckpt, ...)` avec détection automatique du backend (Laplace ou SVD).
 
 ## Commandes
 
@@ -55,19 +57,19 @@ Objectif : émuler un solveur EDP de convection-diffusion 2D. Donnés des param�
 .conda/bin/python utils/dataset_generator.py
 
 # Entraîner le VAE sur le dataset physique
-.conda/bin/python utils/train_ae.py
+.conda/bin/python stationary/train_ae.py
 
 # Entraîner le VAE sur MNIST
-.conda/bin/python utils/train_ae_mnist.py
+.conda/bin/python stationary/train_ae_mnist.py
 
 # Entraîner un décodeur direct (theta → U, sans latent)
-.conda/bin/python utils/train_decoder.py
+.conda/bin/python stationary/train_decoder.py
 
-# Inférence
-.conda/bin/python main.py --theta 0.02 0.5 0.3 10.0 --plot
+# Inférence stationnaire
+.conda/bin/python stationary/main.py --theta 0.02 0.5 0.3 10.0 --plot
 
 # App Streamlit
-.conda/bin/streamlit run app.py
+.conda/bin/streamlit run stationary/app.py
 ```
 
 ## Experiment tracking
@@ -87,30 +89,24 @@ Objectif : émuler des champs de concentration CH4 transitoires `U(t)` en foncti
 
 **Principe :** décomposer les champs via Tucker SVD pour extraire des coefficients `G` par simulation, puis apprendre θ → G.
 
-**Étape 1 — Décomposition Tucker SVD** (`utils/learn_svd.py`) :
+**Étape 1 — Décomposition Tucker SVD** (`transient/learn_svd.py`) :
 - Sous-échantillonnage spatial (défaut `step=5`), reshape en `HH (nr, ns, Nt)`
 - `svd_3d_gpu` de `utils/SVD_Amine_3D.py` décompose HH en `F (nr, nf_eff)`, `G (ns, nf_eff)`, `P (Nt, nf_eff)`, `alph (nf_eff,)`
 - `G` encode les coefficients par simulation — c'est ce que le surrogate doit apprendre à prédire depuis theta
 - Sauvegarde `dataset/Results/svd_train.npz` ; sauvegarde aussi un GIF de comparaison dans `plots/`
 
-**Étape 2 — Entraînement surrogate** (deux versions) :
-- `utils/train_surrogate_svd.py` — MLP PyTorch (`SVDSurrogate` dans `models/svd_surrogate.py`), logs W&B, sauvegarde `test_idx` dans le checkpoint
-- `utils/train_surrogate_svd_sklearn.py` — sklearn Pipeline (`PolynomialFeatures + StandardScaler + Ridge`), sauvegardé avec `joblib`
+**Étape 2 — Entraînement surrogate** :
+- `transient/train_surrogate_svd.py` — MLP PyTorch (`SVDSurrogate` dans `models/svd_surrogate.py`), logs W&B, sauvegarde `F`, `P`, `test_idx` dans le checkpoint
 
-**Évaluation** (les deux scripts) :
-- Métriques calculées par rapport à deux références : reconstruction SVD (G_true → champ) et concentration originale
-- Métrique clé : **erreur L2 relative** (comparable à la sortie de `learn_svd`)
-- Histogrammes (échelle log en x) et animations (meilleur/médian/pire) sauvegardés dans `plots/`
+**Évaluation** : via `transient/main.py evaluate(...)` — métriques L2 relative, histogramme et animations best/median/worst sauvegardés dans `plots/`.
 
 **Limitation connue (CH4.npy) :** avec ~150 samples, les deux surrogates donnent ~60% d'erreur L2rel vs ~13-17% pour le SVD seul. Le goulot d'étranglement est que G ne varie pas lissément avec theta à cette taille.
 
 **Note d'implémentation SVD :** dans `svd_3d_gpu`, les dénominateurs doivent être recalculés séquentiellement après chaque mise à jour R/S/T (pas pré-calculés) pour éviter la divergence NaN.
 
 ```bash
-.conda/bin/python utils/learn_svd.py
-.conda/bin/python utils/train_surrogate_svd.py
-# ou
-.conda/bin/python utils/train_surrogate_svd_sklearn.py
+.conda/bin/python transient/learn_svd.py
+.conda/bin/python transient/train_surrogate_svd.py
 ```
 
 ## Pipeline 2 — Surrogate dans l'espace de Laplace
@@ -120,20 +116,21 @@ Objectif : émuler des champs de concentration CH4 transitoires `U(t)` en foncti
 **Fichiers clés :**
 - `utils/laplace.py` — `laplace_forward` et `laplace_inverse` : quadrature trapézoïdale ou rectangulaire sur le signal discret.
 - `models/laplace_surrogate.py` — `LaplaceSurrogate(s, N, theta_dim)` : MLP → ConvTranspose2d, prédit `(Re(Û), Im(Û))` soit `(B, 2, N, N)`. Architecture : `base = N // 16` (N doit être multiple de 16). Une instance par fréquence.
-- `utils/train_laplace.py` — script principal avec 4 fonctions :
-  - `to_laplace(U, dt, gamma, rule)` → `(U_laplace (ns, Nt_half, 2, N, N), s, Nt)` — exploite la symétrie conjuguée (seules Nt/2+1 fréquences sont indépendantes).
+- `transient/dataset.py` — `TransientDataset` : charge `dataset_transient.npz`, option `laplace=True` qui pré-calcule la transformée de Laplace. Appeler `dataset.fit(train_indices)` avant l'entraînement.
+- `transient/train_laplace.py` — deux fonctions :
   - `train_one(k, s_k, ...)` → entraîne un `LaplaceSurrogate` pour la fréquence k, sauvegarde dans `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`.
-  - `train_all(U_laplace, theta, s, ...)` → boucle sur toutes les fréquences, log W&B global, retourne `test_idx`.
-  - `predict(theta, ckpt_dir, dt, gamma, rule)` → charge tous les checkpoints, reconstruit le spectre complet par symétrie conjuguée, inverse Laplace → `U_pred (B, Nt, N, N)`.
-  - `evaluate(U, theta, test_idx, ...)` → MSE + erreur L2 relative, histogramme + animations GIF dans `plots/`.
+  - `train_all(dataset, train_idx, val_idx, ...)` → boucle sur toutes les fréquences, log W&B global.
 
-**Checkpoints :** `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`, un par fréquence. Chaque checkpoint stocke `theta_mean/std`, `target_mean/std`, `N`, `Nt`, `theta_dim`, `freq_idx`, `s_k_real/imag`.
+**Checkpoints :** `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`, un par fréquence. `test_idx.npy` dans le même répertoire. Chaque checkpoint stocke `theta_mean/std`, `target_mean/std`, `N`, `Nt`, `theta_dim`, `freq_idx`, `s_k_real/imag`.
 
-**Normalisation :** theta z-score global (stats train) ; target z-score par fréquence (moyenne sur pixels et batch du train set).
+**Normalisation :** theta z-score global (stats train) ; target z-score par fréquence (moyenne sur pixels et batch du train set), calculé par `dataset.fit()`.
 
 **Symétrie conjuguée :** seules les `Nt_half = Nt//2 + 1` premières fréquences sont entraînées. À l'inférence, le spectre complet est reconstruit par `M[Nt-k] = conj(M[k])`.
 
 ```bash
-.conda/bin/python utils/train_laplace.py
-# Mettre EVALUATE = True dans __main__ pour évaluer sans réentraîner
+.conda/bin/python transient/train_laplace.py
+
+# Inférence / évaluation transitoire
+.conda/bin/python transient/main.py --ckpt checkpoints/laplace --theta 1.0 0.5 0.3 2.0 --plot
+.conda/bin/python transient/main.py --ckpt checkpoints/laplace --evaluate --data dataset/dataset_transient.npz
 ```

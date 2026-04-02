@@ -1,16 +1,15 @@
 """
-main.py — Inférence DirectDecoder : theta → grille U prédite
+stationary/main.py — Inférence DirectDecoder : theta → grille U prédite
 =============================================================
-Usage :
-    python main.py --theta 0.02 0.5 0.3 10.0
-    python main.py --theta 0.02 0.5 0.3 10.0 --out pred.npy
-    python main.py --theta 0.02 0.5 0.3 10.0 --plot
+Fonctions réutilisables :
+  load_model(ckpt_path, device)            → model, ckpt
+  run_inference(theta_raw, model, ckpt, device) → U_pred (N, N)
+  predict(theta_raw, ckpt_path, device)    → U_pred (N, N)
 """
 import sys
-import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import torch
@@ -119,43 +118,27 @@ def predict(theta_raw: list[float], ckpt_path: str = 'checkpoints/decoder_best.p
     return run_inference(theta_raw, model, ckpt, device)
 
 
-def main():
-    parser = argparse.ArgumentParser(description='DirectDecoder inference: theta → U grid')
-    parser.add_argument('--theta',     nargs=4, type=float, required=True,
-                        metavar=('D', 'bx', 'by', 'f'),
-                        help='4 valeurs physiques de theta : D bx by f')
-    parser.add_argument('--ckpt',      default='checkpoints/decoder_best.pt',
-                        help='Chemin checkpoint (défaut: checkpoints/decoder_best.pt)')
-    parser.add_argument('--out',       default=None,
-                        help='Sauvegarder la prédiction en .npy')
-    parser.add_argument('--plot',      action='store_true',
-                        help='Afficher la grille avec matplotlib')
-    parser.add_argument('--device',    default='auto',
-                        choices=['auto', 'cpu', 'cuda'])
-    args = parser.parse_args()
+def main(
+    ckpt_path = 'checkpoints/DirectDecoderDenseOut_best.pt',
+    theta     = [0.02, 0.5, 0.3, 10.0],   # [D, bx, by, f]
+    out       = None,                       # chemin .npy pour sauvegarder, ou None
+    plot      = True,
+    device    = 'auto',
+):
+    import matplotlib.pyplot as plt
 
-    print(f'theta = {args.theta}')
-    print(f'Chargement du checkpoint : {args.ckpt}')
-
-    U_pred = predict(args.theta, args.ckpt, args.device)
-
+    U_pred = predict(theta, ckpt_path, device)
     print(f'Prédiction : shape={U_pred.shape}  min={U_pred.min():.4f}  max={U_pred.max():.4f}')
 
-    if args.out:
-        np.save(args.out, U_pred)
-        print(f'Sauvegardé → {args.out}')
+    if out:
+        np.save(out, U_pred)
+        print(f'Sauvegardé → {out}')
 
-    if args.plot:
-        import matplotlib.pyplot as plt
-        n = U_pred.shape[0]
-        fig, axes = plt.subplots(1, n, figsize=(4 * n, 4))
-        if n == 1:
-            axes = [axes]
-        for i, ax in enumerate(axes):
-            im = ax.imshow(U_pred[i], origin='lower', cmap='viridis')
-            ax.set_title(f'Sample {i}')
-            plt.colorbar(im, ax=ax)
-        plt.suptitle(f'theta = {args.theta}')
+    if plot:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(U_pred, origin='lower', cmap='viridis')
+        ax.set_title(f'theta = {theta}')
+        plt.colorbar(im, ax=ax)
         plt.tight_layout()
         plt.show()
 

@@ -1,18 +1,18 @@
 """
-demo.py — Visualisation d'un sample : prédictions des meilleurs modèles vs ground truth
+stationary/demo.py — Visualisation d'un sample : prédictions des meilleurs modèles vs ground truth
 ========================================================================================
 Usage :
-    .conda/bin/python demo.py
+    .conda/bin/python stationary/demo.py
 """
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from main import load_model, run_inference
+from stationary.main import load_model, run_inference
 
 DATASET_PATH = 'dataset/dataset.npz'
 

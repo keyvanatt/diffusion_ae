@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import numpy as np
@@ -23,7 +26,7 @@ class ConvDiffDataset(Dataset):
         print(f'Dataset : {len(self.U_raw)} samples  |  N={self.N}')
 
     def fit(self, train_indices):
-        """Calcule la grille moyenne et l'écart-type global sur le sous-ensemble train, puis standardise tout."""
+        """Calcule la grille moyenne et l'écart-type global sur le train, puis standardise."""
         train_U     = self.U_raw[train_indices]
         self.U_mean = train_U.mean(dim=0, keepdim=True)  # (1, 1, N, N)
         U_centered  = self.U_raw - self.U_mean
