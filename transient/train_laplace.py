@@ -17,7 +17,7 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 from tqdm import tqdm
 import wandb
 
-from models.laplace_surrogate import LaplaceSurrogate, LaplaceModel, LaplaceModel
+from models.laplace_surrogate import LaplaceSurrogate, LaplaceModel
 
 
 def train_one(
@@ -38,9 +38,10 @@ def train_one(
     device       = None,
     ckpt_dir     = 'checkpoints',
     global_step  = 0,
+    vae          = None,   # si fourni : LaplaceLatentSurrogate avec décodeur VAE gelé
 ):
     """
-    Entraîne un LaplaceSurrogate pour la fréquence k.
+    Entraîne un LaplaceSurrogate (ou LaplaceLatentSurrogate si vae fourni) pour la fréquence k.
 
     Retour
     ------
@@ -50,15 +51,26 @@ def train_one(
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    model     = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    if vae is not None:
+        from models.laplace_ae_surrogate import LaplaceLatentSurrogate
+        latent_dim = vae.latent_dim
+        model      = LaplaceLatentSurrogate(latent_dim=latent_dim, theta_dim=theta_dim, N=N).to(device)
+        model.decoder.load_state_dict(vae.decoder.state_dict())
+        model.decoder.requires_grad_(False)
+        params_to_train = model.fc.parameters()
+    else:
+        model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim).to(device)
+        params_to_train = model.parameters()
+
+    optimizer = torch.optim.AdamW(params_to_train, lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.5, patience=15, min_lr=1e-6
     )
 
     best_val  = float('inf')
     patience_ = 0
-    ckpt_path = os.path.join(ckpt_dir, f'LaplaceSurrogate_freq{k:03d}.pt')
+    prefix    = 'LatentSurrogate' if vae is not None else 'LaplaceSurrogate'
+    ckpt_path = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
 
     epoch_bar = tqdm(
         range(1, epochs + 1),
@@ -136,6 +148,7 @@ def train_all(
     patience   = 30,
     ckpt_dir   = 'checkpoints/laplace',
     project    = 'convdiff',
+    vae        = None,   # si fourni : utilise LaplaceLatentSurrogate
 ):
     """
     Entraîne un LaplaceSurrogate par fréquence de Laplace.
@@ -158,8 +171,15 @@ def train_all(
 
     theta_n = (dataset.theta - dataset.theta_mean) / dataset.theta_std  # (ns, theta_dim)
 
-    n_params = sum(p.numel() for p in LaplaceSurrogate(s=0j, N=N, theta_dim=theta_dim).parameters())
-    wandb.init(project=project, name=f'LaplaceSurrogate_Nt{Nt}', config=dict(
+    if vae is not None:
+        from models.laplace_ae_surrogate import LaplaceLatentSurrogate
+        _dummy    = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim, N=N)
+        run_name  = f'LaplaceLatentSurrogate_Nt{Nt}'
+    else:
+        _dummy   = LaplaceSurrogate(s=0j, N=N, theta_dim=theta_dim)
+        run_name = f'LaplaceSurrogate_Nt{Nt}'
+    n_params = sum(p.numel() for p in _dummy.parameters())
+    wandb.init(project=project, name=run_name, config=dict(
         Nt=Nt, Nt_half=Nt_half, N=N, ns=ns, theta_dim=theta_dim,
         epochs=epochs, batch_size=batch_size, lr=lr, patience=patience, n_params=n_params,
     ))
@@ -184,7 +204,7 @@ def train_all(
             target_mean=target_mean_k, target_std=target_std_k,
             N=N, Nt=Nt, epochs=epochs, lr=lr, patience=patience,
             theta_dim=theta_dim, device=device, ckpt_dir=ckpt_dir,
-            global_step=global_step,
+            global_step=global_step, vae=vae,
         )
 
         best_vals.append(best_val)
@@ -194,14 +214,14 @@ def train_all(
     wandb.log({'best_val/mean': np.mean(best_vals)})
     wandb.finish()
     print(f"\nEntraînement terminé. Val loss moyenne : {np.mean(best_vals):.3e}")
-    assemble_model(dataset, ckpt_dir, test_idx)
+    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), vae=vae)
     return best_vals
 
 
-def assemble_model(dataset, ckpt_dir: str, test_idx):
+def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', vae=None):
     """
-    Charge les checkpoints individuels et assemble un LaplaceModel unique.
-    Sauvegarde dans <ckpt_dir>/LaplaceModel.pt avec toutes les stats de normalisation.
+    Charge les checkpoints individuels et assemble LaplaceModel ou LaplaceLatentModel.
+    Sauvegarde dans <save_dir>/LaplaceModel.pt ou LaplaceLatentModel.pt.
     """
     Nt_half   = dataset.Nt_half
     N         = dataset.N
@@ -209,18 +229,35 @@ def assemble_model(dataset, ckpt_dir: str, test_idx):
     theta_dim = dataset.theta_dim
     gamma     = float(dataset.s[0].real) if hasattr(dataset, 's') else 0.0
 
-    model = LaplaceModel(N_freq=Nt, N_half=Nt_half, N=N, theta_dim=theta_dim)
+    if vae is not None:
+        from models.laplace_ae_surrogate import LaplaceLatentModel
+        latent_dim  = vae.latent_dim
+        model       = LaplaceLatentModel(N_freq=Nt, N_half=Nt_half, N=N,
+                                         theta_dim=theta_dim, latent_dim=latent_dim)
+        model.set_vae_decoder(vae)
+        prefix      = 'LatentSurrogate'
+        model_type  = 'LaplaceLatentModel'
+        out_name    = 'LaplaceLatentModel.pt'
+        extra       = {'latent_dim': latent_dim}
+    else:
+        model      = LaplaceModel(N_freq=Nt, N_half=Nt_half, N=N, theta_dim=theta_dim)
+        prefix     = 'LaplaceSurrogate'
+        model_type = 'LaplaceModel'
+        out_name   = 'LaplaceModel.pt'
+        extra      = {}
+
     for k in range(Nt_half):
-        path_k = os.path.join(ckpt_dir, f'LaplaceSurrogate_freq{k:03d}.pt')
+        path_k = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
         ckpt_k = torch.load(path_k, map_location='cpu', weights_only=False)
-        model.surrogates[k].load_state_dict(ckpt_k['model_state'])
+        model.surrogates[k].load_state_dict(ckpt_k['model_state'], strict=False)
 
     model.set_normalization(dataset.target_mean, dataset.target_std)
 
-    out_path = os.path.join(ckpt_dir, 'LaplaceModel.pt')
+    os.makedirs(save_dir, exist_ok=True)
+    out_path = os.path.join(save_dir, out_name)
     torch.save({
         'model_state': model.state_dict(),
-        'model_type':  'LaplaceModel',
+        'model_type':  model_type,
         'N_freq':      Nt,
         'N_half':      Nt_half,
         'N':           N,
@@ -230,8 +267,9 @@ def assemble_model(dataset, ckpt_dir: str, test_idx):
         'theta_mean':  dataset.theta_mean,
         'theta_std':   dataset.theta_std,
         'test_idx':    np.asarray(test_idx),
+        **extra,
     }, out_path)
-    print(f"LaplaceModel assemblé → {out_path}")
+    print(f"{model_type} assemblé -> {out_path}")
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@
 transient/main.py — Inférence transiente : theta → U(t)
 ========================================================
 Supporte deux backends, détectés automatiquement depuis model_type dans le checkpoint :
-  - LaplaceModel : ex. checkpoints/laplace/LaplaceModel.pt
+  - LaplaceModel : ex. checkpoints/LaplaceModel.pt
   - SVDSurrogate : ex. checkpoints/SVDSurrogate_best.pt
 
 Fonctions réutilisables :
@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import torch
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 
 # ---------------------------------------------------------------------------
@@ -37,6 +38,16 @@ def load_model(ckpt_path: str, device: torch.device):
             N_half    = ckpt['N_half'],
             N         = ckpt['N'],
             theta_dim = ckpt['theta_dim'],
+        ).to(device)
+
+    elif model_type == 'LaplaceLatentModel':
+        from models.laplace_ae_surrogate import LaplaceLatentModel
+        model = LaplaceLatentModel(
+            N_freq    = ckpt['N_freq'],
+            N_half    = ckpt['N_half'],
+            N         = ckpt['N'],
+            theta_dim = ckpt['theta_dim'],
+            latent_dim = ckpt['latent_dim'],
         ).to(device)
 
     elif model_type == 'SVDSurrogate':
@@ -76,7 +87,7 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
 
     model_type = ckpt.get('model_type', 'SVDSurrogate')
 
-    if model_type == 'LaplaceModel':
+    if model_type in ('LaplaceModel', 'LaplaceLatentModel'):
         dt_eff = dt if dt is not None else float(ckpt.get('dt', 1.0))
         gamma  = float(ckpt.get('gamma', gamma))
         U_pred = model.generate(theta_norm, dt=dt_eff, gamma=gamma, rule=rule)
@@ -87,7 +98,7 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
         return U_pred.cpu().numpy()
 
 
-def predict(theta_raw, ckpt_path: str = 'checkpoints/laplace/LaplaceModel.pt',
+def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
             device_str: str = 'auto', dt: float | None = None,
             gamma: float = 0.0, rule: str = 'trap') -> np.ndarray:
     """
@@ -198,7 +209,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/SVDSurrogate_best.pt',
+    ckpt_path = 'checkpoints/LaplaceModel.pt',
     data_path = 'dataset/dataset_transient.npz',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
@@ -209,7 +220,6 @@ def main(
     plot      = True,
     do_evaluation  = True,
 ):
-    import matplotlib.pyplot as plt
 
     if do_evaluation:
         data = np.load(data_path)
