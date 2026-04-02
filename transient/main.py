@@ -132,6 +132,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     import matplotlib.pyplot as plt
     from utils.animate import animate_comparaison
 
+    print(f"Chargement du checkpoint : {ckpt_path}")
     ckpt_data  = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     model_type = ckpt_data.get('model_type', 'SVDSurrogate')
     os.makedirs('plots', exist_ok=True)
@@ -143,31 +144,35 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
     theta = np.asarray(theta, dtype=np.float32)
     U     = np.asarray(U,     dtype=np.float32)
+    n_test = len(test_idx)
+    print(f"Test set : {n_test} simulations  |  backend : {model_type}")
 
+    print(f"Prédiction en cours...")
     U_pred = predict(theta[test_idx], ckpt_path, device_str, dt=dt, gamma=gamma, rule=rule)
+    print(f"Prédiction terminée : {U_pred.shape}")
 
     U_true = U[test_idx]
     if model_type == 'SVDSurrogate':
         U_true = U_true[:, :, ::step, ::step]
 
-    n_test = len(test_idx)
+    print(f"Calcul des métriques...")
     diff        = U_pred - U_true
     norms_err   = np.linalg.norm(diff.reshape(n_test, -1), axis=1)
     norms_true  = np.linalg.norm(U_true.reshape(n_test, -1), axis=1) + 1e-12
     l2rel       = norms_err / norms_true
     mse_arr     = np.mean(diff ** 2, axis=(1, 2, 3))
 
-    print(f"Test set : {n_test} simulations  |  backend : {model_type}")
     print(f"MSE global    : {np.mean(mse_arr):.4e}")
-    print(f"L2rel — mean  : {l2rel.mean():.4e}  std : {l2rel.std():.4e}")
-    print(f"        min   : {l2rel.min():.4e}  max : {l2rel.max():.4e}")
+    print(f"L2rel — mean  : {l2rel.mean()*100:.2f}%  std : {l2rel.std()*100:.2f}%")
+    print(f"        min   : {l2rel.min()*100:.2f}%   max : {l2rel.max()*100:.2f}%")
 
+    print(f"Sauvegarde de l'histogramme...")
     plt.figure(figsize=(10, 5))
-    plt.hist(l2rel, bins=30, edgecolor='black', alpha=0.7)
-    plt.xlabel('L2 Relative Error')
+    plt.hist(l2rel * 100, bins=30, edgecolor='black', alpha=0.7)
+    plt.xlabel('L2 Relative Error (%)')
     plt.ylabel('Fréquence')
     plt.title(f'L2 Relative Error — {model_type}  (n={n_test})\n'
-              f'mean={l2rel.mean():.3e}  std={l2rel.std():.3e}')
+              f'mean={l2rel.mean()*100:.2f}%  std={l2rel.std()*100:.2f}%')
     plt.grid(True, alpha=0.3)
     hist_path = os.path.join('plots', f'{model_type}_l2rel_hist.png')
     plt.savefig(hist_path, dpi=150, bbox_inches='tight')
@@ -177,16 +182,17 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     # Animation pour quelques simulations
     n_animate = min(n_animate, n_test)
     positions = np.random.choice(n_test, size=n_animate, replace=False)
-    for i,pos in enumerate(positions):
+    for i, pos in enumerate(positions):
         si        = test_idx[pos]
         l2        = l2rel[pos]
         anim_path = os.path.join('plots', f'{model_type}_anim_{i}.gif')
+        print(f"Animation {i+1}/{n_animate} — simulation #{si} (L2rel={l2*100:.1f}%)...")
         animate_comparaison(
             U_true[pos], U_pred[pos],
             output_path = anim_path,
             title_fn    = lambda t, s=si, e=l2: f"#{s}  L2rel={e*100:.1f}%  t={t}",
         )
-        print(f"Animation simulation {si} -> {anim_path}")
+        print(f"  -> {anim_path}")
 
     return l2rel
 
