@@ -41,7 +41,8 @@ def load_model(ckpt_path: str, device: torch.device):
 
     elif model_type == 'SVDSurrogate':
         from models.svd_surrogate import SVDSurrogate
-        model = SVDSurrogate(nf_eff=ckpt['nf_eff'], theta_dim=ckpt['theta_dim']).to(device)
+
+        model = SVDSurrogate(nr=ckpt['nr'], nt=ckpt['Nt'], nf_eff=ckpt['nf_eff'], theta_dim=ckpt['theta_dim']).to(device)
 
     else:
         raise ValueError(f"Checkpoint de type '{model_type}' non supporté.")
@@ -124,7 +125,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     ----------
     U        : ndarray (ns, Nt, H, W) — champs originaux
     theta    : ndarray (ns, theta_dim)
-    ckpt_path: fichier .pt ou répertoire contenant LaplaceModel.pt
+    ckpt_path: fichier .pt
     test_idx : indices du test set ; si None, chargé depuis le checkpoint
     step     : sous-échantillonnage spatial pour SVD
     """
@@ -136,10 +137,9 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     os.makedirs('plots', exist_ok=True)
 
     if test_idx is None:
-        idx_path = os.path.join(os.path.dirname(ckpt_path), 'test_idx.npy')
-        assert os.path.exists(idx_path), \
-            f"test_idx.npy introuvable dans {os.path.dirname(ckpt_path)}"
-        test_idx = np.load(idx_path)
+        assert 'test_idx' in ckpt_data, \
+            "test_idx absent du checkpoint — relance l'entraînement."
+        test_idx = ckpt_data['test_idx']
 
     theta = np.asarray(theta, dtype=np.float32)
     U     = np.asarray(U,     dtype=np.float32)
@@ -177,17 +177,22 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     # Animation pour quelques simulations
     n_animate = min(n_animate, n_test)
     positions = np.random.choice(n_test, size=n_animate, replace=False)
-    for pos in positions:
+    for i,pos in enumerate(positions):
         si        = test_idx[pos]
-        anim_path = os.path.join('plots', f'{model_type}_anim_{si}.gif')
-        animate_comparaison(U_true[pos], U_pred[pos], output_path=anim_path)
+        l2        = l2rel[pos]
+        anim_path = os.path.join('plots', f'{model_type}_anim_{i}.gif')
+        animate_comparaison(
+            U_true[pos], U_pred[pos],
+            output_path = anim_path,
+            title_fn    = lambda t, s=si, e=l2: f"#{s}  L2rel={e*100:.1f}%  t={t}",
+        )
         print(f"Animation simulation {si} -> {anim_path}")
 
     return l2rel
 
 
 def main(
-    ckpt_path = 'checkpoints/laplace/LaplaceModel.pt',
+    ckpt_path = 'checkpoints/SVDSurrogate_best.pt',
     data_path = 'dataset/dataset_transient.npz',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
@@ -196,11 +201,11 @@ def main(
     step      = 2,
     out       = None,
     plot      = True,
-    EVALUATE  = False,
+    do_evaluation  = True,
 ):
     import matplotlib.pyplot as plt
 
-    if EVALUATE:
+    if do_evaluation:
         data = np.load(data_path)
         evaluate(data['U'], data['theta'], ckpt_path,
                  dt=dt, gamma=gamma, rule=rule, step=step)
@@ -213,15 +218,6 @@ def main(
         np.save(out, U_pred)
         print(f"Sauvegardé → {out}")
 
-    if plot:
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        for ax, t in zip(axes, [0, len(U_pred) // 2, len(U_pred) - 1]):
-            im = ax.imshow(U_pred[t], origin='lower', cmap='viridis')
-            ax.set_title(f't={t}')
-            plt.colorbar(im, ax=ax)
-        plt.suptitle(f'theta = {theta}')
-        plt.tight_layout()
-        plt.show()
 
     return U_pred
 

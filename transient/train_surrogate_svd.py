@@ -38,6 +38,8 @@ def train(
 
     dataset   = TransientDataset(data_path)
     ns        = len(dataset)
+    nr       = F.shape[0]
+    Nt       = P.shape[0]
     theta_dim = dataset.theta_dim
 
     assert ns == G.shape[0], "theta et G doivent avoir le même nombre de simulations"
@@ -80,7 +82,7 @@ def train(
     # --- Modèle ---
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device : {device}")
-    model = SVDSurrogate(nf_eff=nf_eff, theta_dim=theta_dim).to(device)
+    model = SVDSurrogate(nr, Nt, nf_eff=nf_eff, theta_dim=theta_dim).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Paramètres : {n_params:,}")
 
@@ -138,6 +140,8 @@ def train(
                 'epoch':       epoch,
                 'val_loss':    best_val,
                 'nf_eff':      nf_eff,
+                'nr':          nr,
+                'Nt':          Nt,
                 'theta_dim':   theta_dim,
                 'theta_mean':  theta_mean,
                 'theta_std':   theta_std,

@@ -129,6 +129,7 @@ def train_all(
     dataset,
     train_idx,
     val_idx,
+    test_idx,
     epochs     = 300,
     batch_size = 64,
     lr         = 1e-3,
@@ -193,11 +194,11 @@ def train_all(
     wandb.log({'best_val/mean': np.mean(best_vals)})
     wandb.finish()
     print(f"\nEntraînement terminé. Val loss moyenne : {np.mean(best_vals):.3e}")
-    assemble_model(dataset, ckpt_dir)
+    assemble_model(dataset, ckpt_dir, test_idx)
     return best_vals
 
 
-def assemble_model(dataset, ckpt_dir: str):
+def assemble_model(dataset, ckpt_dir: str, test_idx):
     """
     Charge les checkpoints individuels et assemble un LaplaceModel unique.
     Sauvegarde dans <ckpt_dir>/LaplaceModel.pt avec toutes les stats de normalisation.
@@ -228,6 +229,7 @@ def assemble_model(dataset, ckpt_dir: str):
         'gamma':       gamma,
         'theta_mean':  dataset.theta_mean,
         'theta_std':   dataset.theta_std,
+        'test_idx':    np.asarray(test_idx),
     }, out_path)
     print(f"LaplaceModel assemblé → {out_path}")
 
@@ -251,10 +253,8 @@ if __name__ == '__main__':
     test_idx  = idx[n_train + n_val:].numpy()
 
     dataset.fit(train_idx)
-
-    os.makedirs(ckpt_dir, exist_ok=True)
-    np.save(os.path.join(ckpt_dir, 'test_idx.npy'), test_idx)
     print(f"Dataset : {tuple(dataset.U_laplace.shape)}  (Nt_half={dataset.Nt_half}/{dataset.Nt})")
 
-    train_all(dataset, train_idx, val_idx,
+    os.makedirs(ckpt_dir, exist_ok=True)
+    train_all(dataset, train_idx, val_idx, test_idx,
               epochs=epochs, batch_size=batch_size, lr=lr, patience=patience, ckpt_dir=ckpt_dir)

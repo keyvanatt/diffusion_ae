@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
 from models.base import BaseDecoder
+from utils.SVD_Amine_3D import svd_inverse_3d
 
 
 class SVDSurrogate(BaseDecoder):
@@ -16,10 +17,12 @@ class SVDSurrogate(BaseDecoder):
     G_mean/G_std viennent du checkpoint (comme target_mean/std pour LaplaceModel).
     """
 
-    def __init__(self, nf_eff: int = 20, theta_dim: int = 4):
+    def __init__(self, nr, nt, nf_eff: int = 20, theta_dim: int = 4):
         super().__init__()
         self.nf_eff    = nf_eff
         self.theta_dim = theta_dim
+        self.nr          = nr
+        self.Nt          = nt
         self.fc = nn.Sequential(
             nn.Linear(theta_dim, 256),
             nn.ReLU(),
@@ -35,8 +38,8 @@ class SVDSurrogate(BaseDecoder):
             nn.Linear(256, nf_eff),
         )
         # Bases SVD + stats normalisation G — initialisées vides, remplies via set_bases()
-        self.register_buffer('F',      torch.zeros(1, nf_eff))  # (nr, nf_eff)
-        self.register_buffer('P',      torch.zeros(1, nf_eff))  # (Nt, nf_eff)
+        self.register_buffer('F',      torch.zeros(nr, nf_eff))  # (nr, nf_eff)
+        self.register_buffer('P',      torch.zeros(nt, nf_eff))  # (Nt, nf_eff)
         self.register_buffer('alph',   torch.zeros(nf_eff))     # (nf_eff,)
         self.register_buffer('G_mean', torch.zeros(nf_eff))     # (nf_eff,)
         self.register_buffer('G_std',  torch.ones(nf_eff))      # (nf_eff,)
@@ -71,7 +74,6 @@ class SVDSurrogate(BaseDecoder):
         G_np = G_pred.cpu().numpy()                                    # (B, nf_eff)
         a_np = self.alph.cpu().numpy()                                 # (nf_eff,)
 
-        from utils.SVD_Amine_3D import svd_inverse_3d
         fields = svd_inverse_3d(F_np, G_np, P_np, a_np)               # (nr, B, Nt)
 
         nr   = F_np.shape[0]
