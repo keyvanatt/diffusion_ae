@@ -11,6 +11,8 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import time
+
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, Subset
@@ -72,6 +74,8 @@ def train_one(
     prefix    = 'LatentSurrogate' if vae is not None else 'LaplaceSurrogate'
     ckpt_path = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
 
+    wandb.watch(model, log='gradients', log_freq=100)
+
     epoch_bar = tqdm(
         range(1, epochs + 1),
         desc=f"  freq {k:03d}  s={s_k.imag:.3g}j",
@@ -79,6 +83,8 @@ def train_one(
         position=1,
     )
     for epoch in epoch_bar:
+        t0 = time.perf_counter()
+
         # --- Train ---
         model.train()
         train_loss = 0.
@@ -102,13 +108,14 @@ def train_one(
         val_loss /= len(val_loader)
 
         scheduler.step(val_loss)
+        epoch_time = time.perf_counter() - t0
         epoch_bar.set_postfix(train=f"{train_loss:.3e}", val=f"{val_loss:.3e}")
 
         wandb.log({
-            'freq': k,
-            'train/loss': train_loss,
-            'val/loss':   val_loss,
-            'lr':         optimizer.param_groups[0]['lr'],
+            'train/loss'   : train_loss,
+            'val/loss'     : val_loss,
+            'lr'           : optimizer.param_groups[0]['lr'],
+            'epoch_time_s' : epoch_time,
         }, step=global_step + epoch)
 
         if val_loss < best_val:
@@ -125,6 +132,7 @@ def train_one(
                 'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
                 'freq_idx': k, 's_k_real': s_k.real, 's_k_imag': s_k.imag,
             }, ckpt_path)
+            wandb.save(ckpt_path)
         else:
             patience_ += 1
             if patience_ >= patience:
@@ -133,7 +141,8 @@ def train_one(
                 )
                 break
 
-    wandb.log({f'best_val/freq_{k:03d}': best_val})
+    if wandb.run is not None:
+        wandb.run.summary[f'best_val/freq_{k:03d}'] = best_val
     return best_val, epoch
 
 
@@ -172,16 +181,17 @@ def train_all(
     theta_n = (dataset.theta - dataset.theta_mean) / dataset.theta_std  # (ns, theta_dim)
 
     if vae is not None:
-        from models.laplace_ae_surrogate import LaplaceLatentSurrogate
-        _dummy    = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim, N=N)
-        run_name  = f'LaplaceLatentSurrogate_Nt{Nt}'
+        _dummy   = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim)
+        run_name = f'LaplaceLatentSurrogate_Nt{Nt}'
     else:
         _dummy   = LaplaceSurrogate(s=0j, N=N, theta_dim=theta_dim)
         run_name = f'LaplaceSurrogate_Nt{Nt}'
     n_params = sum(p.numel() for p in _dummy.parameters())
     wandb.init(project=project, name=run_name, config=dict(
         Nt=Nt, Nt_half=Nt_half, N=N, ns=ns, theta_dim=theta_dim,
-        epochs=epochs, batch_size=batch_size, lr=lr, patience=patience, n_params=n_params,
+        epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
+        n_params_surrogate=n_params,
+        use_vae=vae is not None,
     ))
 
     best_vals   = []
@@ -211,9 +221,14 @@ def train_all(
         global_step += n_epochs
         freq_bar.set_postfix(freq=k, best_val=f"{best_val:.3e}", s=f"{s_k:.3g}")
 
-    wandb.log({'best_val/mean': np.mean(best_vals)})
+    wandb.log({
+        'summary/best_val_mean' : float(np.mean(best_vals)),
+        'summary/best_val_max'  : float(np.max(best_vals)),
+        'summary/best_val_min'  : float(np.min(best_vals)),
+    })
     wandb.finish()
-    print(f"\nEntraînement terminé. Val loss moyenne : {np.mean(best_vals):.3e}")
+    print(f"\nEntraînement terminé — val loss  mean={np.mean(best_vals):.3e}"
+          f"  max={np.max(best_vals):.3e}  min={np.min(best_vals):.3e}")
     assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), vae=vae)
     return best_vals
 
@@ -249,7 +264,7 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
     for k in range(Nt_half):
         path_k = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
         ckpt_k = torch.load(path_k, map_location='cpu', weights_only=False)
-        model.surrogates[k].load_state_dict(ckpt_k['model_state'], strict=False)
+        model.surrogates[k].load_state_dict(ckpt_k['model_state'])
 
     model.set_normalization(dataset.target_mean, dataset.target_std)
 

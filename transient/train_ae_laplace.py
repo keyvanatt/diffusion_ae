@@ -11,9 +11,10 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import time
+
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader, Subset
 from tqdm import tqdm
 import wandb
@@ -75,15 +76,19 @@ def train_vae(
         N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits,
         epochs=epochs, batch_size=batch_size, lr=lr,
         n_samples_train=len(train_idx_all),
+        n_params=n_params, device=str(device),
     ))
+    wandb.watch(model, log='gradients', log_freq=50)
 
     best_val  = float('inf')
     patience_ = 0
     ckpt_path = os.path.join(ckpt_dir, 'LaplaceVAE_best.pt')
 
     for epoch in tqdm(range(1, epochs + 1), desc='LaplaceVAE'):
+        t0 = time.perf_counter()
+
         model.train()
-        train_elbo = train_recon = train_kl = 0.
+        train_elbo = train_recon = train_kl = train_l2rel = 0.
         for (u,) in train_loader:
             u = u.to(device)
             u_hat, mu, logvar = model(u)
@@ -92,41 +97,47 @@ def train_vae(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            train_elbo  += loss.item()
-            train_recon += metrics['recon'].item()
-            train_kl    += metrics['kl'].item()
+            train_elbo   += loss.item()
+            train_recon  += metrics['recon'].item()
+            train_kl     += metrics['kl'].item()
+            train_l2rel  += ((u_hat - u).norm(dim=(1,2,3)) / (u.norm(dim=(1,2,3)) + 1e-8)).mean().item()
         n = len(train_loader)
-        train_elbo /= n; train_recon /= n; train_kl /= n
+        train_elbo /= n; train_recon /= n; train_kl /= n; train_l2rel /= n
 
         model.eval()
-        val_elbo = val_recon = val_kl = 0.
+        val_elbo = val_recon = val_kl = val_l2rel = 0.
         with torch.no_grad():
             for (u,) in val_loader:
                 u = u.to(device)
                 u_hat, mu, logvar = model(u)
                 loss, metrics = model.loss(u, u_hat, mu, logvar)
-                val_elbo  += loss.item()
-                val_recon += metrics['recon'].item()
-                val_kl    += metrics['kl'].item()
+                val_elbo   += loss.item()
+                val_recon  += metrics['recon'].item()
+                val_kl     += metrics['kl'].item()
+                val_l2rel  += ((u_hat - u).norm(dim=(1,2,3)) / (u.norm(dim=(1,2,3)) + 1e-8)).mean().item()
         n = len(val_loader)
-        val_elbo /= n; val_recon /= n; val_kl /= n
+        val_elbo /= n; val_recon /= n; val_kl /= n; val_l2rel /= n
 
         scheduler.step(val_elbo)
         wandb.log({
-            'vae/train_elbo':  train_elbo,
-            'vae/train_recon': train_recon,
-            'vae/train_kl':    train_kl,
-            'vae/val_elbo':    val_elbo,
-            'vae/val_recon':   val_recon,
-            'vae/val_kl':      val_kl,
-            'lr': optimizer.param_groups[0]['lr'],
-        }, step=epoch)
+            'train/elbo'   : train_elbo,
+            'train/recon'  : train_recon,
+            'train/kl'     : train_kl,
+            'train/l2rel'  : train_l2rel,
+            'val/elbo'     : val_elbo,
+            'val/recon'    : val_recon,
+            'val/kl'       : val_kl,
+            'val/l2rel'    : val_l2rel,
+            'lr'           : optimizer.param_groups[0]['lr'],
+            'epoch_time_s' : time.perf_counter() - t0,
+        })
 
         if val_elbo < best_val:
             best_val  = val_elbo
             patience_ = 0
             torch.save({'model_state': model.state_dict(),
                         'N': N, 'latent_dim': latent_dim, 'val_loss': best_val}, ckpt_path)
+            wandb.save(ckpt_path)
         else:
             patience_ += 1
             if patience_ >= patience:
