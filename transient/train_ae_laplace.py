@@ -68,15 +68,15 @@ def train_vae(
     dataset,
     train_idx,
     val_idx,
-    latent_dim  = 64,
-    epochs      = 300,
-    batch_size  = 64,
-    lr          = 1e-3,
-    beta        = 1.0,
-    patience    = 30,
-    ckpt_dir    = 'checkpoints/laplace_vae',
-    project     = 'convdiff',
-    free_bits   = 0.1,
+    latent_dim,
+    epochs,
+    batch_size,
+    lr,
+    beta,
+    patience,
+    ckpt_dir,
+    project,
+    free_bits,
 ):
     """
     Entraîne LaplaceVAE sur TOUS les champs Laplace (toutes fréquences confondues).
@@ -95,7 +95,7 @@ def train_vae(
                                    val_idx,   Nt_half)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=4)
-
+    print("Laplace Dataset : train %d samples  |  val %d samples" % (len(train_ds), len(val_ds)))
     model     = LaplaceVAE(N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -135,11 +135,15 @@ def train_vae(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            train_elbo  += loss.item()
-            train_recon += metrics['recon'].item()
-            train_kl    += metrics['kl'].item()
+            elbo_  = loss.item()
+            recon_ = metrics['recon'].item()
+            kl_    = metrics['kl'].item()
+            train_elbo  += elbo_
+            train_recon += recon_
+            train_kl    += kl_
             train_l2rel += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
-            train_bar.set_postfix(elbo=f"{loss.item():.3e}")
+            wandb.log({'batch/elbo': elbo_, 'batch/recon': recon_, 'batch/kl': kl_})
+            train_bar.set_postfix(elbo=f"{elbo_:.3e}")
         n = len(train_loader)
         train_elbo /= n; train_recon /= n; train_kl /= n; train_l2rel /= n
 
@@ -178,6 +182,7 @@ def train_vae(
             'val/l2rel'    : val_l2rel,
             'lr'           : optimizer.param_groups[0]['lr'],
             'epoch_time_s' : time.perf_counter() - t0,
+            'epoch'         : epoch,
         })
 
         if val_elbo < best_val:
@@ -209,11 +214,11 @@ def main(
     gamma       = 0.0,
     rule        = 'trap',
     epochs      = 100,
-    batch_size  = 1024,
-    lr          = 1e-3,
-    beta        = 0.05,
+    batch_size  = 76*32, # un multiple de 76 = Nt_half pour éviter les batches partiels
+    lr          = 5e-4,
+    beta        = 0.01,
     patience    = 30,
-    free_bits   = 0.1,
+    free_bits   = 1.00,
     project     = 'convdiff',
     interp_size = 128,    # résolution spatiale cible (multiple de 32 requis par le VAE)
     dt          = 1.0,
@@ -241,7 +246,7 @@ def main(
                     latent_dim=latent_dim,
                     epochs=epochs, batch_size=batch_size,
                     lr=lr, beta=beta, patience=patience, free_bits=free_bits,
-                    ckpt_dir=ckpt_dir)
+                    ckpt_dir=ckpt_dir,project=project)
 
 if __name__ == "__main__":
     main()
