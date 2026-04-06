@@ -6,7 +6,7 @@ import numpy as np
 from utils.SVD_Amine_3D import svd_3d_gpu, svd_inverse_3d
 
 
-def learn_svd(concentration_path, step=5, erreur=1e-8):
+def learn_svd(concentration_path, step=5, erreur=1e-8, nf=None):
     """
     Charge un fichier .npy de concentration (ns, T, H, W), applique une décomposition
     Tucker rang-1 (SVD 3D), et sauvegarde le résultat dans le même répertoire.
@@ -17,7 +17,7 @@ def learn_svd(concentration_path, step=5, erreur=1e-8):
     concentration_sub = concentration[:, :, ::step, ::step]
     Hsub, Wsub = concentration_sub.shape[2], concentration_sub.shape[3]
     nr = Hsub * Wsub
-    nf = min(nr, Nt)
+    nf = min(nr, Nt) if nf is None else nf
 
     print(f"Fichier           : {concentration_path}")
     print(f"Shape             : {concentration.shape}")
@@ -52,7 +52,7 @@ if __name__ == '__main__':
     example_idx = 2  # indice de simulation à sauvegarder pour vérification
 
     F, G, P, alph, Hist_ErrL2, HH, HH_rec, Hsub, Wsub = learn_svd(
-        concentration_path, step=step, erreur=erreur
+        concentration_path, step=step, erreur=erreur, nf=300
     )
 
     from utils.animate import animate_comparaison

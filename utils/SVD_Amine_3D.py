@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from tqdm import tqdm
 
 
 def svd_inverse_3d(F, G, P, alph):
@@ -153,12 +154,14 @@ def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
     Hist_ErrL2 = [1.0]
     alph_list, F_list, G_list, P_list = [], [], [], []
 
-    for itglob in range(nf):
+    pbar_glob = tqdm(range(nf), desc="SVD modes", unit="mode")
+    for itglob in pbar_glob:
         R = torch.rand(nr, dtype=dtype, device=device)
         S = torch.rand(ns, dtype=dtype, device=device)
         T = torch.rand(nt, dtype=dtype, device=device)
 
-        for itloc in range(500):
+        pbar_loc = tqdm(range(500), desc=f"  mode {itglob+1} inner", unit="it", leave=False)
+        for itloc in pbar_loc:
             RST_old = R[:, None, None] * S[None, :, None] * T[None, None, :]
 
             R = torch.einsum('rst,s,t->r', HH, S, T) / (S.dot(S) * T.dot(T))
@@ -166,8 +169,11 @@ def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
             T = torch.einsum('rst,r,s->t', HH, R, S) / (R.dot(R) * S.dot(S))
 
             RST_new = R[:, None, None] * S[None, :, None] * T[None, None, :]
-            if (RST_old - RST_new).norm() < 1e-6:
+            err_loc = (RST_old - RST_new).norm().item()
+            pbar_loc.set_postfix(err=f"{err_loc:.2e}")
+            if err_loc < 1e-6:
                 break
+        pbar_loc.close()
 
         nR, nS, nT = R.norm(), S.norm(), T.norm()
         amplitude = (nR * nS * nT).item()
@@ -179,8 +185,9 @@ def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
         HH = HH - R[:, None, None] * S[None, :, None] * T[None, None, :]
 
         error_l2 = (HH.norm() / error_l2_ini).item()
-        print(f"Err L2 = {error_l2:.6e}  [mode {itglob+1}, device={device}]")
+        tqdm.write(f"Err L2 = {error_l2:.6e}  [mode {itglob+1}, device={device}]")
         Hist_ErrL2.append(error_l2)
+        pbar_glob.set_postfix(errL2=f"{error_l2:.2e}", amp=f"{amplitude:.2e}")
 
         if np.isnan(amplitude) or amplitude / alph_list[0] < erreur:
             break
