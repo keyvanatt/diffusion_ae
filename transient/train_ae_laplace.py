@@ -48,20 +48,17 @@ def train_vae(
 
     # Aplatir (ns, Nt_half, 2, N, N) → (ns*Nt_half, 2, N, N), normalisé par fréquence
     all_targets  = []
-    all_freq     = []
     ns           = len(dataset)
     for k in range(Nt_half):
         tm = dataset.target_mean[k]
         ts = dataset.target_std[k]
         all_targets.append((dataset.U_laplace[:, k] - tm) / ts)          # (ns, 2, N, N)
-        all_freq.append(torch.full((ns, 1), k / Nt_half))                 # (ns, 1)
-    U_all    = torch.cat(all_targets, dim=0)   # (ns*Nt_half, 2, N, N)
-    freq_all = torch.cat(all_freq,    dim=0).float()  # (ns*Nt_half, 1)
+    U_all = torch.cat(all_targets, dim=0)   # (ns*Nt_half, 2, N, N)
 
     train_idx_all = [i + k * ns for k in range(Nt_half) for i in train_idx]
     val_idx_all   = [i + k * ns for k in range(Nt_half) for i in val_idx]
 
-    ds           = TensorDataset(U_all, freq_all)
+    ds           = TensorDataset(U_all)
     train_loader = DataLoader(Subset(ds, train_idx_all), batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(Subset(ds, val_idx_all),   batch_size=batch_size)
 
@@ -87,9 +84,9 @@ def train_vae(
     for epoch in tqdm(range(1, epochs + 1), desc='LaplaceVAE'):
         model.train()
         train_elbo = train_recon = train_kl = 0.
-        for u, freq in train_loader:
-            u, freq = u.to(device), freq.to(device)
-            u_hat, mu, logvar = model(u, freq)
+        for (u,) in train_loader:
+            u = u.to(device)
+            u_hat, mu, logvar = model(u)
             loss, metrics = model.loss(u, u_hat, mu, logvar)
             optimizer.zero_grad()
             loss.backward()
@@ -104,9 +101,9 @@ def train_vae(
         model.eval()
         val_elbo = val_recon = val_kl = 0.
         with torch.no_grad():
-            for u, freq in val_loader:
-                u, freq = u.to(device), freq.to(device)
-                u_hat, mu, logvar = model(u, freq)
+            for (u,) in val_loader:
+                u = u.to(device)
+                u_hat, mu, logvar = model(u)
                 loss, metrics = model.loss(u, u_hat, mu, logvar)
                 val_elbo  += loss.item()
                 val_recon += metrics['recon'].item()

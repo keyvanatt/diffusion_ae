@@ -30,22 +30,20 @@ class LaplaceVariationalEncoder(nn.Module):
         conv_out = 128 * (N // 16) ** 2
 
         self.fc_mu     = nn.Sequential(
-            nn.Linear(conv_out + 1, 64),
+            nn.Linear(conv_out, 64),
             nn.ReLU(),
             nn.Linear(64, latent_dim),
         )
 
         self.fc_logvar = nn.Sequential(
-            nn.Linear(conv_out + 1, 64), #+1 pour la fréquence normalisée
+            nn.Linear(conv_out, 64),
             nn.ReLU(),
             nn.Linear(64, latent_dim),
         )
 
-    def forward(self, U: torch.Tensor, freq_norm: torch.Tensor) -> tuple:
-        """freq_norm : (B, 1) — k / Nt_half ∈ [0, 1]"""
-        h  = self.conv(U).flatten(start_dim=1)              # (B, conv_out)
-        hs = torch.cat([h, freq_norm], dim=1)               # (B, conv_out+1)
-        return self.fc_mu(hs), self.fc_logvar(hs)
+    def forward(self, U: torch.Tensor) -> tuple:
+        h = self.conv(U).flatten(start_dim=1)              # (B, conv_out)
+        return self.fc_mu(h), self.fc_logvar(h)
 
 
 class LaplaceDecoder(nn.Module):
@@ -62,7 +60,7 @@ class LaplaceDecoder(nn.Module):
         self.lambda_grad = lambda_grad
 
         self.fc = nn.Sequential(
-            nn.Linear(latent_dim + 1, 128 * self.base ** 2), # +1 pour la fréquence normalisée
+            nn.Linear(latent_dim, 128 * self.base ** 2),
             nn.ReLU(),
         )
 
@@ -76,24 +74,19 @@ class LaplaceDecoder(nn.Module):
             nn.ConvTranspose2d(32,  16, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.ConvTranspose2d(16,  1,  kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(16,  8,  kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(8),
             nn.ReLU(),
+            nn.ConvTranspose2d(8,   8,  kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
         )
-        self.out_fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear((self.N//2)**2, 256),
-            nn.ReLU(),
-            nn.Linear(256, 2 * self.N**2),
-        )
+        self.refine = nn.Conv2d(8, 2, kernel_size=3, padding=1)
 
-    def forward(self, z: torch.Tensor, freq_norm: torch.Tensor) -> torch.Tensor:
-        """freq_norm : (B, 1) — k / Nt_half ∈ [0, 1]"""
-        zs = torch.cat([z, freq_norm], dim=1)          # (B, latent_dim+1)
-        x  = self.fc(zs)                               # (B, 128*base**2)
-        x  = x.view(-1, 128, self.base, self.base)     # (B, 128, base, base)
-        x  = self.deconv(x)                            # (B, 1, N//2, N//2)
-        x  = self.out_fc(x)
-        return x.view(-1, 2, self.N, self.N)           # (B, 2, N, N)
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        x = self.fc(z)                                 # (B, 128*base**2)
+        x = x.view(-1, 128, self.base, self.base)     # (B, 128, base, base)
+        x = self.deconv(x)                             # (B, 8, N, N)
+        return self.refine(x)                          # (B, 2, N, N)
 
 
 class LaplaceVAE(BaseAutoEncoder):
@@ -141,14 +134,11 @@ class LaplaceVAE(BaseAutoEncoder):
         return mu
 
 
-    def forward(self, U: torch.Tensor, freq_norm: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        freq_norm : (B, 1) — k / Nt_half ∈ [0, 1]
-        Retourne : (Û, μ, log σ²)
-        """
-        mu, logvar = self.encoder(U, freq_norm)
+    def forward(self, U: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retourne : (Û, μ, log σ²)"""
+        mu, logvar = self.encoder(U)
         z          = self.reparametrize(mu, logvar)
-        U_hat      = self.decoder(z, freq_norm)
+        U_hat      = self.decoder(z)
         return U_hat, mu, logvar
 
 
@@ -191,8 +181,11 @@ class LaplaceVAE(BaseAutoEncoder):
 
 class LaplaceLatentSurrogate(nn.Module):
     """
-        Surrogate dans l'espace latent du VAE.
-        Le décodeur est conditionné sur s_k (fréquence de Laplace).
+    MLP θ → z → Û. Interface identique à LaplaceSurrogate.
+
+    Le décodeur n'est PAS enregistré comme sous-module ici : il est stocké
+    par référence via set_decoder() depuis LaplaceLatentModel.shared_decoder,
+    ce qui évite N_half copies en mémoire.
     """
     def __init__(self, latent_dim: int, theta_dim: int, N: int = 64):
         super().__init__()
@@ -201,54 +194,41 @@ class LaplaceLatentSurrogate(nn.Module):
             nn.ReLU(),
             nn.Linear(128, latent_dim),
         )
+        self.__dict__['_decoder'] = None   # référence non-enregistrée, injectée plus tard
 
-        self.decoder = LaplaceDecoder(N=N, latent_dim=latent_dim)
-        self.decoder.requires_grad_(False)  # on ne met à jour que le fc du surrogate
-        self.register_buffer('freq_norm', torch.zeros(1))   # k / Nt_half
-
-    def set_freq(self, k: int, Nt_half: int):
-        """Fixe la fréquence normalisée pour ce surrogate."""
-        self.freq_norm[0] = k / Nt_half
-
-    def toggle_grad_decoder(self):
-        requires_grad = not next(self.decoder.parameters()).requires_grad
-        self.decoder.requires_grad_(requires_grad)
-        print(f"Decoder requires_grad set to {requires_grad}")
+    def set_decoder(self, decoder: nn.Module):
+        """Injecte le décodeur partagé sans le re-enregistrer comme sous-module."""
+        self.__dict__['_decoder'] = decoder
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
-        z       = self.fc(theta)                                         # (B, latent_dim)
-        freq_B  = self.freq_norm.unsqueeze(0).expand(z.shape[0], -1)   # (B, 1)
-        return self.decoder(z, freq_B)
+        z = self.fc(theta)                 # (B, latent_dim)
+        return self._decoder(z)            # (B, 2, N, N)
 
-    def loss(
-        self,
-        U_hat : torch.Tensor,
-        U     : torch.Tensor,
-    ) -> torch.Tensor:
+    def loss(self, U_hat: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
         return F.mse_loss(U_hat, U)
 
 
 class LaplaceLatentModel(LaplaceModel):
     """
-    Modèle complet VAE : N_half LaplaceLatentSurrogate avec décodeur partagé (gelé).
-
-    Hérite de LaplaceModel → _forward_half / forward / _generate / set_normalization
-    sont réutilisés tels quels car chaque surrogate expose la même interface forward(theta).
+    Modèle complet VAE :
+      - N_half LaplaceLatentSurrogate (MLP θ→z, un par fréquence)
+      - un unique shared_decoder (LaplaceDecoder gelé, partagé par référence)
 
     Pipeline en 2 étapes :
       1. Entraîner LaplaceVAE sur tous les champs Laplace
-      2. Pour chaque fréquence k, entraîner LaplaceLatentSurrogate (theta_proj seulement)
-         avec le décodeur VAE gelé
+      2. Pour chaque fréquence k, entraîner LaplaceLatentSurrogate (fc seulement)
     """
 
     def __init__(self, N_freq: int, N_half: int, N: int,
                  theta_dim: int = 4, latent_dim: int = 64):
-        # Initialise BaseDecoder directement pour éviter de créer des LaplaceSurrogate
         BaseDecoder.__init__(self)
         self.surrogates = nn.ModuleList([
             LaplaceLatentSurrogate(latent_dim=latent_dim, theta_dim=theta_dim, N=N)
             for _ in range(N_half)
         ])
+        self.shared_decoder = LaplaceDecoder(N=N, latent_dim=latent_dim)
+        self.shared_decoder.requires_grad_(False)
+        self._inject_decoder()
         self.N_freq     = N_freq
         self.N_half     = N_half
         self.N          = N
@@ -257,12 +237,21 @@ class LaplaceLatentModel(LaplaceModel):
         self.register_buffer('target_mean', torch.zeros(N_half, 2, 1, 1))
         self.register_buffer('target_std',  torch.ones(N_half,  2, 1, 1))
 
+    def _inject_decoder(self):
+        """Injecte shared_decoder par référence dans chaque surrogate."""
+        for s in self.surrogates:
+            s.set_decoder(self.shared_decoder)
+
     def set_vae_decoder(self, vae: LaplaceVAE):
-        """Copie les poids du décodeur VAE dans tous les surrogates (appelé après step 1)."""
-        for k, surrogate in enumerate(self.surrogates):
-            surrogate.decoder.load_state_dict(vae.decoder.state_dict())
-            surrogate.decoder.requires_grad_(False)
-            surrogate.set_freq(k, self.N_half)
+        """Charge les poids du décodeur VAE dans shared_decoder (une seule copie)."""
+        self.shared_decoder.load_state_dict(vae.decoder.state_dict())
+        self.shared_decoder.requires_grad_(False)
+        self._inject_decoder()
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        result = super().load_state_dict(state_dict, strict=strict)
+        self._inject_decoder()   # réinjecte la référence après chargement
+        return result
 
     def loss(self, *args, **kwargs):
         raise NotImplementedError(
@@ -272,6 +261,7 @@ class LaplaceLatentModel(LaplaceModel):
     def __repr__(self) -> str:
         return (f"LaplaceLatentModel(N_freq={self.N_freq}, N_half={self.N_half}, "
                 f"N={self.N}, theta_dim={self.theta_dim}, latent_dim={self.latent_dim})\n"
-                f"Surrogate par fréquence :\n{self.surrogates[0].__repr__()}")
+                f"Shared decoder : {self.shared_decoder.__class__.__name__}\n"
+                f"Surrogate par fréquence : {self.surrogates[0].__repr__()}")
 
     

@@ -13,11 +13,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 from tqdm import tqdm
 import wandb
 
 from models.laplace_surrogate import LaplaceSurrogate, LaplaceModel
+from models.laplace_ae_surrogate import LaplaceLatentSurrogate
 
 
 def train_one(
@@ -52,12 +54,10 @@ def train_one(
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if vae is not None:
-        from models.laplace_ae_surrogate import LaplaceLatentSurrogate
-        latent_dim = vae.latent_dim
-        model      = LaplaceLatentSurrogate(latent_dim=latent_dim, theta_dim=theta_dim, N=N).to(device)
-        model.decoder.load_state_dict(vae.decoder.state_dict())
-        model.decoder.requires_grad_(False)
-        params_to_train = model.fc.parameters()
+        model = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim, N=N).to(device)
+        vae.decoder.to(device).requires_grad_(False)
+        model.set_decoder(vae.decoder)
+        params_to_train = model.fc.parameters()   # fc seulement, décodeur gelé
     else:
         model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim).to(device)
         params_to_train = model.parameters()
@@ -69,6 +69,7 @@ def train_one(
 
     best_val  = float('inf')
     patience_ = 0
+    epoch     = 0
     prefix    = 'LatentSurrogate' if vae is not None else 'LaplaceSurrogate'
     ckpt_path = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
 
