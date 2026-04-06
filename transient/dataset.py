@@ -21,18 +21,35 @@ class TransientDataset(Dataset):
 
     Usage
     -----
+    # Données boris (ch4_rotated)
+    dataset = TransientDataset('dataset/ch4_rotated.npy', dt=1.0, laplace=True)
+    # Ancien format
     dataset = TransientDataset('dataset/dataset_transient.npz', laplace=True)
     dataset.fit(train_indices)   # calcule les stats de normalisation
     theta_n, target_n = dataset[i]
     """
 
     def __init__(self, data_path: str, laplace: bool = False,
-                 gamma: float = 0.0, rule: str = 'trap'):
-        data = np.load(data_path)
-        self.U     = torch.tensor(data['U'],     dtype=torch.float32)  # (ns, Nt, N, N)
-        self.theta = torch.tensor(data['theta'], dtype=torch.float32)  # (ns, theta_dim)
-        dt_raw     = data['dt']
-        self.dt    = float(dt_raw[0]) if hasattr(dt_raw, '__len__') else float(dt_raw)
+                 gamma: float = 0.0, rule: str = 'trap', dt: float = 1.0,
+                 doe_path: str | None = None):
+        if data_path.endswith('.npy'):
+            # Données boris : ch4_rotated.npy + doe_rotated.npy
+            U_raw = np.load(data_path, mmap_mode='r')                 # (ns, Nt, N, N)
+            self.U = torch.tensor(np.array(U_raw), dtype=torch.float32)
+            if doe_path is None:
+                from pathlib import Path
+                doe_path = str(Path(data_path).parent / 'doe_rotated.npy')
+            doe = np.load(doe_path)                                    # structured (ns,)
+            theta_np = np.stack([doe['k'], doe['A'], doe['C']], axis=1).astype(np.float32)
+            self.theta = torch.tensor(theta_np, dtype=torch.float32)  # (ns, 3)
+            self.dt = dt
+        else:
+            # Ancien format : dataset_transient.npz
+            data = np.load(data_path)
+            self.U     = torch.tensor(data['U'],     dtype=torch.float32)
+            self.theta = torch.tensor(data['theta'], dtype=torch.float32)
+            dt_raw     = data['dt']
+            self.dt    = float(dt_raw[0]) if hasattr(dt_raw, '__len__') else float(dt_raw)
 
         self.ns, self.Nt, self.N, _ = self.U.shape
         self.theta_dim = self.theta.shape[1]
@@ -111,3 +128,4 @@ class TransientDataset(Dataset):
                 return target_norm * self.target_std[k] + self.target_mean[k]
             return target_norm * self.target_std + self.target_mean
         return target_norm
+

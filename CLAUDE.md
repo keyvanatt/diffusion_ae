@@ -80,13 +80,15 @@ Tous les scripts loggent sur [Weights & Biases](https://wandb.ai) (projet `convd
 
 Objectif : émuler des champs de concentration CH4 transitoires `U(t)` en fonction de paramètres θ. Deux datasets disponibles, même objectif :
 
-- **CH4 (ancien, ~150 samples)** : `dataset/Results/CH4.npy` + `dataset/Results/doe.npy` (ou versions `_rotated`). Paramètres `doe = (k, A, C, theta)`. Format `(ns, T, H, W)`.
-- **dataset_transient (~5 000 samples)** : `dataset/dataset_transient.npz`. Contient `U (ns, Nt, N, N)`, `theta (ns, theta_dim)`, `dt`. À préférer.
+- **ch4_rotated (~8 100 samples)** : `dataset/ch4_rotated.npy` + `dataset/doe_rotated.npy`. Format `(8100, 150, 200, 200)`. Paramètres `doe = (k, A, C)` (le champ `theta` du doe est l'angle de rotation, déjà appliqué — on l'ignore). **Dataset principal à utiliser.**
+- **dataset_transient (~5 000 samples)** : `dataset/dataset_transient.npz`. Contient `U (ns, Nt, N, N)`, `theta (ns, theta_dim)`, `dt`.
 
 ## Dataset
 
-- `transient/dataset.py` — `TransientDataset(data_path, laplace=False, gamma, rule)` :
-  - `laplace=False` : `__getitem__` retourne `(theta_norm, U)`
+- `transient/dataset.py` — `TransientDataset(data_path, laplace=False, gamma, rule, dt, doe_path)` :
+  - Si `data_path` se termine par `.npy` : charge `ch4_rotated.npy` + `doe_rotated.npy` (déduit automatiquement), theta_dim=3 `(k, A, C)`, `dt` à passer en paramètre.
+  - Sinon : ancien format `.npz` (clés `U`, `theta`, `dt`).
+  - `laplace=False` : `__getitem__` retourne `(theta_norm, U)` de shape `(Nt, N, N)`
   - `laplace=True` : pré-calcule la transformée de Laplace, `__getitem__` retourne `(theta_norm, U_laplace_norm)` de shape `(Nt_half, 2, N, N)`
   - Appeler `dataset.fit(train_indices)` avant l'entraînement pour calculer les stats de normalisation.
 
