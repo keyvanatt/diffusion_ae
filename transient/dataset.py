@@ -17,7 +17,7 @@ class TransientDataset(Dataset):
     -----
     laplace=False (défaut) : __getitem__ retourne (theta_norm, U)
     laplace=True           : applique la transformée de Laplace au chargement,
-                             __getitem__ retourne (theta_norm, U_laplace_norm)
+                             __getitem __ retourne (theta_norm, U_laplace_norm)
                              où U_laplace_norm a la forme (Nt_half, 2, N, N).
 
     Usage
@@ -32,7 +32,8 @@ class TransientDataset(Dataset):
 
     def __init__(self, data_path: str, laplace: bool = False,
                  gamma: float = 0.0, rule: str = 'trap', dt: float = 1.0,
-                 doe_path: str | None = None, interp_size: int | None = None):
+                 doe_path: str | None = None, interp_size: int | None = None,
+                 cache_dir: str = '/Data/KAT'):
         if data_path.endswith('.npy'):
             # Données boris : ch4_rotated.npy + doe_rotated.npy
             # Gardé en mmap — pas de matérialisation en RAM
@@ -46,7 +47,9 @@ class TransientDataset(Dataset):
             ns, Nt, H, W = U_raw.shape
             self.ns, self.Nt = ns, Nt
             self.N = interp_size if interp_size is not None else H
-            self._U_raw = U_raw     # mmap — lu sample par sample dans _to_laplace
+            self._U_raw     = U_raw        # mmap — lu sample par sample dans _to_laplace
+            self._data_path = data_path
+            self._cache_dir = Path(cache_dir)
         else:
             # Ancien format : dataset_transient.npz
             data   = np.load(data_path)
@@ -75,30 +78,53 @@ class TransientDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _to_laplace(self, gamma: float, rule: str):
-
         ns, Nt, N = self.ns, self.Nt, self.N
         Nt_half   = self.Nt_half
-        U_laplace = torch.zeros(ns, Nt_half, 2, N, N)
-        s = None
-        for i in tqdm(range(ns), desc="Transformée de Laplace", leave=False):
-            if self._U_raw is not None:
-                # Lecture mmap : copie d'un seul sample pour éviter la matérialisation totale
+
+        if self._U_raw is not None:
+            # Gros dataset : écriture dans un memmap sur disque (évite l'OOM)
+            stem   = Path(self._data_path).stem
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            fpath  = self._cache_dir / f"{stem}_laplace_N{N}_g{gamma:.3f}_{rule}.npy"
+            spath  = self._cache_dir / f"{stem}_s_Nt{Nt}.npy"
+
+            if fpath.exists() and spath.exists():
+                print(f"Cache Laplace trouvé : {fpath}")
+                return np.load(str(fpath), mmap_mode='r'), np.load(str(spath))[:Nt_half]
+
+            print(f"Calcul Laplace → {fpath}  ({ns} samples, N={N})")
+            U_mmap = np.lib.format.open_memmap(
+                str(fpath), mode='w+', dtype=np.float32, shape=(ns, Nt_half, 2, N, N)
+            )
+            s = None
+            for i in tqdm(range(ns), desc="Transformée de Laplace"):
                 U_i = torch.from_numpy(self._U_raw[i].copy()).float()  # (Nt, H, W)
                 if self.interp_size is not None:
                     U_i = F.interpolate(
-                        U_i.unsqueeze(0),                              # (1, Nt, H, W) → 4D
-                        size=(self.interp_size, self.interp_size),
+                        U_i.unsqueeze(0), size=(N, N),
                         mode='bilinear', align_corners=False,
-                    ).squeeze(0)                                        # (Nt, N, N)
-                U_np = U_i.numpy()
-            else:
-                U_np = self.U[i].numpy()                               # (Nt, N, N)
-            C_i    = U_np.transpose(1, 2, 0).reshape(N * N, Nt)       # (N², Nt)
-            M, s, _ = laplace_forward(C_i, dt=self.dt, gamma=gamma, rule=rule)
-            M_half  = M[:, :Nt_half]                                   # (N², Nt_half)
-            stacked = np.stack([M_half.real, M_half.imag], axis=1)    # (N², 2, Nt_half)
-            U_laplace[i] = torch.from_numpy(stacked).permute(2, 1, 0).reshape(Nt_half, 2, N, N)
-        return U_laplace, s[:Nt_half]
+                    ).squeeze(0)
+                C_i     = U_i.numpy().transpose(1, 2, 0).reshape(N * N, Nt)
+                M, s, _ = laplace_forward(C_i, dt=self.dt, gamma=gamma, rule=rule)
+                M_half  = M[:, :Nt_half]
+                stacked = np.stack([M_half.real, M_half.imag], axis=1)  # (N², 2, Nt_half)
+                U_mmap[i] = stacked.transpose(2, 1, 0).reshape(Nt_half, 2, N, N)
+            assert s is not None
+            np.save(str(spath), s)
+            return np.load(str(fpath), mmap_mode='r'), s[:Nt_half]
+
+        else:
+            # Petit dataset (.npz) : tout en mémoire comme avant
+            U_laplace = torch.zeros(ns, Nt_half, 2, N, N)
+            s = None
+            for i in tqdm(range(ns), desc="Transformée de Laplace", leave=False):
+                U_np    = self.U[i].numpy()
+                C_i     = U_np.transpose(1, 2, 0).reshape(N * N, Nt)
+                M, s, _ = laplace_forward(C_i, dt=self.dt, gamma=gamma, rule=rule)
+                M_half  = M[:, :Nt_half]
+                stacked = np.stack([M_half.real, M_half.imag], axis=1)
+                U_laplace[i] = torch.from_numpy(stacked).permute(2, 1, 0).reshape(Nt_half, 2, N, N)
+            return U_laplace, s[:Nt_half]
 
     # ------------------------------------------------------------------
     # Normalisation
@@ -116,12 +142,22 @@ class TransientDataset(Dataset):
         self.theta_std  = self.theta[train_indices].std(0) + 1e-8
 
         if self.laplace:
-            target_train = self.U_laplace[train_indices]           # (n_train, Nt_half, 2, N, N)
-            # moyenne/écart-type sur (batch, pixels) par fréquence et par composante (Re/Im)
-            self.target_mean = (target_train.mean(dim=(0, 3, 4))   # (Nt_half, 2)
-                                .unsqueeze(-1).unsqueeze(-1))       # (Nt_half, 2, 1, 1)
-            self.target_std  = (target_train.std(dim=(0, 3, 4))
-                                .unsqueeze(-1).unsqueeze(-1) + 1e-8)
+            if isinstance(self.U_laplace, np.ndarray):
+                # Mmap : calcul par fréquence pour éviter de tout charger (~800 MB/freq)
+                means, stds = [], []
+                for k in tqdm(range(self.Nt_half), desc="Stats Laplace", leave=False):
+                    chunk = torch.from_numpy(self.U_laplace[train_indices, k].copy())  # (n_train, 2, N, N)
+                    means.append(chunk.mean(dim=(0, 2, 3)))          # (2,)
+                    stds.append(chunk.std(dim=(0, 2, 3)) + 1e-8)
+                self.target_mean = torch.stack(means).unsqueeze(-1).unsqueeze(-1)  # (Nt_half, 2, 1, 1)
+                self.target_std  = torch.stack(stds).unsqueeze(-1).unsqueeze(-1)
+            else:
+                # Tensor en mémoire : calcul global direct
+                target_train = self.U_laplace[train_indices]
+                self.target_mean = (target_train.mean(dim=(0, 3, 4))
+                                    .unsqueeze(-1).unsqueeze(-1))
+                self.target_std  = (target_train.std(dim=(0, 3, 4))
+                                    .unsqueeze(-1).unsqueeze(-1) + 1e-8)
 
     # ------------------------------------------------------------------
     # Dataset interface
@@ -133,7 +169,11 @@ class TransientDataset(Dataset):
     def __getitem__(self, idx):
         theta_n = (self.theta[idx] - self.theta_mean) / self.theta_std
         if self.laplace:
-            target_n = (self.U_laplace[idx] - self.target_mean) / self.target_std
+            if isinstance(self.U_laplace, np.ndarray):
+                target = torch.from_numpy(self.U_laplace[idx].copy()).float()
+            else:
+                target = self.U_laplace[idx]
+            target_n = (target - self.target_mean) / self.target_std
             return theta_n, target_n                               # (Nt_half, 2, N, N)
         return theta_n, self.U[idx]                                # (Nt, N, N)
 

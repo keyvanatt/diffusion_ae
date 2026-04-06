@@ -15,12 +15,37 @@ import time
 
 import numpy as np
 import torch
-from torch.utils.data import TensorDataset, DataLoader, Subset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 
+from torch.utils.data import Dataset as _Dataset
+
 from models.laplace_ae_surrogate import LaplaceVAE, LaplaceLatentSurrogate, LaplaceLatentModel
 from transient.dataset import TransientDataset
+
+
+class _LaplaceFlatDataset(_Dataset):
+    """
+    Dataset lazy indexé sur (simulation, fréquence).
+    Lit depuis le memmap disque — ~(2, N, N) par accès, pas d'OOM.
+    """
+    def __init__(self, U_laplace, target_mean, target_std, indices, Nt_half):
+        self.U_laplace   = U_laplace
+        self.target_mean = target_mean   # (Nt_half, 2, 1, 1)
+        self.target_std  = target_std
+        self.pairs = [(int(i), k) for k in range(Nt_half) for i in indices]
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, idx):
+        sim_i, k = self.pairs[idx]
+        if isinstance(self.U_laplace, np.ndarray):
+            u = torch.from_numpy(self.U_laplace[sim_i, k].copy()).float()  # (2, N, N)
+        else:
+            u = self.U_laplace[sim_i, k].float()
+        return ((u - self.target_mean[k]) / self.target_std[k],)
 
 
 def train_vae(
@@ -47,21 +72,13 @@ def train_vae(
     device    = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # Aplatir (ns, Nt_half, 2, N, N) → (ns*Nt_half, 2, N, N), normalisé par fréquence
-    all_targets  = []
-    ns           = len(dataset)
-    for k in range(Nt_half):
-        tm = dataset.target_mean[k]
-        ts = dataset.target_std[k]
-        all_targets.append((dataset.U_laplace[:, k] - tm) / ts)          # (ns, 2, N, N)
-    U_all = torch.cat(all_targets, dim=0)   # (ns*Nt_half, 2, N, N)
-
-    train_idx_all = [i + k * ns for k in range(Nt_half) for i in train_idx]
-    val_idx_all   = [i + k * ns for k in range(Nt_half) for i in val_idx]
-
-    ds           = TensorDataset(U_all)
-    train_loader = DataLoader(Subset(ds, train_idx_all), batch_size=batch_size, shuffle=True)
-    val_loader   = DataLoader(Subset(ds, val_idx_all),   batch_size=batch_size)
+    # Dataset lazy : lit (sim, freq) depuis le memmap sans tout charger en RAM
+    train_ds = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
+                                   train_idx, Nt_half)
+    val_ds   = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
+                                   val_idx,   Nt_half)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=4, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=4)
 
     model     = LaplaceVAE(N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -75,7 +92,7 @@ def train_vae(
     wandb.init(project=project, name='LaplaceVAE', config=dict(
         N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits,
         epochs=epochs, batch_size=batch_size, lr=lr,
-        n_samples_train=len(train_idx_all),
+        n_samples_train=len(train_ds),
         n_params=n_params, device=str(device),
     ))
     wandb.watch(model, log='gradients', log_freq=50)
