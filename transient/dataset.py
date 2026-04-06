@@ -83,7 +83,7 @@ class TransientDataset(Dataset):
 
         if self._U_raw is not None:
             # Gros dataset : écriture dans un memmap sur disque (évite l'OOM)
-            stem   = Path(self._data_path).stem
+            stem   = Path(self._data_path).stem #dataset_path sans extension
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             fpath  = self._cache_dir / f"{stem}_laplace_N{N}_g{gamma:.3f}_{rule}.npy"
             spath  = self._cache_dir / f"{stem}_s_Nt{Nt}.npy"
