@@ -180,6 +180,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     print(f"Sauvegarde de l'histogramme...")
     plt.figure(figsize=(10, 5))
     plt.hist(l2rel * 100, bins=30, edgecolor='black', alpha=0.7)
+    plt.xlim((0,100))
     plt.xlabel('L2 Relative Error (%)')
     plt.ylabel('Fréquence')
     plt.title(f'L2 Relative Error — {model_type}  (n={n_test})\n'
@@ -209,7 +210,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/LaplaceModel.pt',
+    ckpt_path = 'checkpoints/SVDSurrogate_best.pt',
     data_path = 'dataset/dataset_transient.npz',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
