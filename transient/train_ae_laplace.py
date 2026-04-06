@@ -209,16 +209,16 @@ def train_vae(
 def main(
     data_path   = os.path.join("dataset", "ch4_rotated.npy"),
     ckpt_dir    = os.path.join("checkpoints", "laplace_vae"),
-    latent_dim  = 64,
+    latent_dim  = 128,
     seed        = 42,
     gamma       = 0.0,
     rule        = 'trap',
     epochs      = 100,
     batch_size  = 76*32, # un multiple de 76 = Nt_half pour éviter les batches partiels
     lr          = 5e-4,
-    beta        = 0.01,
+    beta        = 0.2,
     patience    = 30,
-    free_bits   = 1.00,
+    free_bits   = 0.5,
     project     = 'convdiff',
     interp_size = 128,    # résolution spatiale cible (multiple de 32 requis par le VAE)
     dt          = 1.0,

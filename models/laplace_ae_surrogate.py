@@ -17,28 +17,30 @@ class LaplaceVariationalEncoder(nn.Module):
         self.N = N
 
         self.conv = nn.Sequential(
-            nn.Conv2d(2,  16, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(2,   16, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(16,  32, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(32,  64, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
             nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
+            nn.Conv2d(128, 128, kernel_size=4, stride=2, padding=1),  # 5ème downsample → N//32
+            nn.LeakyReLU(0.2),
         )
 
-        conv_out = 128 * (N // 16) ** 2
+        conv_out = 128 * (N // 32) ** 2  # aligné avec le décodeur (base = N//32)
 
         self.fc_mu     = nn.Sequential(
-            nn.Linear(conv_out, 64),
+            nn.Linear(conv_out, 2 * latent_dim),
             nn.ReLU(),
-            nn.Linear(64, latent_dim),
+            nn.Linear(2 * latent_dim, latent_dim),
         )
 
         self.fc_logvar = nn.Sequential(
-            nn.Linear(conv_out, 64),
+            nn.Linear(conv_out, 2 * latent_dim),
             nn.ReLU(),
-            nn.Linear(64, latent_dim),
+            nn.Linear(2 * latent_dim, latent_dim),
         )
 
     def forward(self, U: torch.Tensor) -> tuple:
@@ -65,6 +67,9 @@ class LaplaceDecoder(nn.Module):
         )
 
         self.deconv = nn.Sequential(
+            nn.ConvTranspose2d(128, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
             nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
@@ -74,13 +79,10 @@ class LaplaceDecoder(nn.Module):
             nn.ConvTranspose2d(32,  16, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.ConvTranspose2d(16,  8,  kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(8),
-            nn.ReLU(),
-            nn.ConvTranspose2d(8,   8,  kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(16,  16, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
         )
-        self.refine = nn.Conv2d(8, 2, kernel_size=3, padding=1)
+        self.refine = nn.Conv2d(16, 2, kernel_size=3, padding=1)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         x = self.fc(z)                                 # (B, 128*base**2)
@@ -158,12 +160,11 @@ class LaplaceVAE(BaseAutoEncoder):
         recon_loss : terme reconstruction seul
         kl_loss    : terme KL seul
         """
-        recon_loss = F.mse_loss(U_hat, U)
+        recon_loss = F.mse_loss(U_hat, U)  # mean sur B × C × H × W
 
         # KL : free-bits — on ne pénalise pas en dessous de free_bits par dim
         kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())  # (B, latent)
-        kl_per_dim = kl_per_dim.mean(dim=0)                           # (latent,)
-        kl_loss    = kl_per_dim.clamp(min=self.free_bits).sum()
+        kl_loss    = kl_per_dim.clamp(min=self.free_bits).mean()      # mean sur B × latent
 
         neg_elbo = recon_loss + self.beta * kl_loss
 
@@ -266,4 +267,12 @@ class LaplaceLatentModel(LaplaceModel):
                 f"Shared decoder : {self.shared_decoder.__class__.__name__}\n"
                 f"Surrogate par fréquence : {self.surrogates[0].__repr__()}")
 
-    
+if __name__ == "__main__":
+    vae = LaplaceVAE(N=128, latent_dim=32)
+    total_params = sum(p.numel() for p in vae.parameters())
+    encoder_params = sum(p.numel() for p in vae.encoder.parameters())
+    decoder_params = sum(p.numel() for p in vae.decoder.parameters())
+
+    print(f"Total parameters: {total_params:,}")
+    print(f"Encoder parameters: {encoder_params:,}")
+    print(f"Decoder parameters: {decoder_params:,}")
