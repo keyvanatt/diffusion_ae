@@ -154,12 +154,12 @@ def train_vae(
 
 
 def main(
-    data_path  = os.path.join("dataset", "dataset_transient.npz"),
-    ckpt_dir   = os.path.join("checkpoints", "laplace_vae"),
-    latent_dim = 64,
-    seed       = 42,
-    gamma = 0.0, 
-    rule = 'trap',
+    data_path   = os.path.join("dataset", "ch4_rotated.npy"),
+    ckpt_dir    = os.path.join("checkpoints", "laplace_vae"),
+    latent_dim  = 64,
+    seed        = 42,
+    gamma       = 0.0,
+    rule        = 'trap',
     epochs      = 100,
     batch_size  = 512,
     lr          = 1e-3,
@@ -167,9 +167,12 @@ def main(
     patience    = 30,
     free_bits   = 0.1,
     project     = 'convdiff',
+    interp_size = 128,    # résolution spatiale cible (multiple de 32 requis par le VAE)
+    dt          = 1.0,
 ):
-    
-    dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule)
+
+    dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
+                               interp_size=interp_size, dt=dt)
 
     torch.manual_seed(seed)
     idx       = torch.randperm(len(dataset))

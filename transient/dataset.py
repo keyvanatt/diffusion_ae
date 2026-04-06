@@ -6,7 +6,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
-
+import torch.nn.functional as F
+from utils.laplace import laplace_forward
 
 class TransientDataset(Dataset):
     """
@@ -31,29 +32,34 @@ class TransientDataset(Dataset):
 
     def __init__(self, data_path: str, laplace: bool = False,
                  gamma: float = 0.0, rule: str = 'trap', dt: float = 1.0,
-                 doe_path: str | None = None):
+                 doe_path: str | None = None, interp_size: int | None = None):
         if data_path.endswith('.npy'):
             # Données boris : ch4_rotated.npy + doe_rotated.npy
-            U_raw = np.load(data_path, mmap_mode='r')                 # (ns, Nt, N, N)
-            self.U = torch.tensor(np.array(U_raw), dtype=torch.float32)
+            # Gardé en mmap — pas de matérialisation en RAM
+            U_raw = np.load(data_path, mmap_mode='r')                 # (ns, Nt, H, W)
             if doe_path is None:
-                from pathlib import Path
                 doe_path = str(Path(data_path).parent / 'doe_rotated.npy')
             doe = np.load(doe_path)                                    # structured (ns,)
             theta_np = np.stack([doe['k'], doe['A'], doe['C']], axis=1).astype(np.float32)
             self.theta = torch.tensor(theta_np, dtype=torch.float32)  # (ns, 3)
-            self.dt = dt
+            self.dt    = dt
+            ns, Nt, H, W = U_raw.shape
+            self.ns, self.Nt = ns, Nt
+            self.N = interp_size if interp_size is not None else H
+            self._U_raw = U_raw     # mmap — lu sample par sample dans _to_laplace
         else:
             # Ancien format : dataset_transient.npz
-            data = np.load(data_path)
-            self.U     = torch.tensor(data['U'],     dtype=torch.float32)
+            data   = np.load(data_path)
+            self.U = torch.tensor(data['U'],     dtype=torch.float32)
             self.theta = torch.tensor(data['theta'], dtype=torch.float32)
             dt_raw     = data['dt']
             self.dt    = float(dt_raw[0]) if hasattr(dt_raw, '__len__') else float(dt_raw)
+            self.ns, self.Nt, self.N, _ = self.U.shape
+            self._U_raw: np.ndarray | None = None
 
-        self.ns, self.Nt, self.N, _ = self.U.shape
         self.theta_dim = self.theta.shape[1]
         self.Nt_half   = self.Nt // 2 + 1
+        self.interp_size = interp_size
 
         self.laplace = laplace
         if laplace:
@@ -69,17 +75,28 @@ class TransientDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _to_laplace(self, gamma: float, rule: str):
-        from utils.laplace import laplace_forward
+
         ns, Nt, N = self.ns, self.Nt, self.N
         Nt_half   = self.Nt_half
         U_laplace = torch.zeros(ns, Nt_half, 2, N, N)
         s = None
         for i in tqdm(range(ns), desc="Transformée de Laplace", leave=False):
-            U_i    = self.U[i].numpy()                                      # (Nt, N, N)
-            C_i    = U_i.transpose(1, 2, 0).reshape(N * N, Nt)             # (N², Nt)
+            if self._U_raw is not None:
+                # Lecture mmap : copie d'un seul sample pour éviter la matérialisation totale
+                U_i = torch.from_numpy(self._U_raw[i].copy()).float()  # (Nt, H, W)
+                if self.interp_size is not None:
+                    U_i = F.interpolate(
+                        U_i.unsqueeze(0),                              # (1, Nt, H, W) → 4D
+                        size=(self.interp_size, self.interp_size),
+                        mode='bilinear', align_corners=False,
+                    ).squeeze(0)                                        # (Nt, N, N)
+                U_np = U_i.numpy()
+            else:
+                U_np = self.U[i].numpy()                               # (Nt, N, N)
+            C_i    = U_np.transpose(1, 2, 0).reshape(N * N, Nt)       # (N², Nt)
             M, s, _ = laplace_forward(C_i, dt=self.dt, gamma=gamma, rule=rule)
-            M_half  = M[:, :Nt_half]                                        # (N², Nt_half)
-            stacked = np.stack([M_half.real, M_half.imag], axis=1)         # (N², 2, Nt_half)
+            M_half  = M[:, :Nt_half]                                   # (N², Nt_half)
+            stacked = np.stack([M_half.real, M_half.imag], axis=1)    # (N², 2, Nt_half)
             U_laplace[i] = torch.from_numpy(stacked).permute(2, 1, 0).reshape(Nt_half, 2, N, N)
         return U_laplace, s[:Nt_half]
 
