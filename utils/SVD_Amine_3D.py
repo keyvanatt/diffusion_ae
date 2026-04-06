@@ -117,24 +117,22 @@ def svd_amine_3d(HH, nf, erreur):
     return F, G, P, alph, Hist_ErrL2
 
 
-def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
+def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float32, deflate_chunk=50):
     """
-    Version GPU de svd_amine_3d. Remplace les kron+reshape(order='F') par
-    des einsum et du broadcasting PyTorch.
+    Version GPU de svd_amine_3d.
 
-    Les equivalences mathematiques utilisees :
-      Hrst.reshape(nr, ns*nt, order='F') @ kron(T,S)  ->  einsum('rst,s,t->r', HH, S, T)
-      Hstr.reshape(ns, nt*nr, order='F') @ kron(R,T)  ->  einsum('rst,r,t->s', HH, R, T)
-      Htrs.reshape(nt, nr*ns, order='F') @ kron(S,R)  ->  einsum('rst,r,s->t', HH, R, S)
-      kron(T,kron(S,R)).reshape(nr,ns,nt,order='F')   ->  R[:,None,None]*S[None,:,None]*T[None,None,:]
+    HH est chargé sur GPU en float32. Les tenseurs RST intermédiaires (même
+    taille que HH) sont évités : convergence testée sur les vecteurs R/S/T,
+    déflation faite par chunks sur la dimension nr pour limiter le pic mémoire.
 
     Parametres
     ----------
-    HH_np  : ndarray (nr, ns, nt)
-    nf     : int
-    erreur : float
-    device : torch.device ou str, ex. 'cuda', 'cuda:1'. Par defaut : cuda si dispo, sinon cpu.
-    dtype  : torch.float64 (defaut, precis) ou torch.float32 (plus rapide)
+    HH_np         : ndarray (nr, ns, nt)
+    nf            : int
+    erreur        : float
+    device        : torch.device ou str. Par defaut : cuda si dispo, sinon cpu.
+    dtype         : torch.float32 (defaut)
+    deflate_chunk : int — nb de lignes nr par chunk lors de la déflation (defaut 50)
 
     Retour  (memes formats que svd_amine_3d)
     ------
@@ -162,14 +160,24 @@ def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
 
         pbar_loc = tqdm(range(500), desc=f"  mode {itglob+1} inner", unit="it", leave=False)
         for itloc in pbar_loc:
-            RST_old = R[:, None, None] * S[None, :, None] * T[None, None, :]
+            R_old, S_old, T_old = R.clone(), S.clone(), T.clone()
 
-            R = torch.einsum('rst,s,t->r', HH, S, T) / (S.dot(S) * T.dot(T))
-            S = torch.einsum('rst,r,t->s', HH, R, T) / (R.dot(R) * T.dot(T))
-            T = torch.einsum('rst,r,s->t', HH, R, S) / (R.dot(R) * S.dot(S))
+            # R : (nr,ns,nt)@(nt,) -> (nr,ns), puis @(ns,) -> (nr,)
+            tmp = HH @ T
+            R = (tmp @ S) / (S.dot(S) * T.dot(T))
 
-            RST_new = R[:, None, None] * S[None, :, None] * T[None, None, :]
-            err_loc = (RST_old - RST_new).norm().item()
+            # HHR[s,t] = sum_r HH[r,s,t]*R[r]  — partagé pour S et T
+            HHR = torch.einsum('r,rst->st', R, HH)   # (ns, nt)
+
+            # S : HHR@(nt,) -> (ns,)
+            S = (HHR @ T) / (R.dot(R) * T.dot(T))
+
+            # T : HHR.T@(ns,) -> (nt,)  — réutilise HHR, S déjà mis à jour
+            T = (HHR.t() @ S) / (R.dot(R) * S.dot(S))
+
+            err_loc = max((R - R_old).norm().item(),
+                          (S - S_old).norm().item(),
+                          (T - T_old).norm().item())
             pbar_loc.set_postfix(err=f"{err_loc:.2e}")
             if err_loc < 1e-6:
                 break
@@ -178,11 +186,17 @@ def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float64):
         nR, nS, nT = R.norm(), S.norm(), T.norm()
         amplitude = (nR * nS * nT).item()
         alph_list.append(amplitude)
-        F_list.append((R / nR).cpu().numpy())
-        G_list.append((S / nS).cpu().numpy())
-        P_list.append((T / nT).cpu().numpy())
+        F_r = (R / nR)
+        G_s = (S / nS)
+        P_t = (T / nT)
+        F_list.append(F_r.cpu().numpy())
+        G_list.append(G_s.cpu().numpy())
+        P_list.append(P_t.cpu().numpy())
 
-        HH = HH - R[:, None, None] * S[None, :, None] * T[None, None, :]
+        # Déflation en chunks sur nr pour éviter un temporaire (nr,ns,nt)
+        for r0 in range(0, nr, deflate_chunk):
+            r1 = min(r0 + deflate_chunk, nr)
+            HH[r0:r1] -= amplitude * F_r[r0:r1, None, None] * G_s[None, :, None] * P_t[None, None, :]
 
         error_l2 = (HH.norm() / error_l2_ini).item()
         tqdm.write(f"Err L2 = {error_l2:.6e}  [mode {itglob+1}, device={device}]")

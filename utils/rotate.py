@@ -47,7 +47,7 @@ fp = np.lib.format.open_memmap(out_path, mode='w+', dtype=np.float32, shape=out_
 print(f"Allocated memmap {out_path}  shape={out_shape}  dtype=float32")
 
 out_doe = np.empty(N * N_ROTATIONS, dtype=np.dtype([
-    ('k', '<f8'), ('A', '<f8'), ('C', '<f8'), ('theta', '<f8')
+    ('k', '<f8'), ('A', '<f8'), ('C', '<f8')
 ]))
 
 
@@ -56,6 +56,9 @@ def process_sample(i):
     sample = ch4[i].astype(np.float32)  # (T, H, W)
     k_val = float(doe['k'][i])
     A_val = float(doe['A'][i])
+    if A_val != 0.0:
+        print(f"Warning: A={A_val} non nul pour i={i} — vérifie les données d'entrée.")
+
     C_val = float(doe['C'][i])
 
     for j, (angle, M) in enumerate(zip(angles, rot_matrices)):
@@ -67,7 +70,7 @@ def process_sample(i):
             for t in range(T)
         ])  # (T, H, W)
         fp[idx] = rotated
-        out_doe[idx] = (k_val, A_val, C_val, angle)
+        out_doe[idx] = (k_val, angle, C_val)
 
     fp.flush()
 

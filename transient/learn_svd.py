@@ -1,7 +1,7 @@
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
+from tqdm import tqdm
 import numpy as np
 from utils.SVD_Amine_3D import svd_3d_gpu, svd_inverse_3d
 
@@ -11,11 +11,15 @@ def learn_svd(concentration_path, step=5, erreur=1e-8, nf=None):
     Charge un fichier .npy de concentration (ns, T, H, W), applique une décomposition
     Tucker rang-1 (SVD 3D), et sauvegarde le résultat dans le même répertoire.
     """
-    concentration = np.load(concentration_path)["U"]  # (ns, T, H, W)
+    if concentration_path.endswith('.npy'):
+        concentration = np.load(concentration_path, mmap_mode='r')  # (ns, T, H, W)
+    else:
+        data = np.load(concentration_path)
+        concentration = data['U']  # (ns, T, H, W)
     ns, Nt, H, W = concentration.shape
 
-    concentration_sub = concentration[:, :, ::step, ::step]
-    Hsub, Wsub = concentration_sub.shape[2], concentration_sub.shape[3]
+    Hsub = len(range(0, H, step))
+    Wsub = len(range(0, W, step))
     nr = Hsub * Wsub
     nf = min(nr, Nt) if nf is None else nf
 
@@ -23,8 +27,12 @@ def learn_svd(concentration_path, step=5, erreur=1e-8, nf=None):
     print(f"Shape             : {concentration.shape}")
     print(f"Grille sous-échantillonnée : {Hsub}×{Wsub} = {nr} nœuds")
     print(f"Tenseur HH        : ({nr}, {ns}, {Nt})  |  nf={nf}")
+    print(f"Mémoire HH        : {nr * ns * Nt * 4 / 1e9:.2f} Go")
 
-    HH = concentration_sub.reshape(ns, Nt, nr).transpose(2, 0, 1)  # (nr, ns, Nt)
+    HH = np.empty((nr, ns, Nt), dtype=np.float32)
+    for i in tqdm(range(ns), desc="Préparation du tenseur HH"):
+        sub = concentration[i, :, ::step, ::step]  # (Nt, Hsub, Wsub) — lu depuis disque
+        HH[:, i, :] = sub.reshape(Nt, nr).T
 
     print(f"SVD 3D  (nf={nf}, erreur={erreur})...")
     F, G, P, alph, Hist_ErrL2 = svd_3d_gpu(HH, nf=nf, erreur=erreur)
@@ -46,8 +54,8 @@ def learn_svd(concentration_path, step=5, erreur=1e-8, nf=None):
 if __name__ == '__main__':
     results_dir = os.path.join(os.path.dirname(__file__), '..', 'dataset')
 
-    concentration_path = os.path.join(results_dir, 'dataset_transient.npz')
-    step = 2
+    concentration_path = os.path.join('/Data/KAT/ch4_rotated.npy')
+    step = 5
     erreur = 1e-5
     example_idx = 2  # indice de simulation à sauvegarder pour vérification
 
