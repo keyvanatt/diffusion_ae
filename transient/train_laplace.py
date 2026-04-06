@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 from tqdm import tqdm
 import wandb
@@ -54,10 +53,10 @@ def train_one(
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if vae is not None:
-        model = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim, N=N).to(device)
+        model = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim).to(device)
         vae.decoder.to(device).requires_grad_(False)
         model.set_decoder(vae.decoder)
-        params_to_train = model.fc.parameters()   # fc seulement, décodeur gelé
+        params_to_train = model.proj.parameters()  # proj seulement, décodeur gelé
     else:
         model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim).to(device)
         params_to_train = model.parameters()

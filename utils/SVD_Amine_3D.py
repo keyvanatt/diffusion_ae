@@ -24,7 +24,7 @@ def svd_inverse_3d(F, G, P, alph):
     nf_eff = len(alph)
 
     HH_rec = np.zeros((nr, ns, nt))
-    for k in range(nf_eff):
+    for k in tqdm(range(nf_eff)):
         fi = F[:, k:k+1]  # (nr, 1)
         gi = G[:, k:k+1]  # (ns, 1)
         pi = P[:, k:k+1]  # (nt, 1)
@@ -158,7 +158,7 @@ def svd_3d_gpu(HH_np, nf, erreur, device=None, dtype=torch.float32, deflate_chun
         S = torch.rand(ns, dtype=dtype, device=device)
         T = torch.rand(nt, dtype=dtype, device=device)
 
-        pbar_loc = tqdm(range(500), desc=f"  mode {itglob+1} inner", unit="it", leave=False)
+        pbar_loc = tqdm(range(100), desc=f"  mode {itglob+1} inner", unit="it", leave=False)
         for itloc in pbar_loc:
             R_old, S_old, T_old = R.clone(), S.clone(), T.clone()
 

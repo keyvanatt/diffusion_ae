@@ -187,21 +187,22 @@ class LaplaceLatentSurrogate(nn.Module):
     par référence via set_decoder() depuis LaplaceLatentModel.shared_decoder,
     ce qui évite N_half copies en mémoire.
     """
-    def __init__(self, latent_dim: int, theta_dim: int, N: int = 64):
+    def __init__(self, latent_dim: int, theta_dim: int):
         super().__init__()
-        self.fc = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.Linear(theta_dim, 128),
             nn.ReLU(),
             nn.Linear(128, latent_dim),
         )
-        self.__dict__['_decoder'] = None   # référence non-enregistrée, injectée plus tard
+        self._decoder: nn.Module | None = None  # référence non-enregistrée, injectée plus tard
 
     def set_decoder(self, decoder: nn.Module):
         """Injecte le décodeur partagé sans le re-enregistrer comme sous-module."""
         self.__dict__['_decoder'] = decoder
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
-        z = self.fc(theta)                 # (B, latent_dim)
+        z = self.proj(theta)               # (B, latent_dim)
+        assert self._decoder is not None, "Appeler set_decoder() avant forward()"
         return self._decoder(z)            # (B, 2, N, N)
 
     def loss(self, U_hat: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
@@ -223,7 +224,7 @@ class LaplaceLatentModel(LaplaceModel):
                  theta_dim: int = 4, latent_dim: int = 64):
         BaseDecoder.__init__(self)
         self.surrogates = nn.ModuleList([
-            LaplaceLatentSurrogate(latent_dim=latent_dim, theta_dim=theta_dim, N=N)
+            LaplaceLatentSurrogate(latent_dim=latent_dim, theta_dim=theta_dim)
             for _ in range(N_half)
         ])
         self.shared_decoder = LaplaceDecoder(N=N, latent_dim=latent_dim)
@@ -240,6 +241,7 @@ class LaplaceLatentModel(LaplaceModel):
     def _inject_decoder(self):
         """Injecte shared_decoder par référence dans chaque surrogate."""
         for s in self.surrogates:
+            assert isinstance(s, LaplaceLatentSurrogate)
             s.set_decoder(self.shared_decoder)
 
     def set_vae_decoder(self, vae: LaplaceVAE):
@@ -248,12 +250,12 @@ class LaplaceLatentModel(LaplaceModel):
         self.shared_decoder.requires_grad_(False)
         self._inject_decoder()
 
-    def load_state_dict(self, state_dict, strict: bool = True):
-        result = super().load_state_dict(state_dict, strict=strict)
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        result = super().load_state_dict(state_dict, strict=strict, assign=assign)
         self._inject_decoder()   # réinjecte la référence après chargement
         return result
 
-    def loss(self, *args, **kwargs):
+    def loss(self, *_, **__):
         raise NotImplementedError(
             "L'entraînement se fait par fréquence via LaplaceLatentSurrogate.loss()."
         )
