@@ -128,59 +128,89 @@ def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
 def evaluate(U, theta, ckpt_path: str, test_idx=None,
              dt: float | None = None, gamma: float = 0.0,
              rule: str = 'trap', step: int = 1,
-             n_animate: int = 3, device_str: str = 'auto'):
+             n_animate: int = 3, batch_size: int = 32,
+             device_str: str = 'auto'):
     """
     Évalue le surrogate sur le test set et produit des GIFs + histogramme.
 
     Paramètres
     ----------
-    U        : ndarray (ns, Nt, H, W) — champs originaux
+    U        : ndarray (ns, Nt, H, W) — peut être un mmap (jamais matérialisé en entier)
     theta    : ndarray (ns, theta_dim)
     ckpt_path: fichier .pt
     test_idx : indices du test set ; si None, chargé depuis le checkpoint
     step     : sous-échantillonnage spatial pour SVD
+    batch_size: nombre de simulations traitées à la fois
     """
-    import matplotlib.pyplot as plt
     from utils.animate import animate_comparaison
 
-    print(f"Chargement du checkpoint : {ckpt_path}")
-    ckpt_data  = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-    model_type = ckpt_data.get('model_type', 'SVDSurrogate')
+    if device_str == 'auto':
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(device_str)
+
+    model, ckpt = load_model(ckpt_path, device)
+    model_type  = ckpt.get('model_type', 'SVDSurrogate')
     os.makedirs('plots', exist_ok=True)
 
     if test_idx is None:
-        assert 'test_idx' in ckpt_data, \
-            "test_idx absent du checkpoint — relance l'entraînement."
-        test_idx = ckpt_data['test_idx']
+        assert 'test_idx' in ckpt, "test_idx absent du checkpoint — relance l'entraînement."
+        test_idx = ckpt['test_idx']
 
-    theta = np.asarray(theta, dtype=np.float32)
-    U     = np.asarray(U,     dtype=np.float32)
-    n_test = len(test_idx)
+    theta_arr = np.asarray(theta, dtype=np.float32)   # theta est petit, OK
+    n_test    = len(test_idx)
     print(f"Test set : {n_test} simulations  |  backend : {model_type}")
 
-    print(f"Prédiction en cours...")
-    U_pred = predict(theta[test_idx], ckpt_path, device_str, dt=dt, gamma=gamma, rule=rule)
-    print(f"Prédiction terminée : {U_pred.shape}")
+    anim_pos       = set(np.random.choice(n_test, size=min(n_animate, n_test), replace=False))
+    l2rel_list     = []
+    mse_list       = []
+    saved_pred     = {}   # pos → U_pred[pos]
+    saved_true     = {}   # pos → U_true[pos]
 
-    U_true = U[test_idx]
-    if model_type == 'SVDSurrogate':
-        U_true = U_true[:, :, ::step, ::step]
+    for start in tqdm(range(0, n_test, batch_size), desc='Évaluation'):
+        pos_batch  = list(range(start, min(start + batch_size, n_test)))
+        idx_batch  = [int(test_idx[p]) for p in pos_batch]
 
-    print(f"Calcul des métriques...")
-    diff        = U_pred - U_true
-    norms_err   = np.linalg.norm(diff.reshape(n_test, -1), axis=1)
-    norms_true  = np.linalg.norm(U_true.reshape(n_test, -1), axis=1) + 1e-12
-    l2rel       = norms_err / norms_true
-    mse_arr     = np.mean(diff ** 2, axis=(1, 2, 3))
+        # Prédiction
+        U_pred_b = run_inference(
+            theta_arr[idx_batch], model, ckpt, device, dt=dt, gamma=gamma, rule=rule
+        )  # (B, Nt, H_pred, W_pred)
+
+        # Vérité terrain — chargée sample par sample depuis le mmap
+        # Pour SVDSurrogate : inférer le step depuis la shape de U_pred (évite le désalignement)
+        if model_type == 'SVDSurrogate':
+            H_orig = U[idx_batch[0]].shape[-2]
+            H_pred = U_pred_b.shape[-2]
+            step_eff = max(1, H_orig // H_pred)
+        slices = []
+        for i in idx_batch:
+            u = np.array(U[i], dtype=np.float32)   # (Nt, H, W) — copie locale
+            if model_type == 'SVDSurrogate':
+                u = u[:, ::step_eff, ::step_eff]
+            slices.append(u)
+        U_true_b = np.stack(slices)                 # (B, Nt, H_pred, W_pred)
+
+        diff       = U_pred_b - U_true_b
+        norms_err  = np.linalg.norm(diff.reshape(len(pos_batch), -1), axis=1)
+        norms_true = np.linalg.norm(U_true_b.reshape(len(pos_batch), -1), axis=1) + 1e-12
+        l2rel_list.append(norms_err / norms_true)
+        mse_list.append(np.mean(diff ** 2, axis=(1, 2, 3)))
+
+        for local_p, global_p in enumerate(pos_batch):
+            if global_p in anim_pos:
+                saved_pred[global_p] = U_pred_b[local_p]
+                saved_true[global_p] = U_true_b[local_p]
+
+    l2rel   = np.concatenate(l2rel_list)
+    mse_arr = np.concatenate(mse_list)
 
     print(f"MSE global    : {np.mean(mse_arr):.4e}")
     print(f"L2rel — mean  : {l2rel.mean()*100:.2f}%  std : {l2rel.std()*100:.2f}%")
     print(f"        min   : {l2rel.min()*100:.2f}%   max : {l2rel.max()*100:.2f}%")
 
-    print(f"Sauvegarde de l'histogramme...")
     plt.figure(figsize=(10, 5))
     plt.hist(l2rel * 100, bins=30, edgecolor='black', alpha=0.7)
-    plt.xlim((0,100))
+    plt.xlim((0, 100))
     plt.xlabel('L2 Relative Error (%)')
     plt.ylabel('Fréquence')
     plt.title(f'L2 Relative Error — {model_type}  (n={n_test})\n'
@@ -191,16 +221,13 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     plt.close()
     print(f"Histogramme -> {hist_path}")
 
-    # Animation pour quelques simulations
-    n_animate = min(n_animate, n_test)
-    positions = np.random.choice(n_test, size=n_animate, replace=False)
-    for i, pos in enumerate(positions):
-        si        = test_idx[pos]
-        l2        = l2rel[pos]
+    for i, global_p in enumerate(sorted(saved_pred)):
+        si        = int(test_idx[global_p])
+        l2        = l2rel[global_p]
         anim_path = os.path.join('plots', f'{model_type}_anim_{i}.gif')
-        print(f"Animation {i+1}/{n_animate} — simulation #{si} (L2rel={l2*100:.1f}%)...")
+        print(f"Animation {i+1}/{len(saved_pred)} — simulation #{si} (L2rel={l2*100:.1f}%)...")
         animate_comparaison(
-            U_true[pos], U_pred[pos],
+            saved_true[global_p], saved_pred[global_p],
             output_path = anim_path,
             title_fn    = lambda t, s=si, e=l2: f"#{s}  L2rel={e*100:.1f}%  t={t}",
         )
@@ -211,7 +238,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 def main(
     ckpt_path = 'checkpoints/SVDSurrogate_best.pt',
-    data_path = 'dataset/dataset_transient.npz',
+    data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
     gamma     = 0.0,
@@ -223,8 +250,16 @@ def main(
 ):
 
     if do_evaluation:
-        data = np.load(data_path)
-        evaluate(data['U'], data['theta'], ckpt_path,
+        if data_path.endswith('.npy'):
+            U_data     = np.load(data_path, mmap_mode='r')
+            doe_path   = str(Path(data_path).parent / 'doe_rotated.npy')
+            doe        = np.load(doe_path)
+            theta_data = np.stack([doe['k'], doe['A'], doe['C']], axis=1).astype(np.float32)
+        else:
+            data       = np.load(data_path)
+            U_data     = data['U']
+            theta_data = data['theta'].astype(np.float32)
+        evaluate(U_data, theta_data, ckpt_path,
                  dt=dt, gamma=gamma, rule=rule, step=step)
         return
 

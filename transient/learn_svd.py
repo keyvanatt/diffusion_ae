@@ -56,7 +56,7 @@ if __name__ == '__main__':
     erreur = 1e-5
     example_idx = 2  # indice de simulation à sauvegarder pour vérification
 
-    F, G, P, alph, Hist_ErrL2, HH, HH_rec, Hsub, Wsub = learn_svd(
+    F, G, P, alph, Hist_ErrL2, HH, Hsub, Wsub = learn_svd(
         concentration_path, step=step, erreur=erreur, nf=300
     )
 
@@ -79,9 +79,13 @@ if __name__ == '__main__':
 
     from utils.animate import animate_comparaison
 
-    # HH shape : (nr, ns, Nt) → extraire l'exemple example_idx et remettre en (Nt, Hsub, Wsub)
-    orig = HH[:, example_idx, :].reshape(Hsub, Wsub, -1).transpose(2, 0, 1)   # (Nt, Hsub, Wsub)
-    rec  = HH_rec[:, example_idx, :].reshape(Hsub, Wsub, -1).transpose(2, 0, 1)
+    # Reconstruire uniquement l'exemple example_idx pour l'animation
+    # HH shape : (nr, ns, Nt)
+    orig_vec = HH[:, example_idx, :]                             # (nr, Nt)
+    rec_vec  = (F * (alph * G[example_idx])) @ P.T               # (nr, Nt)
+
+    orig = orig_vec.reshape(Hsub, Wsub, -1).transpose(2, 0, 1)  # (Nt, Hsub, Wsub)
+    rec  = rec_vec.reshape(Hsub, Wsub, -1).transpose(2, 0, 1)
 
     err_ex = np.linalg.norm(rec - orig) / (np.linalg.norm(orig) + 1e-12)
     print(f"Erreur L2 exemple #{example_idx} : {err_ex:.6e}")
