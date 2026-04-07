@@ -15,32 +15,66 @@ class LaplaceSurrogate(nn.Module):
     Sortie : (B, 2, N, N) — Re et Im de Û(theta, s_k), valeurs normalisées
     """
 
-    def __init__(self, N, theta_dim: int = 4, s: complex | None = None):
+    def __init__(self, N, theta_dim: int = 4, s: complex | None = None,
+                 freq_ratio: float = 0.0):
+        """
+        freq_ratio : k / N_half ∈ [0, 1] — position normalisée dans le spectre.
+        """
         super().__init__()
-        self.s = s
-        self.N = N
-        self.base = N // 16
+        self.s          = s
+        self.freq_ratio = freq_ratio
+        self.N          = N
+        self.base       = N // 16
+
         self.fc = nn.Sequential(
             nn.Linear(theta_dim, 256 * self.base ** 2),
             nn.ReLU(),
         )
-        self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
+
+        # Encodeur de fréquence : scalaire k/N_half → vecteur de conditionnement
+        self.freq_enc = nn.Sequential(
+            nn.Linear(1, 64),
             nn.ReLU(),
-            nn.ConvTranspose2d(128, 64,  kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Linear(64, 64),
             nn.ReLU(),
-            nn.ConvTranspose2d(64,  32,  kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(32),
+        )
+        # Projections FiLM (gamma, beta) par bloc deconv
+        self.film1 = nn.Linear(64, 2 * 128)
+        self.film2 = nn.Linear(64, 2 * 64)
+        self.film3 = nn.Linear(64, 2 * 32)
+        self.film4 = nn.Linear(64, 2 * 32)
+
+        # Blocs deconv séparés pour intercaler le FiLM
+        self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 128, 4, 2, 1), nn.BatchNorm2d(128), nn.ReLU())
+        self.deconv2 = nn.Sequential(nn.ConvTranspose2d(128, 64,  4, 2, 1), nn.BatchNorm2d(64),  nn.ReLU())
+        self.deconv3 = nn.Sequential(nn.ConvTranspose2d(64,  32,  4, 2, 1), nn.BatchNorm2d(32),  nn.ReLU())
+        self.deconv4 = nn.Sequential(nn.ConvTranspose2d(32,  32,  4, 2, 1), nn.BatchNorm2d(32),  nn.ReLU())
+
+        self.refine = nn.Sequential(
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.ConvTranspose2d(32,  2,   kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 2,  kernel_size=1),
         )
 
+    def _film(self, x: torch.Tensor, proj: nn.Linear, f_emb: torch.Tensor) -> torch.Tensor:
+        """FiLM : x ← x * (1 + γ) + β,  γ et β conditionnés sur freq_ratio."""
+        gamma, beta = proj(f_emb).chunk(2, dim=1)          # (B, C) chacun
+        return x * (1 + gamma[:, :, None, None]) + beta[:, :, None, None]
+
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
-        x = self.fc(theta)
-        x = x.view(-1, 256, self.base, self.base)
-        return self.deconv(x).view(-1, 2, self.N, self.N)
+        B = theta.shape[0]
+        f_vec = torch.full((B, 1), self.freq_ratio,
+                           dtype=theta.dtype, device=theta.device)
+        f_emb = self.freq_enc(f_vec)                        # (B, 64)
+
+        x = self.fc(theta).view(B, 256, self.base, self.base)
+        x = self._film(self.deconv1(x), self.film1, f_emb)
+        x = self._film(self.deconv2(x), self.film2, f_emb)
+        x = self._film(self.deconv3(x), self.film3, f_emb)
+        x = self._film(self.deconv4(x), self.film4, f_emb)
+        return self.refine(x).view(B, 2, self.N, self.N)
 
     def loss(self, U_hat: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
         return F.mse_loss(U_hat, U)
@@ -60,7 +94,8 @@ class LaplaceModel(BaseDecoder):
     def __init__(self, N_freq: int, N_half: int, N: int, theta_dim: int = 4):
         super().__init__()
         self.surrogates = nn.ModuleList([
-            LaplaceSurrogate(N, theta_dim) for _ in range(N_half)
+            LaplaceSurrogate(N, theta_dim, freq_ratio=k / max(N_half - 1, 1))
+            for k in range(N_half)
         ])
         self.N_freq    = N_freq
         self.N_half    = N_half

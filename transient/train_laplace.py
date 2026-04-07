@@ -42,6 +42,7 @@ def train_one(
     ckpt_dir     = 'checkpoints',
     global_step  = 0,
     vae          = None,   # si fourni : LaplaceLatentSurrogate avec décodeur VAE gelé
+    freq_ratio   = 0.0,    # k / (Nt_half - 1), pour le conditionnement FiLM
 ):
     """
     Entraîne un LaplaceSurrogate (ou LaplaceLatentSurrogate si vae fourni) pour la fréquence k.
@@ -60,7 +61,7 @@ def train_one(
         model.set_decoder(vae.decoder)
         params_to_train = model.proj.parameters()  # proj seulement, décodeur gelé
     else:
-        model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim).to(device)
+        model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim, freq_ratio=freq_ratio).to(device)
         params_to_train = model.parameters()
 
     optimizer = torch.optim.AdamW(params_to_train, lr=lr, weight_decay=1e-4)
@@ -74,8 +75,6 @@ def train_one(
     prefix    = 'LatentSurrogate' if vae is not None else 'LaplaceSurrogate'
     ckpt_path = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
 
-    wandb.watch(model, log='gradients', log_freq=100)
-
     epoch_bar = tqdm(
         range(1, epochs + 1),
         desc=f"  freq {k:03d}  s={s_k.imag:.3g}j",
@@ -87,33 +86,41 @@ def train_one(
 
         # --- Train ---
         model.train()
-        train_loss = 0.
+        train_loss = train_l2rel = 0.
         for th, u in train_loader:
             th, u = th.to(device), u.to(device)
-            loss = model.loss(model(th), u)
+            u_hat = model(th)
+            loss  = model.loss(u_hat, u)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            train_loss += loss.item()
-        train_loss /= len(train_loader)
+            train_loss   += loss.item()
+            train_l2rel  += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
+        train_loss  /= len(train_loader)
+        train_l2rel /= len(train_loader)
 
         # --- Val ---
         model.eval()
-        val_loss = 0.
+        val_loss = val_l2rel = 0.
         with torch.no_grad():
             for th, u in val_loader:
                 th, u = th.to(device), u.to(device)
-                val_loss += model.loss(model(th), u).item()
-        val_loss /= len(val_loader)
+                u_hat = model(th)
+                val_loss   += model.loss(u_hat, u).item()
+                val_l2rel  += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
+        val_loss  /= len(val_loader)
+        val_l2rel /= len(val_loader)
 
         scheduler.step(val_loss)
         epoch_time = time.perf_counter() - t0
-        epoch_bar.set_postfix(train=f"{train_loss:.3e}", val=f"{val_loss:.3e}")
+        epoch_bar.set_postfix(train=f"{train_loss:.3e}", val=f"{val_loss:.3e}", l2=f"{val_l2rel:.2%}")
 
         wandb.log({
             'train/loss'   : train_loss,
+            'train/l2rel'  : train_l2rel,
             'val/loss'     : val_loss,
+            'val/l2rel'    : val_l2rel,
             'lr'           : optimizer.param_groups[0]['lr'],
             'epoch_time_s' : epoch_time,
         }, step=global_step + epoch)
@@ -132,7 +139,6 @@ def train_one(
                 'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
                 'freq_idx': k, 's_k_real': s_k.real, 's_k_imag': s_k.imag,
             }, ckpt_path)
-            wandb.save(ckpt_path)
         else:
             patience_ += 1
             if patience_ >= patience:
@@ -197,16 +203,28 @@ def train_all(
     best_vals   = []
     global_step = 0
 
+    # Précharge le tableau Laplace transposé en (Nt_half, ns, 2, N, N) pour accès contigu par fréquence
+    print("Transposition mmap → RAM par fréquence (accès contigu)…")
+    if isinstance(dataset.U_laplace, np.ndarray):
+        # Transposer en mémoire freq par freq pour éviter les sauts mmap
+        U_laplace_t = np.empty((Nt_half, ns, 2, N, N), dtype=np.float32)
+        for k in tqdm(range(Nt_half), desc="Chargement Laplace", leave=False):
+            U_laplace_t[k] = dataset.U_laplace[:, k]
+        U_laplace_t = torch.from_numpy(U_laplace_t)   # (Nt_half, ns, 2, N, N)
+    else:
+        U_laplace_t = dataset.U_laplace.permute(1, 0, 2, 3, 4)   # (Nt_half, ns, 2, N, N)
+
     freq_bar = tqdm(range(Nt_half), desc="Fréquences", position=0, leave=True)
     for k in freq_bar:
         s_k           = complex(dataset.s[k])
         target_mean_k = dataset.target_mean[k]                                      # (2, 1, 1)
         target_std_k  = dataset.target_std[k]
-        target_k_n    = (dataset.U_laplace[:, k] - target_mean_k) / target_std_k   # (ns, 2, N, N)
+        slice_k       = U_laplace_t[k]                             # (ns, 2, N, N) — contigu
+        target_k_n    = (slice_k - target_mean_k) / target_std_k   # (ns, 2, N, N)
 
         ds_k         = TensorDataset(theta_n, target_k_n)
-        train_loader = DataLoader(Subset(ds_k, train_idx), batch_size=batch_size, shuffle=True)
-        val_loader   = DataLoader(Subset(ds_k, val_idx),   batch_size=batch_size)
+        train_loader = DataLoader(Subset(ds_k, train_idx), batch_size=batch_size, shuffle=True, pin_memory=True)
+        val_loader   = DataLoader(Subset(ds_k, val_idx),   batch_size=batch_size, pin_memory=True)
 
         best_val, n_epochs = train_one(
             k, s_k, train_loader, val_loader,
@@ -215,6 +233,7 @@ def train_all(
             N=N, Nt=Nt, epochs=epochs, lr=lr, patience=patience,
             theta_dim=theta_dim, device=device, ckpt_dir=ckpt_dir,
             global_step=global_step, vae=vae,
+            freq_ratio=k / max(Nt_half - 1, 1),
         )
 
         best_vals.append(best_val)
@@ -289,13 +308,26 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
 
 if __name__ == '__main__':
     from transient.dataset import TransientDataset
+    from models.laplace_ae_surrogate import LaplaceVAE
 
-    data_path  = os.path.join("dataset", "dataset_transient.npz")
-    ckpt_dir   = os.path.join("checkpoints", "laplace")
+    data_path    = os.path.join("dataset", "ch4_rotated.npy")
+    vae_ckpt     = os.path.join("checkpoints", "laplace_vae", "LaplaceVAE_best.pt")
+    ckpt_dir     = os.path.join("checkpoints", "laplace_latent")
     epochs, batch_size, lr, patience = 300, 64, 1e-3, 30
     gamma, rule, seed = 0.0, 'trap', 42
+    interp_size  = 128   # doit correspondre au N utilisé pour entraîner le VAE
+    dt           = 1.0
+    latent_dim   = 128   # doit correspondre au latent_dim du VAE
 
-    dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule)
+    # Charger le VAE pré-entraîné
+    vae_ckpt_data = torch.load(vae_ckpt, map_location='cpu', weights_only=False)
+    vae = LaplaceVAE(N=interp_size, latent_dim=latent_dim)
+    vae.load_state_dict(vae_ckpt_data['model_state'])
+    vae.eval()
+    print(f"LaplaceVAE chargé depuis {vae_ckpt}")
+
+    dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
+                               interp_size=interp_size, dt=dt)
 
     torch.manual_seed(seed)
     idx       = torch.randperm(len(dataset))
@@ -310,4 +342,5 @@ if __name__ == '__main__':
 
     os.makedirs(ckpt_dir, exist_ok=True)
     train_all(dataset, train_idx, val_idx, test_idx,
-              epochs=epochs, batch_size=batch_size, lr=lr, patience=patience, ckpt_dir=ckpt_dir)
+              epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
+              ckpt_dir=ckpt_dir, vae=vae)
