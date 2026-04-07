@@ -89,7 +89,8 @@ def train_one(
 
         # --- Train ---
         model.train()
-        train_loss = train_l2rel = torch.zeros(1, device=device)
+        train_loss  = torch.zeros(1, device=device)
+        train_l2rel = torch.zeros(1, device=device)
         for th, u in train_loader:
             th, u = th.to(device), u.to(device)
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
@@ -108,7 +109,8 @@ def train_one(
 
         # --- Val ---
         model.eval()
-        val_loss = val_l2rel = torch.zeros(1, device=device)
+        val_loss  = torch.zeros(1, device=device)
+        val_l2rel = torch.zeros(1, device=device)
         with torch.no_grad():
             for th, u in val_loader:
                 th, u = th.to(device), u.to(device)

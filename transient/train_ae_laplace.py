@@ -115,9 +115,10 @@ def train_vae(
     wandb.watch(model, log='gradients', log_freq=50)
 
     best_val   = float('inf')
-    best_state = None
-    patience_  = 0
-    ckpt_path  = os.path.join(ckpt_dir, 'LaplaceVAE_best.pt')
+    best_state  = None
+    patience_   = 0
+    ckpt_path   = os.path.join(ckpt_dir, 'LaplaceVAE_best.pt')
+    global_step = 0   # compteur de batches — axe x cohérent pour batch/ et train/
 
     epoch_bar = tqdm(range(1, epochs + 1), desc='LaplaceVAE', position=0, leave=True)
     for epoch in epoch_bar:
@@ -126,7 +127,10 @@ def train_vae(
 
         # --- Train ---
         model.train()
-        train_elbo = train_recon = train_kl = train_l2rel = torch.zeros(1, device=device)
+        train_elbo  = torch.zeros(1, device=device)
+        train_recon = torch.zeros(1, device=device)
+        train_kl    = torch.zeros(1, device=device)
+        train_l2rel = torch.zeros(1, device=device)
         train_bar = tqdm(train_loader, desc=f'  Train {epoch:>4}', position=1,
                          leave=False, unit='batch')
         for batch_idx, (u,) in enumerate(train_bar):
@@ -146,9 +150,9 @@ def train_vae(
             train_l2rel += ((u_hat.detach() - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
             elbo_ = loss.item()
             train_bar.set_postfix(elbo=f"{elbo_:.3e}", kl=f"{metrics['kl'].item():.3e}")
-            if batch_idx % 10 == 0:
-                wandb.log({'batch/elbo': elbo_, 'batch/recon': metrics['recon'].item(),
-                           'batch/kl': metrics['kl'].item()})
+            wandb.log({'batch/elbo': elbo_, 'batch/recon': metrics['recon'].item(),
+                        'batch/kl': metrics['kl'].item()}, step=global_step)
+            global_step += 1
         n = len(train_loader)
         train_elbo  = train_elbo.item()  / n
         train_recon = train_recon.item() / n
@@ -157,7 +161,10 @@ def train_vae(
 
         # --- Val ---
         model.eval()
-        val_elbo = val_recon = val_kl = val_l2rel = torch.zeros(1, device=device)
+        val_elbo   = torch.zeros(1, device=device)
+        val_recon  = torch.zeros(1, device=device)
+        val_kl     = torch.zeros(1, device=device)
+        val_l2rel  = torch.zeros(1, device=device)
         val_bar = tqdm(val_loader, desc=f'  Val   {epoch:>4}', position=1,
                        leave=False, unit='batch')
         with torch.no_grad():
@@ -194,7 +201,7 @@ def train_vae(
             'lr'           : optimizer.param_groups[0]['lr'],
             'epoch_time_s' : time.perf_counter() - t0,
             'epoch'         : epoch,
-        })
+        }, step=global_step)
 
         if val_elbo < best_val:
             best_val   = val_elbo
