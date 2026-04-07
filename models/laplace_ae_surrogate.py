@@ -113,11 +113,17 @@ class LaplaceDecoder(nn.Module):
         self.deconv4 = nn.Sequential(nn.ConvTranspose2d(32,  32,  4, 2, 1), nn.BatchNorm2d(32),  nn.ReLU())
 
         # Bloc de raffinement renforcé : 3 conv pour mieux capter les détails spatiaux fins
-        self.refine = nn.Sequential(
+        self.refine_re = nn.Sequential(
             nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU(),
             nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU(),
             nn.Conv2d(32, 2,  kernel_size=1),
         )
+        self.refine_im = nn.Sequential(
+            nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 2,  kernel_size=1),
+        )
+        
 
     def _film(self, x: torch.Tensor, proj: nn.Linear, f_emb: torch.Tensor) -> torch.Tensor:
         gamma, beta = proj(f_emb).chunk(2, dim=1)
@@ -132,7 +138,9 @@ class LaplaceDecoder(nn.Module):
         x = self._film(self.deconv2(x), self.film2, f_emb)
         x = self._film(self.deconv3(x), self.film3, f_emb)
         x = self._film(self.deconv4(x), self.film4, f_emb)
-        return self.refine(x)                               # (B, 2, N, N)
+        re = self.refine_re(x)
+        im = self.refine_im(x)
+        return torch.stack([re, im], dim=1)  # (B, 2, N, N)
 
 
 class LaplaceVAE(BaseAutoEncoder):

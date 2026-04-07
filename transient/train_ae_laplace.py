@@ -212,16 +212,16 @@ def train_vae(
             best_val   = val_elbo
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             patience_  = 0
+            torch.save({'model_state': best_state,
+                        'N': N, 'latent_dim': latent_dim, 'val_loss': best_val}, ckpt_path)
         else:
             patience_ += 1
             if patience_ >= patience:
                 epoch_bar.write(f"Early stopping à l'époque {epoch}  (best val={best_val:.4e})")
                 break
 
-    # Sauvegarde unique en fin de training
     assert best_state is not None, "Aucune epoch n'a amélioré la val loss"
-    torch.save({'model_state': best_state,
-                'N': N, 'latent_dim': latent_dim, 'val_loss': best_val}, ckpt_path)
+    wandb.save(ckpt_path)
     wandb.finish()
     print(f"VAE entraîné — best val : {best_val:.4e}  → {ckpt_path}")
 
