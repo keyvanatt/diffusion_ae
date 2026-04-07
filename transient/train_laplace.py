@@ -68,10 +68,13 @@ def train_one(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.5, patience=15, min_lr=1e-6
     )
+    scaler = torch.amp.GradScaler('cuda', enabled=device.type == 'cuda')
 
-    best_val  = float('inf')
-    patience_ = 0
-    epoch     = 0
+    best_val   = float('inf')
+    best_state = None
+    best_epoch = 0
+    patience_  = 0
+    epoch      = 0
     prefix    = 'LatentSurrogate' if vae is not None else 'LaplaceSurrogate'
     ckpt_path = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
 
@@ -86,31 +89,35 @@ def train_one(
 
         # --- Train ---
         model.train()
-        train_loss = train_l2rel = 0.
+        train_loss = train_l2rel = torch.zeros(1, device=device)
         for th, u in train_loader:
             th, u = th.to(device), u.to(device)
-            u_hat = model(th)
-            loss  = model.loss(u_hat, u)
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                u_hat = model(th)
+                loss  = model.loss(u_hat, u)
             optimizer.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            train_loss   += loss.item()
-            train_l2rel  += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
-        train_loss  /= len(train_loader)
-        train_l2rel /= len(train_loader)
+            scaler.step(optimizer)
+            scaler.update()
+            train_loss  += loss.detach()
+            train_l2rel += ((u_hat.detach() - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
+        train_loss  = train_loss.item()  / len(train_loader)
+        train_l2rel = train_l2rel.item() / len(train_loader)
 
         # --- Val ---
         model.eval()
-        val_loss = val_l2rel = 0.
+        val_loss = val_l2rel = torch.zeros(1, device=device)
         with torch.no_grad():
             for th, u in val_loader:
                 th, u = th.to(device), u.to(device)
-                u_hat = model(th)
-                val_loss   += model.loss(u_hat, u).item()
-                val_l2rel  += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
-        val_loss  /= len(val_loader)
-        val_l2rel /= len(val_loader)
+                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                    u_hat = model(th)
+                    val_loss  += model.loss(u_hat, u)
+                val_l2rel += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
+        val_loss  = val_loss.item()  / len(val_loader)
+        val_l2rel = val_l2rel.item() / len(val_loader)
 
         scheduler.step(val_loss)
         epoch_time = time.perf_counter() - t0
@@ -126,19 +133,10 @@ def train_one(
         }, step=global_step + epoch)
 
         if val_loss < best_val:
-            best_val  = val_loss
-            patience_ = 0
-            torch.save({
-                'model_state': model.state_dict(),
-                'epoch': epoch,
-                'val_loss': best_val,
-                'theta_mean':  theta_mean.numpy(),
-                'theta_std':   theta_std.numpy(),
-                'target_mean': target_mean.numpy(),
-                'target_std':  target_std.numpy(),
-                'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
-                'freq_idx': k, 's_k_real': s_k.real, 's_k_imag': s_k.imag,
-            }, ckpt_path)
+            best_val       = val_loss
+            best_epoch     = epoch
+            best_state     = {k_: v.cpu().clone() for k_, v in model.state_dict().items()}
+            patience_      = 0
         else:
             patience_ += 1
             if patience_ >= patience:
@@ -146,6 +144,20 @@ def train_one(
                     train=f"{train_loss:.3e}", val=f"{val_loss:.3e}", stop=f"ep{epoch}"
                 )
                 break
+
+    # Sauvegarde unique en fin de training
+    assert best_state is not None, f"Aucune epoch n'a amélioré la val loss pour freq {k}"
+    torch.save({
+        'model_state': best_state,
+        'epoch': best_epoch,
+        'val_loss': best_val,
+        'theta_mean':  theta_mean.numpy(),
+        'theta_std':   theta_std.numpy(),
+        'target_mean': target_mean.numpy(),
+        'target_std':  target_std.numpy(),
+        'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
+        'freq_idx': k, 's_k_real': s_k.real, 's_k_imag': s_k.imag,
+    }, ckpt_path)
 
     if wandb.run is not None:
         wandb.run.summary[f'best_val/freq_{k:03d}'] = best_val

@@ -93,14 +93,15 @@ def train_vae(
                                    train_idx, Nt_half)
     val_ds   = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
                                    val_idx,   Nt_half)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
-    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
     print("Laplace Dataset : train %d samples  |  val %d samples" % (len(train_ds), len(val_ds)))
     model     = LaplaceVAE(N=N, latent_dim=latent_dim, beta=beta, free_bits=free_bits).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.5, patience=15, min_lr=1e-6
     )
+    scaler = torch.amp.GradScaler('cuda', enabled=device.type == 'cuda')
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"LaplaceVAE : {n_params:,} paramètres  |  device={device}")
@@ -113,9 +114,10 @@ def train_vae(
     ))
     wandb.watch(model, log='gradients', log_freq=50)
 
-    best_val  = float('inf')
-    patience_ = 0
-    ckpt_path = os.path.join(ckpt_dir, 'LaplaceVAE_best.pt')
+    best_val   = float('inf')
+    best_state = None
+    patience_  = 0
+    ckpt_path  = os.path.join(ckpt_dir, 'LaplaceVAE_best.pt')
 
     epoch_bar = tqdm(range(1, epochs + 1), desc='LaplaceVAE', position=0, leave=True)
     for epoch in epoch_bar:
@@ -124,46 +126,55 @@ def train_vae(
 
         # --- Train ---
         model.train()
-        train_elbo = train_recon = train_kl = train_l2rel = 0.
+        train_elbo = train_recon = train_kl = train_l2rel = torch.zeros(1, device=device)
         train_bar = tqdm(train_loader, desc=f'  Train {epoch:>4}', position=1,
                          leave=False, unit='batch')
-        for (u,) in train_bar:
+        for batch_idx, (u,) in enumerate(train_bar):
             u = u.to(device)
-            u_hat, mu, logvar = model(u)
-            loss, metrics = model.loss(u, u_hat, mu, logvar)
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                u_hat, mu, logvar = model(u)
+                loss, metrics = model.loss(u, u_hat, mu, logvar)
             optimizer.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            elbo_  = loss.item()
-            recon_ = metrics['recon'].item()
-            kl_    = metrics['kl'].item()
-            train_elbo  += elbo_
-            train_recon += recon_
-            train_kl    += kl_
-            train_l2rel += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
-            wandb.log({'batch/elbo': elbo_, 'batch/recon': recon_, 'batch/kl': kl_})
-            train_bar.set_postfix(elbo=f"{elbo_:.3e}")
+            scaler.step(optimizer)
+            scaler.update()
+            train_elbo  += loss.detach()
+            train_recon += metrics['recon'].detach()
+            train_kl    += metrics['kl'].detach()
+            train_l2rel += ((u_hat.detach() - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
+            elbo_ = loss.item()
+            train_bar.set_postfix(elbo=f"{elbo_:.3e}", kl=f"{metrics['kl'].item():.3e}")
+            if batch_idx % 10 == 0:
+                wandb.log({'batch/elbo': elbo_, 'batch/recon': metrics['recon'].item(),
+                           'batch/kl': metrics['kl'].item()})
         n = len(train_loader)
-        train_elbo /= n; train_recon /= n; train_kl /= n; train_l2rel /= n
+        train_elbo  = train_elbo.item()  / n
+        train_recon = train_recon.item() / n
+        train_kl    = train_kl.item()    / n
+        train_l2rel = train_l2rel.item() / n
 
         # --- Val ---
         model.eval()
-        val_elbo = val_recon = val_kl = val_l2rel = 0.
+        val_elbo = val_recon = val_kl = val_l2rel = torch.zeros(1, device=device)
         val_bar = tqdm(val_loader, desc=f'  Val   {epoch:>4}', position=1,
                        leave=False, unit='batch')
         with torch.no_grad():
             for (u,) in val_bar:
                 u = u.to(device)
-                u_hat, mu, logvar = model(u)
-                loss, metrics = model.loss(u, u_hat, mu, logvar)
-                val_elbo   += loss.item()
-                val_recon  += metrics['recon'].item()
-                val_kl     += metrics['kl'].item()
-                val_l2rel  += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
-                val_bar.set_postfix(elbo=f"{loss.item():.3e}")
+                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                    u_hat, mu, logvar = model(u)
+                    loss, metrics = model.loss(u, u_hat, mu, logvar)
+                val_elbo   += loss
+                val_recon  += metrics['recon']
+                val_kl     += metrics['kl']
+                val_l2rel  += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
         n = len(val_loader)
-        val_elbo /= n; val_recon /= n; val_kl /= n; val_l2rel /= n
+        val_elbo   = val_elbo.item()   / n
+        val_recon  = val_recon.item()  / n
+        val_kl     = val_kl.item()     / n
+        val_l2rel  = val_l2rel.item()  / n
 
         scheduler.step(val_elbo)
         epoch_bar.set_postfix(
@@ -186,23 +197,23 @@ def train_vae(
         })
 
         if val_elbo < best_val:
-            best_val  = val_elbo
-            patience_ = 0
-            torch.save({'model_state': model.state_dict(),
-                        'N': N, 'latent_dim': latent_dim, 'val_loss': best_val}, ckpt_path)
-            wandb.save(ckpt_path)
+            best_val   = val_elbo
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            patience_  = 0
         else:
             patience_ += 1
             if patience_ >= patience:
                 epoch_bar.write(f"Early stopping à l'époque {epoch}  (best val={best_val:.4e})")
                 break
 
+    # Sauvegarde unique en fin de training
+    assert best_state is not None, "Aucune epoch n'a amélioré la val loss"
+    torch.save({'model_state': best_state,
+                'N': N, 'latent_dim': latent_dim, 'val_loss': best_val}, ckpt_path)
     wandb.finish()
     print(f"VAE entraîné — best val : {best_val:.4e}  → {ckpt_path}")
 
-    # Recharger le meilleur
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt['model_state'])
+    model.load_state_dict(best_state)
     return model
 
 
@@ -214,7 +225,7 @@ def main(
     gamma       = 0.0,
     rule        = 'trap',
     epochs      = 100,
-    batch_size  = 76*32, # un multiple de 76 = Nt_half pour éviter les batches partiels
+    batch_size  = 256,
     lr          = 5e-4,
     beta        = 0.2,
     patience    = 30,
