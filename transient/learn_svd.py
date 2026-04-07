@@ -40,15 +40,12 @@ def learn_svd(concentration_path, step=5, erreur=1e-8, nf=None):
     print(f"  Modes retenus      : {nf_eff}")
     print(f"  Erreur L2 finale   : {Hist_ErrL2[-1]:.6e}")
 
-    HH_rec = svd_inverse_3d(F, G, P, alph)
-    rel_err = np.linalg.norm(HH_rec - HH) / (np.linalg.norm(HH) + 1e-12)
-    print(f"  Erreur L2 globale  : {rel_err:.6e}")
 
     save_path = os.path.join(os.path.dirname(concentration_path), 'svd_train_diff.npz')
     np.savez(save_path, F=F, G=G, P=P, alph=alph, Hist_ErrL2=Hist_ErrL2)
     print(f"Décomposition sauvegardée : {save_path}")
 
-    return F, G, P, alph, Hist_ErrL2, HH, HH_rec, Hsub, Wsub
+    return F, G, P, alph, Hist_ErrL2, HH, Hsub, Wsub
 
 
 if __name__ == '__main__':
@@ -62,6 +59,23 @@ if __name__ == '__main__':
     F, G, P, alph, Hist_ErrL2, HH, HH_rec, Hsub, Wsub = learn_svd(
         concentration_path, step=step, erreur=erreur, nf=300
     )
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    os.makedirs('plots', exist_ok=True)
+    plt.figure(figsize=(8, 4))
+    plt.plot(Hist_ErrL2)
+    plt.xlabel('Itération')
+    plt.ylabel('Erreur L2')
+    plt.title(f'Convergence SVD — nf_eff={len(alph)}, erreur finale={Hist_ErrL2[-1]:.2e}')
+    plt.yscale('log')
+    plt.tight_layout()
+    plot_path = os.path.join('plots', 'svd_convergence.png')
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
+    print(f"Plot sauvegardé : {plot_path}")
 
     from utils.animate import animate_comparaison
 
