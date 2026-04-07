@@ -41,6 +41,7 @@ class _LaplaceFlatDataset(_Dataset):
         self.target_std  = target_std
         self._indices    = [int(i) for i in indices]
         self._Nt_half    = Nt_half
+        self._freq_ratio = [k / max(Nt_half - 1, 1) for k in range(Nt_half)]
         self.pairs       = self._make_pairs()
 
     def _make_pairs(self):
@@ -61,7 +62,8 @@ class _LaplaceFlatDataset(_Dataset):
             u = torch.from_numpy(self.U_laplace[sim_i, k].copy()).float()  # (2, N, N)
         else:
             u = self.U_laplace[sim_i, k].float()
-        return ((u - self.target_mean[k]) / self.target_std[k],)
+        u_norm = (u - self.target_mean[k]) / self.target_std[k]
+        return u_norm, torch.tensor(self._freq_ratio[k], dtype=torch.float32)
 
 
 def train_vae(
@@ -133,10 +135,11 @@ def train_vae(
         train_l2rel = torch.zeros(1, device=device)
         train_bar = tqdm(train_loader, desc=f'  Train {epoch:>4}', position=1,
                          leave=False, unit='batch')
-        for batch_idx, (u,) in enumerate(train_bar):
-            u = u.to(device)
+        for batch_idx, (u, freq_ratio) in enumerate(train_bar):
+            u          = u.to(device)
+            freq_ratio = freq_ratio.to(device)
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                u_hat, mu, logvar = model(u)
+                u_hat, mu, logvar = model(u, freq_ratio)
                 loss, metrics = model.loss(u, u_hat, mu, logvar)
             optimizer.zero_grad()
             scaler.scale(loss).backward()
@@ -150,8 +153,9 @@ def train_vae(
             train_l2rel += ((u_hat.detach() - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
             elbo_ = loss.item()
             train_bar.set_postfix(elbo=f"{elbo_:.3e}", kl=f"{metrics['kl'].item():.3e}")
-            wandb.log({'batch/elbo': elbo_, 'batch/recon': metrics['recon'].item(),
-                        'batch/kl': metrics['kl'].item()}, step=global_step)
+            if batch_idx % 20 == 0:
+                wandb.log({'batch/elbo': elbo_, 'batch/recon': metrics['recon'].item(),
+                           'batch/kl': metrics['kl'].item()}, step=global_step)
             global_step += 1
         n = len(train_loader)
         train_elbo  = train_elbo.item()  / n
@@ -168,10 +172,11 @@ def train_vae(
         val_bar = tqdm(val_loader, desc=f'  Val   {epoch:>4}', position=1,
                        leave=False, unit='batch')
         with torch.no_grad():
-            for (u,) in val_bar:
-                u = u.to(device)
+            for u, freq_ratio in val_bar:
+                u          = u.to(device)
+                freq_ratio = freq_ratio.to(device)
                 with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                    u_hat, mu, logvar = model(u)
+                    u_hat, mu, logvar = model(u, freq_ratio)
                     loss, metrics = model.loss(u, u_hat, mu, logvar)
                 val_elbo   += loss
                 val_recon  += metrics['recon']
