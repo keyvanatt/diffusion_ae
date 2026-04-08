@@ -245,9 +245,16 @@ class LaplaceLatentSurrogate(nn.Module):
         super().__init__()
         self.freq_ratio = freq_ratio
         self.proj = nn.Sequential(
-            nn.Linear(theta_dim, 128),
+            nn.Linear(theta_dim, 256),
+            nn.LayerNorm(256),
             nn.ReLU(),
-            nn.Linear(128, latent_dim),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Linear(256, latent_dim),
         )
         self._decoder: nn.Module | None = None  # référence non-enregistrée
 

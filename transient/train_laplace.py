@@ -282,6 +282,7 @@ def train_chunk(
         # --- Train ---
         for m in models: m.train()
         train_losses = [0.0] * K
+        train_l2rels = [0.0] * K
 
         for start in range(0, n_train, batch_size):
             idx  = perm[start:start + batch_size]
@@ -292,10 +293,10 @@ def train_chunk(
                 tgt_b = u_trains[i][idx]
                 with torch.cuda.amp.autocast(enabled=device.type == 'cuda'):
                     if latent_mode:
-                        pred = models[i].proj(th_b)          # (B, latent_dim)
+                        pred = models[i].proj(th_b)
                         loss = F.mse_loss(pred, tgt_b)
                     else:
-                        pred = models[i](th_b)               # (B, 2, N, N)
+                        pred = models[i](th_b)
                         loss = models[i].loss(pred, tgt_b)
                 optimizers[i].zero_grad()
                 scalers[i].scale(loss).backward()
@@ -303,11 +304,16 @@ def train_chunk(
                 torch.nn.utils.clip_grad_norm_(models[i].parameters(), 1.0)
                 scalers[i].step(optimizers[i])
                 scalers[i].update()
-                train_losses[i] += loss.detach().item()
+                with torch.no_grad():
+                    p = pred.detach().flatten(1)
+                    t = tgt_b.flatten(1)
+                    train_losses[i] += loss.detach().item()
+                    train_l2rels[i] += ((p - t).norm(dim=1) / (t.norm(dim=1) + 1e-8)).mean().item()
 
         # --- Val ---
         for m in models: m.eval()
         val_losses = [0.0] * K
+        val_l2rels = [0.0] * K
         with torch.no_grad():
             for start in range(0, n_val, batch_size):
                 end  = min(start + batch_size, n_val)
@@ -319,21 +325,29 @@ def train_chunk(
                     tgt_b = u_vals[i][idx]
                     with torch.cuda.amp.autocast(enabled=device.type == 'cuda'):
                         if latent_mode:
-                            pred = models[i].proj(th_b)
-                            val_losses[i] += F.mse_loss(pred, tgt_b).item()
+                            pred   = models[i].proj(th_b)
+                            loss_v = F.mse_loss(pred, tgt_b)
                         else:
-                            pred = models[i](th_b)
-                            val_losses[i] += models[i].loss(pred, tgt_b).item()
+                            pred   = models[i](th_b)
+                            loss_v = models[i].loss(pred, tgt_b)
+                    p = pred.flatten(1)
+                    t = tgt_b.flatten(1)
+                    val_losses[i] += loss_v.item()
+                    val_l2rels[i] += ((p - t).norm(dim=1) / (t.norm(dim=1) + 1e-8)).mean().item()
 
         # --- Early stopping + log (un seul wandb.log par epoch) ---
         log_dict = {}
         for i in range(K):
-            tl = train_losses[i] / n_train_b
-            vl = val_losses[i]   / n_val_b
+            tl  = train_losses[i] / n_train_b
+            vl  = val_losses[i]   / n_val_b
+            tl2 = train_l2rels[i] / n_train_b
+            vl2 = val_l2rels[i]   / n_val_b
             schedulers[i].step(vl)
-            log_dict[f'freq{ks[i]:03d}/train_loss'] = tl
-            log_dict[f'freq{ks[i]:03d}/val_loss']   = vl
-            log_dict[f'freq{ks[i]:03d}/lr']         = optimizers[i].param_groups[0]['lr']
+            log_dict[f'freq{ks[i]:03d}/train_loss']  = tl
+            log_dict[f'freq{ks[i]:03d}/val_loss']    = vl
+            log_dict[f'freq{ks[i]:03d}/train_l2rel'] = tl2
+            log_dict[f'freq{ks[i]:03d}/val_l2rel']   = vl2
+            log_dict[f'freq{ks[i]:03d}/lr']          = optimizers[i].param_groups[0]['lr']
             if vl < best_vals[i]:
                 best_vals[i]   = vl
                 best_epochs[i] = epoch
@@ -345,8 +359,8 @@ def train_chunk(
                     active[i] = False
         wandb.log(log_dict, step=global_step + epoch)
 
-        epoch_bar.set_postfix(active=len([a for a in active if a]),
-                              best=f"{min(best_vals):.2e}")
+        mean_vl2 = sum(val_l2rels[i] / n_val_b for i in range(K) if active[i]) / max(sum(active), 1)
+        epoch_bar.set_postfix(active=sum(active), l2rel=f"{mean_vl2:.2%}", best=f"{min(best_vals):.2e}")
 
     # --- Sauvegarde ---
     for i, k in enumerate(ks):
