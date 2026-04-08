@@ -45,7 +45,7 @@ def train_one(
     freq_ratio   = 0.0,    # k / (Nt_half - 1), pour le conditionnement FiLM
 ):
     """
-    Entraîne un LaplaceSurrogate (ou LaplaceLatentSurrogate si vae fourni) pour la fréquence k.
+    Entraîne un LaplaceSurrogate (ou LaplaceLatentSurrogate si ae fourni) pour la fréquence k.
 
     Retour
     ------
@@ -56,13 +56,15 @@ def train_one(
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if vae is not None:
-        model = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim).to(device)
+        model = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim, freq_ratio=freq_ratio).to(device)
         vae.decoder.to(device).requires_grad_(False)
         model.set_decoder(vae.decoder)
         params_to_train = model.proj.parameters()  # proj seulement, décodeur gelé
     else:
         model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim, freq_ratio=freq_ratio).to(device)
         params_to_train = model.parameters()
+
+    model = torch.compile(model, fullgraph=False)
 
     optimizer = torch.optim.AdamW(params_to_train, lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -228,6 +230,8 @@ def train_all(
     else:
         U_laplace_t = dataset.U_laplace.permute(1, 0, 2, 3, 4)   # (Nt_half, ns, 2, N, N)
 
+    theta_n = theta_n.pin_memory()  # petit tenseur (ns, theta_dim) — DMA direct vers GPU
+
     freq_bar = tqdm(range(Nt_half), desc="Fréquences", position=0, leave=True)
     for k in freq_bar:
         s_k           = complex(dataset.s[k])
@@ -282,7 +286,7 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
         latent_dim  = vae.latent_dim
         model       = LaplaceLatentModel(N_freq=Nt, N_half=Nt_half, N=N,
                                          theta_dim=theta_dim, latent_dim=latent_dim)
-        model.set_vae_decoder(vae)
+        model.set_ae_decoder(vae)
         prefix      = 'LatentSurrogate'
         model_type  = 'LaplaceLatentModel'
         out_name    = 'LaplaceLatentModel.pt'
@@ -322,23 +326,23 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
 
 if __name__ == '__main__':
     from transient.dataset import TransientDataset
-    from models.laplace_ae_surrogate import LaplaceVAE
+    from models.laplace_ae_surrogate import LaplaceAE
 
     data_path    = os.path.join("dataset", "ch4_rotated.npy")
-    vae_ckpt     = os.path.join("checkpoints", "laplace_vae", "LaplaceVAE_best.pt")
+    ae_ckpt     = os.path.join("checkpoints", "LaplaceAE_best.pt")
     ckpt_dir     = os.path.join("checkpoints", "laplace_latent")
-    epochs, batch_size, lr, patience = 300, 64, 1e-3, 30
+    epochs, batch_size, lr, patience = 300, 256, 1e-3, 15
     gamma, rule, seed = 0.0, 'trap', 42
     interp_size  = 128   # doit correspondre au N utilisé pour entraîner le VAE
     dt           = 1.0
-    latent_dim   = 128   # doit correspondre au latent_dim du VAE
+    latent_dim   = 64    # doit correspondre au latent_dim du VAE
 
-    # Charger le VAE pré-entraîné
-    vae_ckpt_data = torch.load(vae_ckpt, map_location='cpu', weights_only=False)
-    vae = LaplaceVAE(N=interp_size, latent_dim=latent_dim)
-    vae.load_state_dict(vae_ckpt_data['model_state'])
-    vae.eval()
-    print(f"LaplaceVAE chargé depuis {vae_ckpt}")
+    # Charger le AE pré-entraîné
+    ae_ckpt_data = torch.load(ae_ckpt, map_location='cpu', weights_only=False)
+    ae = LaplaceAE(N=interp_size, latent_dim=latent_dim)
+    ae.load_state_dict(ae_ckpt_data['model_state'])
+    ae.eval()
+    print(f"LaplaceAE chargé depuis {ae_ckpt}")
 
     dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
                                interp_size=interp_size, dt=dt)
@@ -357,4 +361,4 @@ if __name__ == '__main__':
     os.makedirs(ckpt_dir, exist_ok=True)
     train_all(dataset, train_idx, val_idx, test_idx,
               epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
-              ckpt_dir=ckpt_dir, vae=vae)
+              ckpt_dir=ckpt_dir, vae=ae)
