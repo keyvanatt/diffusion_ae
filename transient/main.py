@@ -177,16 +177,17 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
         )  # (B, Nt, H_pred, W_pred)
 
         # Vérité terrain — chargée sample par sample depuis le mmap
-        # Pour SVDSurrogate : inférer le step depuis la shape de U_pred (évite le désalignement)
-        if model_type == 'SVDSurrogate':
-            H_orig = U[idx_batch[0]].shape[-2]
-            H_pred = U_pred_b.shape[-2]
-            step_eff = max(1, H_orig // H_pred)
+        H_pred, W_pred = U_pred_b.shape[-2], U_pred_b.shape[-1]
         slices = []
         for i in idx_batch:
             u = np.array(U[i], dtype=np.float32)   # (Nt, H, W) — copie locale
-            if model_type == 'SVDSurrogate':
-                u = u[:, ::step_eff, ::step_eff]
+            if u.shape[-2] != H_pred or u.shape[-1] != W_pred:
+                # Redimensionnement par interpolation bilinéaire
+                u_t = torch.from_numpy(u).unsqueeze(0)  # (1, Nt, H, W)
+                u_t = torch.nn.functional.interpolate(
+                    u_t, size=(H_pred, W_pred), mode='bilinear', align_corners=False
+                )
+                u = u_t.squeeze(0).numpy()
             slices.append(u)
         U_true_b = np.stack(slices)                 # (B, Nt, H_pred, W_pred)
 
@@ -237,7 +238,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/SVDSurrogate_best.pt',
+    ckpt_path = 'checkpoints/LaplaceLatentModel.pt',
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,

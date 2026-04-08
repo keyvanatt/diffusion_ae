@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 import torch
-from torch.utils.data import TensorDataset, DataLoader, Subset
+import torch.nn.functional as F
 from tqdm import tqdm
 import wandb
 
@@ -64,13 +64,13 @@ def train_one(
         model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim, freq_ratio=freq_ratio).to(device)
         params_to_train = model.parameters()
 
-    model = torch.compile(model, fullgraph=False)
+    model = model  # torch.compile inutile sur des MLP tiny (overhead compilation > gain)
 
     optimizer = torch.optim.AdamW(params_to_train, lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.5, patience=15, min_lr=1e-6
     )
-    scaler = torch.amp.GradScaler('cuda', enabled=device.type == 'cuda')
+    scaler = torch.cuda.amp.GradScaler(enabled=device.type == 'cuda')
 
     best_val   = float('inf')
     best_state = None
@@ -95,7 +95,7 @@ def train_one(
         train_l2rel = torch.zeros(1, device=device)
         for th, u in train_loader:
             th, u = th.to(device), u.to(device)
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+            with torch.cuda.amp.autocast(enabled=device.type == 'cuda'):
                 u_hat = model(th)
                 loss  = model.loss(u_hat, u)
             optimizer.zero_grad()
@@ -116,7 +116,7 @@ def train_one(
         with torch.no_grad():
             for th, u in val_loader:
                 th, u = th.to(device), u.to(device)
-                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                with torch.cuda.amp.autocast(enabled=device.type == 'cuda'):
                     u_hat = model(th)
                     val_loss  += model.loss(u_hat, u)
                 val_l2rel += ((u_hat - u).flatten(1).norm(dim=1) / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
@@ -168,27 +168,230 @@ def train_one(
     return best_val, epoch
 
 
+def precompute_latents(vae, U_laplace, target_mean, target_std, Nt_half, device, batch_size=256):
+    """
+    Encode tous les champs Laplace normalisés avec vae.encoder.
+    Retourne Z de shape (Nt_half, ns, latent_dim) en CPU RAM (~150MB).
+
+    Z[k, i] = encoder(U_laplace_norm[k, i], freq_ratio=k/(Nt_half-1))
+    """
+    ns         = U_laplace.shape[0]
+    latent_dim = vae.latent_dim
+    encoder    = vae.encoder.to(device)
+    encoder.eval()
+
+    Z = torch.zeros(Nt_half, ns, latent_dim)
+    with torch.no_grad():
+        for k in tqdm(range(Nt_half), desc="Pré-calcul latents", leave=False):
+            freq_ratio = k / max(Nt_half - 1, 1)
+            tm = target_mean[k].to(device)   # (2, 1, 1)
+            ts = target_std[k].to(device)
+            for start in range(0, ns, batch_size):
+                end = min(start + batch_size, ns)
+                if isinstance(U_laplace, np.ndarray):
+                    u = torch.from_numpy(U_laplace[start:end, k].copy()).float().to(device)
+                else:
+                    u = U_laplace[start:end, k].to(device)
+                u_n = (u - tm) / ts
+                Z[k, start:end] = encoder(u_n, freq_ratio).cpu()
+    return Z   # (Nt_half, ns, latent_dim)
+
+
+def train_chunk(
+    ks,            # liste d'indices de fréquences à entraîner simultanément
+    s_values,      # liste de complex — fréquences correspondantes
+    th_train,      # (n_train, theta_dim) sur GPU
+    u_trains,      # liste de K tenseurs sur GPU :
+                   #   mode pixel  → (n_train, 2, N, N)
+                   #   mode latent → (n_train, latent_dim)
+    th_val,        # (n_val,   theta_dim) sur GPU
+    u_vals,        # liste de K tenseurs sur GPU (même format que u_trains)
+    theta_mean, theta_std,
+    target_means, target_stds,  # listes de K tenseurs (2,1,1) — pour checkpoint
+    N, Nt,
+    batch_size   = 256,
+    epochs       = 300,
+    lr           = 1e-3,
+    patience     = 15,
+    theta_dim    = 4,
+    device       = None,
+    ckpt_dir     = 'checkpoints',
+    global_step  = 0,
+    vae          = None,
+    latent_mode  = False,  # True → targets sont des z (n, latent_dim), loss en espace latent
+):
+    """
+    Entraîne K surrogates simultanément (une fréquence par modèle).
+
+    latent_mode=True : les u_trains/u_vals contiennent des codes latents pré-calculés.
+    Le forward ne passe plus par le décodeur → 20-50× plus rapide par batch.
+    """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    K        = len(ks)
+    Nt_half  = Nt // 2 + 1
+    n_train  = th_train.shape[0]
+    n_val    = th_val.shape[0]
+    n_train_b = (n_train + batch_size - 1) // batch_size
+    n_val_b   = (n_val   + batch_size - 1) // batch_size
+    prefix    = 'LatentSurrogate' if vae is not None else 'LaplaceSurrogate'
+
+    # ------------------------------------------------------------------
+    # Initialisation des K modèles
+    # ------------------------------------------------------------------
+    # En mode latent, le décodeur n'est pas utilisé pendant l'entraînement
+    if vae is not None and not latent_mode:
+        vae.decoder.to(device).requires_grad_(False)
+
+    models, optimizers, schedulers, scalers = [], [], [], []
+    for i, k in enumerate(ks):
+        freq_ratio = k / max(Nt_half - 1, 1)
+        if vae is not None:
+            m = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim,
+                                       freq_ratio=freq_ratio).to(device)
+            if not latent_mode:
+                m.set_decoder(vae.decoder)
+            params = m.proj.parameters()
+        else:
+            m      = LaplaceSurrogate(s=s_values[i], N=N, theta_dim=theta_dim,
+                                      freq_ratio=freq_ratio).to(device)
+            params = m.parameters()
+        models.append(m)
+        opt = torch.optim.AdamW(params, lr=lr, weight_decay=1e-4)
+        optimizers.append(opt)
+        schedulers.append(torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, factor=0.5, patience=15, min_lr=1e-6))
+        scalers.append(torch.cuda.amp.GradScaler(enabled=device.type == 'cuda'))
+
+    best_vals      = [float('inf')] * K
+    best_states: list[dict | None] = [None] * K
+    best_epochs    = [0] * K
+    patience_ctrs  = [0] * K
+    active         = [True] * K
+
+    epoch_bar = tqdm(range(1, epochs + 1),
+                     desc=f"  freqs {ks[0]:03d}-{ks[-1]:03d}", leave=False, position=1)
+    for epoch in epoch_bar:
+        if not any(active):
+            break
+
+        # Permutation partagée entre toutes les fréquences du chunk
+        perm = torch.randperm(n_train, device=device)
+
+        # --- Train ---
+        for m in models: m.train()
+        train_losses = [0.0] * K
+
+        for start in range(0, n_train, batch_size):
+            idx  = perm[start:start + batch_size]
+            th_b = th_train[idx]
+            for i in range(K):
+                if not active[i]:
+                    continue
+                tgt_b = u_trains[i][idx]
+                with torch.cuda.amp.autocast(enabled=device.type == 'cuda'):
+                    if latent_mode:
+                        pred = models[i].proj(th_b)          # (B, latent_dim)
+                        loss = F.mse_loss(pred, tgt_b)
+                    else:
+                        pred = models[i](th_b)               # (B, 2, N, N)
+                        loss = models[i].loss(pred, tgt_b)
+                optimizers[i].zero_grad()
+                scalers[i].scale(loss).backward()
+                scalers[i].unscale_(optimizers[i])
+                torch.nn.utils.clip_grad_norm_(models[i].parameters(), 1.0)
+                scalers[i].step(optimizers[i])
+                scalers[i].update()
+                train_losses[i] += loss.detach().item()
+
+        # --- Val ---
+        for m in models: m.eval()
+        val_losses = [0.0] * K
+        with torch.no_grad():
+            for start in range(0, n_val, batch_size):
+                end  = min(start + batch_size, n_val)
+                idx  = torch.arange(start, end, device=device)
+                th_b = th_val[idx]
+                for i in range(K):
+                    if not active[i]:
+                        continue
+                    tgt_b = u_vals[i][idx]
+                    with torch.cuda.amp.autocast(enabled=device.type == 'cuda'):
+                        if latent_mode:
+                            pred = models[i].proj(th_b)
+                            val_losses[i] += F.mse_loss(pred, tgt_b).item()
+                        else:
+                            pred = models[i](th_b)
+                            val_losses[i] += models[i].loss(pred, tgt_b).item()
+
+        # --- Early stopping + log (un seul wandb.log par epoch) ---
+        log_dict = {}
+        for i in range(K):
+            tl = train_losses[i] / n_train_b
+            vl = val_losses[i]   / n_val_b
+            schedulers[i].step(vl)
+            log_dict[f'freq{ks[i]:03d}/train_loss'] = tl
+            log_dict[f'freq{ks[i]:03d}/val_loss']   = vl
+            log_dict[f'freq{ks[i]:03d}/lr']         = optimizers[i].param_groups[0]['lr']
+            if vl < best_vals[i]:
+                best_vals[i]   = vl
+                best_epochs[i] = epoch
+                best_states[i] = {k_: v.cpu().clone() for k_, v in models[i].state_dict().items()}
+                patience_ctrs[i] = 0
+            else:
+                patience_ctrs[i] += 1
+                if patience_ctrs[i] >= patience:
+                    active[i] = False
+        wandb.log(log_dict, step=global_step + epoch)
+
+        epoch_bar.set_postfix(active=len([a for a in active if a]),
+                              best=f"{min(best_vals):.2e}")
+
+    # --- Sauvegarde ---
+    for i, k in enumerate(ks):
+        assert best_states[i] is not None
+        torch.save({
+            'model_state': best_states[i],
+            'epoch': best_epochs[i],
+            'val_loss': best_vals[i],
+            'theta_mean':  theta_mean.numpy(),
+            'theta_std':   theta_std.numpy(),
+            'target_mean': target_means[i].numpy(),
+            'target_std':  target_stds[i].numpy(),
+            'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
+            'freq_idx': k, 's_k_real': s_values[i].real, 's_k_imag': s_values[i].imag,
+        }, os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt'))
+        if wandb.run is not None:
+            wandb.run.summary[f'best_val/freq_{k:03d}'] = best_vals[i]
+
+    return best_vals, [e for e in best_epochs]
+
+
 def train_all(
     dataset,
     train_idx,
     val_idx,
     test_idx,
-    epochs     = 300,
-    batch_size = 64,
-    lr         = 1e-3,
-    patience   = 30,
-    ckpt_dir   = 'checkpoints/laplace',
-    project    = 'convdiff',
-    vae        = None,   # si fourni : utilise LaplaceLatentSurrogate
+    epochs         = 300,
+    batch_size     = 256,
+    lr             = 1e-3,
+    patience       = 15,
+    ckpt_dir       = 'checkpoints/laplace',
+    project        = 'convdiff',
+    vae            = None,   # si fourni : utilise LaplaceLatentSurrogate
+    parallel_freqs = 4,      # nombre de fréquences entraînées en parallèle
 ):
     """
-    Entraîne un LaplaceSurrogate par fréquence de Laplace.
+    Entraîne un surrogate par fréquence de Laplace, en traitant parallel_freqs
+    fréquences simultanément sur le même GPU pour un meilleur remplissage du pipeline CUDA.
 
     Paramètres
     ----------
-    dataset   : TransientDataset avec laplace=True et fit() déjà appelé
-    train_idx : liste d'indices train
-    val_idx   : liste d'indices val
+    dataset        : TransientDataset avec laplace=True et fit() déjà appelé
+    train_idx      : liste d'indices train
+    val_idx        : liste d'indices val
+    parallel_freqs : nombre de fréquences dans chaque chunk GPU (défaut=4)
     """
     Nt_half   = dataset.Nt_half
     N         = dataset.N
@@ -197,66 +400,90 @@ def train_all(
     ns        = len(dataset)
     device    = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    print(f"Device : {device}   ns={ns}  Nt={Nt} (Nt_half={Nt_half})  N={N}  theta_dim={theta_dim}")
+    print(f"Device : {device}   ns={ns}  Nt={Nt} (Nt_half={Nt_half})  N={N}  "
+          f"theta_dim={theta_dim}  parallel_freqs={parallel_freqs}")
     os.makedirs(ckpt_dir, exist_ok=True)
 
     theta_n = (dataset.theta - dataset.theta_mean) / dataset.theta_std  # (ns, theta_dim)
 
     if vae is not None:
         _dummy   = LaplaceLatentSurrogate(latent_dim=vae.latent_dim, theta_dim=theta_dim)
-        run_name = f'LaplaceLatentSurrogate_Nt{Nt}'
+        run_name = f'LaplaceLatentSurrogate_Nt{Nt}_P{parallel_freqs}'
     else:
         _dummy   = LaplaceSurrogate(s=0j, N=N, theta_dim=theta_dim)
-        run_name = f'LaplaceSurrogate_Nt{Nt}'
+        run_name = f'LaplaceSurrogate_Nt{Nt}_P{parallel_freqs}'
     n_params = sum(p.numel() for p in _dummy.parameters())
     wandb.init(project=project, name=run_name, config=dict(
         Nt=Nt, Nt_half=Nt_half, N=N, ns=ns, theta_dim=theta_dim,
         epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
-        n_params_surrogate=n_params,
-        use_vae=vae is not None,
+        n_params_surrogate=n_params, use_vae=vae is not None,
+        parallel_freqs=parallel_freqs,
     ))
 
-    best_vals   = []
+    # theta sur GPU (taille négligeable)
+    th_train_gpu = theta_n[train_idx].to(device)
+    th_val_gpu   = theta_n[val_idx].to(device)
+
+    # ------------------------------------------------------------------
+    # Mode latent : pré-calcul de Z = encoder(U_laplace_norm) pour toutes
+    # les fréquences et tous les samples (~150MB RAM, ~30s).
+    # L'entraînement utilise ensuite MSE(proj(theta), z) sans décodeur.
+    # ------------------------------------------------------------------
+    latent_mode = vae is not None
+    Z: torch.Tensor | None = None
+    if latent_mode:
+        print("Pré-calcul des codes latents (encoder)…")
+        Z = precompute_latents(
+            vae, dataset.U_laplace, dataset.target_mean, dataset.target_std,
+            Nt_half, device, batch_size=batch_size,
+        )   # (Nt_half, ns, latent_dim) en CPU RAM
+        print(f"Z calculé : {tuple(Z.shape)}  ({Z.nbytes / 1e6:.0f} MB)")
+
+    best_vals: list[float] = [float('inf')] * Nt_half
     global_step = 0
 
-    # Précharge le tableau Laplace transposé en (Nt_half, ns, 2, N, N) pour accès contigu par fréquence
-    print("Transposition mmap → RAM par fréquence (accès contigu)…")
-    if isinstance(dataset.U_laplace, np.ndarray):
-        # Transposer en mémoire freq par freq pour éviter les sauts mmap
-        U_laplace_t = np.empty((Nt_half, ns, 2, N, N), dtype=np.float32)
-        for k in tqdm(range(Nt_half), desc="Chargement Laplace", leave=False):
-            U_laplace_t[k] = dataset.U_laplace[:, k]
-        U_laplace_t = torch.from_numpy(U_laplace_t)   # (Nt_half, ns, 2, N, N)
-    else:
-        U_laplace_t = dataset.U_laplace.permute(1, 0, 2, 3, 4)   # (Nt_half, ns, 2, N, N)
+    chunk_bar = tqdm(range(0, Nt_half, parallel_freqs), desc="Chunks", position=0, leave=True)
+    for k_start in chunk_bar:
+        ks       = list(range(k_start, min(k_start + parallel_freqs, Nt_half)))
+        s_values = [complex(dataset.s[k]) for k in ks]
+        tmeans   = [dataset.target_mean[k] for k in ks]
+        tstds    = [dataset.target_std[k]  for k in ks]
 
-    theta_n = theta_n.pin_memory()  # petit tenseur (ns, theta_dim) — DMA direct vers GPU
+        if latent_mode and Z is not None:
+            # Pousse les slices z (~K × 7MB) sur GPU — trivial
+            targets_train = [Z[k][train_idx].to(device, non_blocking=True) for k in ks]
+            targets_val   = [Z[k][val_idx  ].to(device, non_blocking=True) for k in ks]
+        else:
+            # Charge K slices pixel depuis le mmap (~K × 1GB)
+            targets_train, targets_val = [], []
+            for k in ks:
+                tm = dataset.target_mean[k]
+                ts = dataset.target_std[k]
+                if isinstance(dataset.U_laplace, np.ndarray):
+                    sl = torch.from_numpy(dataset.U_laplace[:, k].copy())
+                else:
+                    sl = dataset.U_laplace[:, k]
+                tn = (sl - tm) / ts
+                targets_train.append(tn[train_idx].to(device, non_blocking=True))
+                targets_val.append(  tn[val_idx  ].to(device, non_blocking=True))
 
-    freq_bar = tqdm(range(Nt_half), desc="Fréquences", position=0, leave=True)
-    for k in freq_bar:
-        s_k           = complex(dataset.s[k])
-        target_mean_k = dataset.target_mean[k]                                      # (2, 1, 1)
-        target_std_k  = dataset.target_std[k]
-        slice_k       = U_laplace_t[k]                             # (ns, 2, N, N) — contigu
-        target_k_n    = (slice_k - target_mean_k) / target_std_k   # (ns, 2, N, N)
-
-        ds_k         = TensorDataset(theta_n, target_k_n)
-        train_loader = DataLoader(Subset(ds_k, train_idx), batch_size=batch_size, shuffle=True, pin_memory=True)
-        val_loader   = DataLoader(Subset(ds_k, val_idx),   batch_size=batch_size, pin_memory=True)
-
-        best_val, n_epochs = train_one(
-            k, s_k, train_loader, val_loader,
+        chunk_best, _ = train_chunk(
+            ks, s_values,
+            th_train_gpu, targets_train, th_val_gpu, targets_val,
             dataset.theta_mean, dataset.theta_std,
-            target_mean=target_mean_k, target_std=target_std_k,
-            N=N, Nt=Nt, epochs=epochs, lr=lr, patience=patience,
-            theta_dim=theta_dim, device=device, ckpt_dir=ckpt_dir,
-            global_step=global_step, vae=vae,
-            freq_ratio=k / max(Nt_half - 1, 1),
+            tmeans, tstds,
+            N=N, Nt=Nt, batch_size=batch_size, epochs=epochs,
+            lr=lr, patience=patience, theta_dim=theta_dim,
+            device=device, ckpt_dir=ckpt_dir,
+            global_step=global_step, vae=vae, latent_mode=latent_mode,
         )
+        for i, k in enumerate(ks):
+            best_vals[k] = chunk_best[i]
+        global_step += epochs
+        chunk_bar.set_postfix(freqs=f"{ks[0]}-{ks[-1]}", best=f"{min(chunk_best):.2e}")
 
-        best_vals.append(best_val)
-        global_step += n_epochs
-        freq_bar.set_postfix(freq=k, best_val=f"{best_val:.3e}", s=f"{s_k:.3g}")
+        del targets_train, targets_val
+        torch.cuda.empty_cache()
 
     wandb.log({
         'summary/best_val_mean' : float(np.mean(best_vals)),
@@ -356,9 +583,10 @@ if __name__ == '__main__':
     test_idx  = idx[n_train + n_val:].numpy()
 
     dataset.fit(train_idx)
-    print(f"Dataset : {tuple(dataset.U_laplace.shape)}  (Nt_half={dataset.Nt_half}/{dataset.Nt})")
+    Nt_half = dataset.Nt_half
+    print(f"Dataset : {tuple(dataset.U_laplace.shape)}  (Nt_half={Nt_half}/{dataset.Nt})")
 
     os.makedirs(ckpt_dir, exist_ok=True)
     train_all(dataset, train_idx, val_idx, test_idx,
               epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
-              ckpt_dir=ckpt_dir, vae=ae)
+              ckpt_dir=ckpt_dir, vae=ae, parallel_freqs=Nt_half)
