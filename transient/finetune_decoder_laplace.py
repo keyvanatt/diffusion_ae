@@ -2,16 +2,19 @@
 finetune_decoder_laplace.py — Finetune end-to-end du LaplaceLatentModel assemblé.
 
 Pipeline :
-  1. train_ae_laplace.py    → LaplaceAE (autoencoder)
+  1. train_ae_laplace.py    → LaplaceAE
   2. train_laplace.py        → LaplaceLatentSurrogate par fréquence (θ→z, décodeur gelé)
-  3. CE SCRIPT               → finetune end-to-end (surrogates + décodeur dégelé)
+  3. CE SCRIPT               → finetune end-to-end, loss L2 directement sur U(t) physique
 
-Le modèle assemblé (LaplaceLatentModel.pt) contient N_half surrogates (proj: θ→z)
-et un shared_decoder gelé. On dégèle le décodeur et on finetune tout avec un faible LR,
-en utilisant un LR différentiel (décodeur plus bas que les surrogates).
+La transformée inverse de Laplace est implémentée en PyTorch (torch.fft.ifft),
+ce qui rend le chemin θ → spectre → U(t) entièrement différentiable.
+La loss et le critère d'arrêt anticipé opèrent sur U(t), pas sur les spectres normalisés.
 
-Astuce vitesse : les z sont calculés par fréquence (proj petit MLP), puis le décodeur
-est appelé UNE SEULE FOIS sur le batch complet avec freq_ratio par sample.
+Optimisations vitesse :
+  - Toutes les projections θ→z sont calculées, puis UN SEUL appel batché au
+    shared_decoder (N_half*B samples) au lieu de N_half appels séquentiels.
+  - La cible U(t) est reconstruite une seule fois par batch (via IFFT, no_grad).
+  - Le denom de l'inverse Laplace est pré-calculé une fois pour tout le training.
 
 Checkpoint : checkpoints/LaplaceLatentModel_finetuned.pt
 """
@@ -20,7 +23,6 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import time
-import random
 
 import numpy as np
 import torch
@@ -33,69 +35,83 @@ from models.laplace_ae_surrogate import LaplaceLatentModel
 from transient.dataset import TransientDataset
 
 
+# ---------------------------------------------------------------------------
+# Dataset — retourne toutes les fréquences d'une simulation en un seul item
+# Toutes les données restent CPU (les workers DataLoader n'ont pas accès au GPU).
+# ---------------------------------------------------------------------------
+
 class _FinetuneDataset(_Dataset):
     """
-    Dataset aplati (simulation, fréquence) pour le finetuning end-to-end.
-    Retourne (theta_norm, u_laplace_norm, freq_idx, freq_ratio).
+    Retourne (theta_norm, U_laplace_norm) où U_laplace_norm est de shape
+    (Nt_half, 2, N, N) — toutes les fréquences d'une simulation.
+
+    Chaque item = 1 simulation complète.
     """
-    def __init__(self, U_laplace, theta_norm, target_mean, target_std, indices, Nt_half):
-        self.U_laplace   = U_laplace
-        self.theta_norm  = theta_norm       # (ns, theta_dim)
-        self.target_mean = target_mean      # (Nt_half, 2, 1, 1)
-        self.target_std  = target_std
+    def __init__(self, U_laplace, theta_norm, target_mean, target_std, indices):
+        self.U_laplace   = U_laplace             # ndarray ou tensor CPU
+        self.theta_norm  = theta_norm.cpu()       # (ns, theta_dim) CPU
+        self.target_mean = target_mean.cpu()      # (Nt_half, 2, 1, 1) CPU
+        self.target_std  = target_std.cpu()       # (Nt_half, 2, 1, 1) CPU
         self._indices    = [int(i) for i in indices]
-        self._Nt_half    = Nt_half
-        self._freq_ratio = [k / max(Nt_half - 1, 1) for k in range(Nt_half)]
-        self.pairs       = self._make_pairs()
-
-    def _make_pairs(self):
-        """freq-first : toutes les sims pour k=0, puis k=1, etc.
-        Chaque batch a (quasi) une seule fréquence → 1 proj + 1 decoder call."""
-        return [(i, k) for k in range(self._Nt_half) for i in self._indices]
-
-    def reshuffle(self):
-        random.shuffle(self._indices)
-        # Mélange l'ordre des fréquences aussi
-        ks = list(range(self._Nt_half))
-        random.shuffle(ks)
-        self.pairs = [(i, k) for k in ks for i in self._indices]
 
     def __len__(self):
-        return len(self.pairs)
+        return len(self._indices)
 
     def __getitem__(self, idx):
-        sim_i, k = self.pairs[idx]
+        sim_i = self._indices[idx]
         th = self.theta_norm[sim_i]
         if isinstance(self.U_laplace, np.ndarray):
-            u = torch.from_numpy(self.U_laplace[sim_i, k].copy()).float()
+            u = torch.from_numpy(self.U_laplace[sim_i].copy()).float()
         else:
-            u = self.U_laplace[sim_i, k].float()
-        u_norm = (u - self.target_mean[k]) / self.target_std[k]
-        return th, u_norm, torch.tensor(k, dtype=torch.long), torch.tensor(self._freq_ratio[k], dtype=torch.float32)
+            u = self.U_laplace[sim_i].float()
+        u_norm = (u - self.target_mean) / self.target_std
+        return th, u_norm
 
 
-def _forward_batch(model, th, k_idx, freq_ratio, device):
+# ---------------------------------------------------------------------------
+# Reconstruction U(t) depuis les spectres normalisés (cible, sans gradient)
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def _laplace_to_u(U_laplace_norm, target_mean, target_std, N_freq, denom):
     """
-    Forward batché. Cas rapide (freq-first) : 1 seule fréquence par batch.
-    Fallback : boucle sur les fréquences uniques, puis 1 appel décodeur.
+    Reconstruit U(t) physique depuis les spectres de Laplace normalisés.
+
+    U_laplace_norm : (B, Nt_half, 2, N, N) normalisé, GPU
+    target_mean    : (Nt_half, 2, 1, 1) GPU
+    target_std     : (Nt_half, 2, 1, 1) GPU
+    denom          : (Nt,) GPU — pré-calculé
+    → U_true (B, Nt, N, N) float32
     """
-    B = th.shape[0]
-    latent_dim = model.latent_dim
+    B, Nt_half, _, N, _ = U_laplace_norm.shape
+    NN = N * N
+    Nt = N_freq
 
-    unique_ks = k_idx.unique()
-    if unique_ks.numel() == 1:
-        # Fast path : tout le batch a la même fréquence
-        z = model.surrogates[unique_ks.item()].proj(th)
-        return model.shared_decoder(z, freq_ratio[0].item())
+    # Dénorm
+    U_phys = U_laplace_norm * target_std + target_mean
 
-    # Slow path (batch à cheval sur 2 fréquences)
-    amp_dtype = torch.float16 if (device.type == 'cuda' and torch.is_autocast_enabled()) else th.dtype
-    z_all = torch.empty(B, latent_dim, device=device, dtype=amp_dtype)
-    for k in unique_ks:
-        mask = (k_idx == k)
-        z_all[mask] = model.surrogates[k.item()].proj(th[mask])
-    return model.shared_decoder(z_all, freq_ratio)
+    # → (B, NN, Nt_half) complexe
+    re     = U_phys[:, :, 0].reshape(B, Nt_half, NN).permute(0, 2, 1)
+    im     = U_phys[:, :, 1].reshape(B, Nt_half, NN).permute(0, 2, 1)
+    M_half = torch.complex(re, im)
 
+    # Symétrie conjuguée
+    n_tail = Nt - Nt_half
+    if n_tail > 0:
+        tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
+        M_full = torch.cat([M_half, tail], dim=2)
+    else:
+        M_full = M_half
+
+    # IFFT + dénorm temporelle
+    a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)
+    U_true = a_rec.real / denom
+    return U_true.permute(0, 2, 1).reshape(B, Nt, N, N).float()
+
+
+# ---------------------------------------------------------------------------
+# Finetune
+# ---------------------------------------------------------------------------
 
 def finetune(
     dataset,
@@ -110,6 +126,9 @@ def finetune(
     patience,
     save_dir,
     project,
+    dt,
+    gamma,
+    rule,
 ):
     N         = dataset.N
     Nt        = dataset.Nt
@@ -128,70 +147,73 @@ def finetune(
     model.to(device)
     print(f"Modèle chargé depuis {ckpt_path}")
 
-    # Dégeler le shared_decoder pour le finetuning
+    # Dégeler le shared_decoder
     model.shared_decoder.requires_grad_(True)
 
+    # --- Pré-calculer le denom de l'inverse Laplace (une seule fois) ---
+    t_vec = torch.arange(Nt, dtype=torch.float32, device=device) * dt
+    w     = torch.ones(Nt, dtype=torch.float32, device=device)
+    if rule == 'trap':
+        w[0] = 0.5; w[-1] = 0.5
+    denom = dt * w * torch.exp(-gamma * t_vec)                    # (Nt,) GPU
 
-    # --- Theta normalisé ---
-    theta_norm = (dataset.theta - dataset.theta_mean) / dataset.theta_std
+    # --- Theta normalisé (CPU pour le dataset) ---
+    theta_norm = (dataset.theta - dataset.theta_mean) / dataset.theta_std   # CPU
 
-    # --- Datasets ---
+    # --- Datasets (tout CPU) ---
     train_ds = _FinetuneDataset(dataset.U_laplace, theta_norm,
                                 dataset.target_mean, dataset.target_std,
-                                train_idx, Nt_half)
+                                train_idx)
     val_ds   = _FinetuneDataset(dataset.U_laplace, theta_norm,
                                 dataset.target_mean, dataset.target_std,
-                                val_idx, Nt_half)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
-                              num_workers=8, pin_memory=True, persistent_workers=True)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                              num_workers=8, pin_memory=True, persistent_workers=True)
-    print(f"Finetune Dataset : train {len(train_ds)} samples  |  val {len(val_ds)} samples")
+                                val_idx)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              num_workers=4, pin_memory=True, persistent_workers=True)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
+                              num_workers=4, pin_memory=True, persistent_workers=True)
+    print(f"Finetune Dataset : train {len(train_ds)} sims  |  val {len(val_ds)} sims")
+    print(f"Batch U(t) shape : ({batch_size}, {Nt}, {N}, {N})")
 
     # --- Optimiseur avec LR différentiel ---
-    surrogate_params = []
-    for s in model.surrogates:
-        surrogate_params.extend(s.proj.parameters())
-    decoder_params = list(model.shared_decoder.parameters())
+    surrogate_params = [p for s in model.surrogates for p in s.proj.parameters()]
+    decoder_params   = list(model.shared_decoder.parameters())
 
     optimizer = torch.optim.AdamW([
         {'params': surrogate_params, 'lr': lr_surrogate},
         {'params': decoder_params,   'lr': lr_decoder},
     ], weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, factor=0.5, patience=15, min_lr=1e-7,
+        optimizer, factor=0.5, patience=10, min_lr=1e-7,
     )
     scaler = torch.amp.GradScaler('cuda', enabled=device.type == 'cuda')
 
-    n_surr   = sum(p.numel() for p in surrogate_params if p.requires_grad)
-    n_dec    = sum(p.numel() for p in decoder_params if p.requires_grad)
-    n_total  = n_surr + n_dec
-    print(f"Params entraînés : {n_total:,} (surrogates {n_surr:,} + decoder {n_dec:,})")
+    n_surr  = sum(p.numel() for p in surrogate_params)
+    n_dec   = sum(p.numel() for p in decoder_params)
+    print(f"Params : {n_surr + n_dec:,} total  (surrogates {n_surr:,} + decoder {n_dec:,})")
     print(f"LR surrogate={lr_surrogate:.1e}  decoder={lr_decoder:.1e}  device={device}")
 
     # --- Wandb ---
-    wandb.init(project=project, name='LaplaceLatentModel_finetune', config=dict(
+    wandb.init(project=project, name='LaplaceLatentModel_finetune_e2e', config=dict(
         N=N, Nt=Nt, Nt_half=Nt_half, theta_dim=theta_dim,
         latent_dim=ckpt['latent_dim'],
         epochs=epochs, batch_size=batch_size,
         lr_surrogate=lr_surrogate, lr_decoder=lr_decoder,
-        n_params_total=n_total, n_params_surrogates=n_surr, n_params_decoder=n_dec,
+        loss='L2_on_U_t',
+        n_params_total=n_surr + n_dec,
         n_samples_train=len(train_ds), n_samples_val=len(val_ds),
         source_ckpt=ckpt_path, device=str(device),
     ))
     wandb.watch(model, log='gradients', log_freq=100)
 
-    best_val    = float('inf')
-    best_state  = None
-    patience_   = 0
-    out_path    = os.path.join(save_dir, 'LaplaceLatentModel_finetuned.pt')
-    global_step = 0
-    log_every   = 20  # log wandb batch metrics toutes les N batches
+    best_val_l2  = float('inf')
+    best_state   = None
+    patience_    = 0
+    out_path     = os.path.join(save_dir, 'LaplaceLatentModel_finetuned.pt')
+    global_step  = 0
 
-    epoch_bar = tqdm(range(1, epochs + 1), desc='Finetune', position=0, leave=True, unit='epoch')
+    epoch_bar = tqdm(range(1, epochs + 1), desc='Finetune e2e', position=0, leave=True, unit='epoch')
     for epoch in epoch_bar:
         t0 = time.perf_counter()
-        train_ds.reshuffle()
 
         # --- Train ---
         model.train()
@@ -201,15 +223,17 @@ def finetune(
 
         train_bar = tqdm(train_loader, desc=f'  Train {epoch:>3}', position=1,
                          leave=False, unit='batch')
-        for batch_idx, (th, u, k_idx, freq_ratio) in enumerate(train_bar):
-            th         = th.to(device, non_blocking=True)
-            u          = u.to(device, non_blocking=True)
-            k_idx      = k_idx.to(device, non_blocking=True)
-            freq_ratio = freq_ratio.to(device, non_blocking=True)
+        for batch_idx, (th, u_laplace_norm) in enumerate(train_bar):
+            th             = th.to(device, non_blocking=True)
+            u_laplace_norm = u_laplace_norm.to(device, non_blocking=True)
+
+            # Cible U(t) physique
+            u_true = _laplace_to_u(u_laplace_norm, model.target_mean, model.target_std,
+                                   Nt, denom)
 
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                u_hat = _forward_batch(model, th, k_idx, freq_ratio, device)
-                loss  = F.mse_loss(u_hat.float(), u)
+                u_pred = model._generate_diff(th, dt=dt, gamma=gamma, rule=rule)
+                loss   = F.mse_loss(u_pred.float(), u_true)
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
@@ -226,17 +250,15 @@ def finetune(
 
             loss_val = loss.item()
             with torch.no_grad():
-                l2rel = ((u_hat.float() - u).flatten(1).norm(dim=1)
-                         / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
+                l2rel = ((u_pred.float() - u_true).flatten(1).norm(dim=1)
+                         / (u_true.flatten(1).norm(dim=1) + 1e-8)).mean().item()
 
             train_loss  += loss_val
             train_l2rel += l2rel
             n_batches   += 1
 
-            if batch_idx % 50 == 0:
+            if batch_idx % 20 == 0:
                 train_bar.set_postfix(loss=f"{loss_val:.3e}", l2=f"{l2rel:.2%}")
-
-            if batch_idx % log_every == 0:
                 wandb.log({
                     'batch/loss':      loss_val,
                     'batch/l2rel':     l2rel,
@@ -251,74 +273,53 @@ def finetune(
         model.eval()
         val_loss  = 0.0
         val_l2rel = 0.0
-        freq_losses = torch.zeros(Nt_half, device=device)
-        freq_counts = torch.zeros(Nt_half, device=device)
-        n_val_b = 0
+        n_val_b   = 0
 
         val_bar = tqdm(val_loader, desc=f'  Val   {epoch:>3}', position=1,
                        leave=False, unit='batch')
         with torch.no_grad():
-            for th, u, k_idx, freq_ratio in val_bar:
-                th         = th.to(device, non_blocking=True)
-                u          = u.to(device, non_blocking=True)
-                k_idx      = k_idx.to(device, non_blocking=True)
-                freq_ratio = freq_ratio.to(device, non_blocking=True)
+            for th, u_laplace_norm in val_bar:
+                th             = th.to(device, non_blocking=True)
+                u_laplace_norm = u_laplace_norm.to(device, non_blocking=True)
+
+                u_true = _laplace_to_u(u_laplace_norm, model.target_mean, model.target_std,
+                                       Nt, denom)
 
                 with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                    u_hat = _forward_batch(model, th, k_idx, freq_ratio, device)
-                    loss  = F.mse_loss(u_hat.float(), u)
+                    u_pred = model._generate_diff(th, dt=dt, gamma=gamma, rule=rule)
 
-                val_loss  += loss.item()
-                val_l2rel += ((u_hat.float() - u).flatten(1).norm(dim=1)
-                              / (u.flatten(1).norm(dim=1) + 1e-8)).mean().item()
-                n_val_b += 1
-
-                # Per-frequency loss
-                for k in k_idx.unique():
-                    mask = (k_idx == k)
-                    freq_losses[k] += F.mse_loss(u_hat[mask].float(), u[mask]).item() * mask.sum()
-                    freq_counts[k] += mask.sum()
+                val_loss  += F.mse_loss(u_pred.float(), u_true).item()
+                val_l2rel += ((u_pred.float() - u_true).flatten(1).norm(dim=1)
+                              / (u_true.flatten(1).norm(dim=1) + 1e-8)).mean().item()
+                n_val_b   += 1
 
         val_loss  /= max(n_val_b, 1)
         val_l2rel /= max(n_val_b, 1)
 
-        scheduler.step(val_loss)
+        scheduler.step(val_l2rel)
         epoch_time = time.perf_counter() - t0
 
         epoch_bar.set_postfix(
-            tr=f"{train_loss:.3e}", vl=f"{val_loss:.3e}",
-            l2=f"{val_l2rel:.2%}",
+            tr_l2=f"{train_l2rel:.2%}", vl_l2=f"{val_l2rel:.2%}",
             lr_s=f"{optimizer.param_groups[0]['lr']:.1e}",
             lr_d=f"{optimizer.param_groups[1]['lr']:.1e}",
-            best=f"{best_val:.3e}",
+            best=f"{best_val_l2:.2%}",
         )
+        wandb.log({
+            'train/loss':   train_loss,
+            'train/l2rel':  train_l2rel,
+            'val/loss':     val_loss,
+            'val/l2rel':    val_l2rel,
+            'lr/surrogate': optimizer.param_groups[0]['lr'],
+            'lr/decoder':   optimizer.param_groups[1]['lr'],
+            'epoch_time_s': epoch_time,
+            'epoch':        epoch,
+        }, step=global_step)
 
-        # --- Wandb epoch log ---
-        log_dict = {
-            'train/loss':    train_loss,
-            'train/l2rel':   train_l2rel,
-            'val/loss':      val_loss,
-            'val/l2rel':     val_l2rel,
-            'lr/surrogate':  optimizer.param_groups[0]['lr'],
-            'lr/decoder':    optimizer.param_groups[1]['lr'],
-            'epoch_time_s':  epoch_time,
-            'epoch':         epoch,
-        }
-        # Per-frequency val loss (every 5 epochs)
-        if epoch % 5 == 0 or epoch == 1:
-            mask_nz = freq_counts > 0
-            freq_avg = freq_losses.clone()
-            freq_avg[mask_nz] /= freq_counts[mask_nz]
-            for k in range(Nt_half):
-                if freq_counts[k] > 0:
-                    log_dict[f'val_freq/loss_{k:03d}'] = freq_avg[k].item()
-        wandb.log(log_dict, step=global_step)
-
-        # --- Early stopping ---
-        if val_loss < best_val:
-            best_val   = val_loss
-            best_state = {k_: v.cpu().clone() for k_, v in model.state_dict().items()}
-            patience_  = 0
+        if val_l2rel < best_val_l2:
+            best_val_l2 = val_l2rel
+            best_state  = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            patience_   = 0
             torch.save({
                 'model_state': best_state,
                 'model_type':  'LaplaceLatentModel',
@@ -327,8 +328,8 @@ def finetune(
                 'N':           N,
                 'theta_dim':   theta_dim,
                 'latent_dim':  ckpt['latent_dim'],
-                'dt':          dataset.dt,
-                'gamma':       ckpt.get('gamma', 0.0),
+                'dt':          dt,
+                'gamma':       gamma,
                 'theta_mean':  dataset.theta_mean,
                 'theta_std':   dataset.theta_std,
                 'test_idx':    np.asarray(test_idx),
@@ -337,13 +338,13 @@ def finetune(
         else:
             patience_ += 1
             if patience_ >= patience:
-                epoch_bar.write(f"Early stopping à l'époque {epoch}  (best val={best_val:.4e})")
+                epoch_bar.write(f"Early stopping à l'époque {epoch}  (best val L2={best_val_l2:.2%})")
                 break
 
-    assert best_state is not None, "Aucune epoch n'a amélioré la val loss"
+    assert best_state is not None
     wandb.save(out_path)
     wandb.finish()
-    print(f"Finetune terminé — best val : {best_val:.4e}  → {out_path}")
+    print(f"Finetune terminé — best val L2 : {best_val_l2:.2%}  → {out_path}")
 
     model.load_state_dict(best_state)
     return model
@@ -359,15 +360,13 @@ if __name__ == "__main__":
     interp_size  = 128
     dt           = 1.0
 
-    # Hyperparamètres finetuning
     epochs       = 50
-    batch_size   = 512
+    batch_size   = 16       # chaque item = simulation complète (Nt_half freqs)
     lr_surrogate = 5e-5
     lr_decoder   = 1e-5
-    patience     = 20
+    patience     = 15
     project      = 'convdiff'
 
-    # --- Dataset ---
     dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
                                interp_size=interp_size, dt=dt)
 
@@ -387,10 +386,10 @@ if __name__ == "__main__":
     dataset.U_laplace = U
     print(f"OK — {U.nbytes/1e9:.1f} Go RAM, {time.perf_counter()-t0:.1f}s")
 
-    # --- Finetune ---
-    print("\n=== Finetune LaplaceLatentModel (end-to-end) ===")
+    print("\n=== Finetune LaplaceLatentModel end-to-end (loss sur U(t)) ===")
     finetune(dataset, train_idx, val_idx, test_idx,
              ckpt_path=model_ckpt,
              epochs=epochs, batch_size=batch_size,
              lr_surrogate=lr_surrogate, lr_decoder=lr_decoder,
-             patience=patience, save_dir=save_dir, project=project)
+             patience=patience, save_dir=save_dir, project=project,
+             dt=dt, gamma=gamma, rule=rule)

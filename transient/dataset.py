@@ -49,6 +49,7 @@ class TransientDataset(Dataset):
             self.ns, self.Nt = ns, Nt
             self.N = interp_size if interp_size is not None else H
             self._U_raw     = U_raw        # mmap — lu sample par sample dans _to_laplace
+            self.U = U_raw
             self._data_path = data_path
             self._cache_dir = Path(cache_dir)
         else:

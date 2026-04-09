@@ -321,6 +321,78 @@ class LaplaceLatentModel(LaplaceModel):
         self._inject_decoder()
         return result
 
+    def _generate_diff(self, theta_norm: torch.Tensor,
+                        dt: float = 1.0, gamma: float = 0.0,
+                        rule: str = 'trap', k_max = None) -> torch.Tensor:
+        """
+        Inverse Laplace différentiable, optimisé pour LaplaceLatentModel :
+        toutes les projections θ→z sont calculées, puis UN SEUL appel
+        au shared_decoder batché (au lieu de N_half appels séquentiels).
+
+        theta_norm : (B, theta_dim) — déjà normalisé
+        Retourne U_pred (B, Nt, N, N) en valeurs physiques.
+        """
+        B  = theta_norm.shape[0]
+        NN = self.N * self.N
+            
+        # 1. Projections θ→z : N_half petits MLP (rapide, séquentiel OK)
+        z_list = [s.proj(theta_norm) for s in self.surrogates]
+        z_all  = torch.cat(z_list, dim=0)                          # (N_half*B, latent_dim)
+
+        if k_max is not None:
+            mask = torch.arange(self.N_half, device=theta_norm.device) < k_max
+
+            # Appliquer le masque sur z_all pour ne garder que les fréquences jusqu'à k_max
+            z_all = z_all.view(self.N_half, B, -1)  # (N_half, B, latent_dim)
+            z_all = z_all[mask]                     # (k_max, B, latent_dim)
+            z_all = z_all.view(-1, self.latent_dim) # (k_max*B, latent_dim)
+
+        # 2. freq_ratios pour le mega-batch
+        fr = torch.tensor(
+            [s.freq_ratio for s in self.surrogates],
+            device=theta_norm.device, dtype=torch.float32,
+        ).repeat_interleave(B)                                      # (N_half*B,)
+
+        # 3. Un seul appel décodeur batché
+        preds = self.shared_decoder(z_all.float(), fr)              # (N_half*B, 2, N, N)
+
+        # 4. Reshape → (B, NN, N_half) complexe
+        preds = preds.view(self.N_half, B, 2, self.N, self.N)
+        M_half = torch.complex(
+            preds[:, :, 0].reshape(self.N_half, B, NN).permute(1, 2, 0).float(),
+            preds[:, :, 1].reshape(self.N_half, B, NN).permute(1, 2, 0).float(),
+        )
+
+        # 5. Dénormalisation vectorisée
+        tm_re = self.target_mean[:, 0, 0, 0].view(1, 1, -1)
+        tm_im = self.target_mean[:, 1, 0, 0].view(1, 1, -1)
+        ts_re = self.target_std[:,  0, 0, 0].view(1, 1, -1)
+        ts_im = self.target_std[:,  1, 0, 0].view(1, 1, -1)
+        M_half = torch.complex(
+            M_half.real * ts_re + tm_re,
+            M_half.imag * ts_im + tm_im,
+        )
+
+        # 6. Symétrie conjuguée → spectre complet
+        n_tail = self.N_freq - self.N_half
+        if n_tail > 0:
+            tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
+            M_full = torch.cat([M_half, tail], dim=2)
+        else:
+            M_full = M_half
+
+        # 7. Inverse Laplace différentiable (torch.fft.ifft)
+        Nt    = self.N_freq
+        t     = torch.arange(Nt, dtype=torch.float32, device=M_full.device) * dt
+        w     = torch.ones(Nt,  dtype=torch.float32, device=M_full.device)
+        if rule == 'trap':
+            w[0] = 0.5; w[-1] = 0.5
+        denom = dt * w * torch.exp(-gamma * t)
+
+        a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)
+        U_pred = a_rec.real / denom
+        return U_pred.permute(0, 2, 1).reshape(B, Nt, self.N, self.N)
+
     def loss(self, *_, **__):
         raise NotImplementedError(
             "L'entraînement se fait par fréquence via LaplaceLatentSurrogate.loss()."

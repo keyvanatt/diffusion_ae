@@ -139,6 +139,57 @@ class LaplaceModel(BaseDecoder):
             "L'entraînement se fait par fréquence via LaplaceSurrogate.loss()."
         )
 
+    def _generate_diff(self, theta_norm: torch.Tensor,
+                       dt: float = 1.0, gamma: float = 0.0,
+                       rule: str = 'trap') -> torch.Tensor:
+        """
+        Inverse Laplace différentiable via torch.fft.ifft.
+        Le gradient traverse tout le chemin θ → surrogates → spectre → U(t).
+
+        theta_norm : (B, theta_dim) — déjà normalisé
+        Retourne U_pred (B, Nt, N, N) en valeurs physiques.
+        """
+        B  = theta_norm.shape[0]
+        NN = self.N * self.N
+
+        # Forward tous les surrogates, empilé avec torch.stack (pas d'in-place)
+        preds  = [s(theta_norm) for s in self.surrogates]   # N_half × (B, 2, N, N)
+        M_half = torch.stack(
+            [torch.complex(p[:, 0].reshape(B, NN).float(),
+                           p[:, 1].reshape(B, NN).float()) for p in preds],
+            dim=2,
+        )  # (B, N*N, N_half) complex64 — gradient OK via torch.stack
+
+        # Dénormalisation vectorisée
+        tm_re = self.target_mean[:, 0, 0, 0].view(1, 1, -1)   # (1, 1, N_half)
+        tm_im = self.target_mean[:, 1, 0, 0].view(1, 1, -1)
+        ts_re = self.target_std[:,  0, 0, 0].view(1, 1, -1)
+        ts_im = self.target_std[:,  1, 0, 0].view(1, 1, -1)
+        M_half = torch.complex(
+            M_half.real * ts_re + tm_re,
+            M_half.imag * ts_im + tm_im,
+        )
+
+        # Symétrie conjuguée → spectre complet (B, N*N, N_freq)
+        n_tail = self.N_freq - self.N_half
+        if n_tail > 0:
+            tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
+            M_full = torch.cat([M_half, tail], dim=2)
+        else:
+            M_full = M_half
+
+        # Inverse Laplace différentiable
+        Nt    = self.N_freq
+        t     = torch.arange(Nt, dtype=torch.float32, device=M_full.device) * dt
+        w     = torch.ones(Nt,  dtype=torch.float32, device=M_full.device)
+        if rule == 'trap':
+            w[0] = 0.5; w[-1] = 0.5
+        denom = dt * w * torch.exp(torch.tensor(-gamma, device=M_full.device) * t)  # (Nt,)
+
+        a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)       # (B, N*N, Nt) complex
+        U_pred = a_rec.real / denom                           # (B, N*N, Nt)
+        return U_pred.permute(0, 2, 1).reshape(B, Nt, self.N, self.N)
+
     def _generate(self, theta_norm: torch.Tensor,
                   dt: float = 1.0, gamma: float = 0.0,
                   rule: str = 'trap') -> torch.Tensor:
