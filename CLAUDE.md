@@ -94,7 +94,7 @@ Objectif : émuler des champs de concentration CH4 transitoires `U(t)` en foncti
 
 ## Modèles
 
-Les deux surrogates héritent de `BaseDecoder` et exposent la même interface :
+Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 - `forward(theta_norm)` → représentation intermédiaire normalisée
 - `generate(theta_norm, ...)` → `U_pred (B, Nt, N, N)` en valeurs physiques
 
@@ -109,6 +109,16 @@ Les deux surrogates héritent de `BaseDecoder` et exposent la même interface :
 - `SVDSurrogate(nr, Nt, nf_eff, theta_dim)` — MLP, prédit les coefficients G normalisés `(B, nf_eff)`
   - `_generate(theta_norm)` → `U_pred (B, Nt, Hsub, Wsub)` (dénorm G + reconstruction SVD)
   - `F`, `P`, `alph`, `G_mean`, `G_std` stockés comme buffers (remplis via `set_bases()` avant sauvegarde)
+
+**`models/laplace_ae_surrogate.py`** (Pipeline 3) :
+- `SinusoidalFreqEncoding(L, hidden_dim, out_dim)` — positional encoding sinusoïdal (style NeRF) pour freq_ratio ∈ [0, 1], utilisé pour le conditionnement FiLM.
+- `LaplaceEncoder(N, latent_dim, freq_L)` — Conv2d U→z (3 downsampling), conditionné sur freq_ratio via FiLM.
+- `LaplaceDecoder(N, latent_dim, freq_L)` — ConvTranspose2d z→Û (3 upsampling + raffinement séparé Re/Im), conditionné sur freq_ratio via FiLM. `base = N // 8`.
+- `LaplaceAE(N, latent_dim, beta, freq_L)` — autoencoder déterministe (Encoder + Decoder) + ridge loss (L2 sur les sorties). Conditionné sur freq_ratio.
+- `LaplaceLatentSurrogate(latent_dim, theta_dim, freq_ratio)` — MLP θ→z (`proj` : 4 couches Linear + LayerNorm). Utilise un `shared_decoder` injecté par référence (non ré-enregistré comme sous-module). Appeler `set_decoder(decoder)` avant `forward()`.
+- `LaplaceLatentModel(N_freq, N_half, N, theta_dim, latent_dim, freq_L)` — hérite de `LaplaceModel`. Contient N_half `LaplaceLatentSurrogate` + un `shared_decoder` (LaplaceDecoder) gelé partagé.
+  - `set_ae_decoder(ae)` — charge les poids du décodeur AE dans `shared_decoder`
+  - `load_state_dict(...)` — ré-injecte le décodeur dans tous les surrogates après chargement
 
 ## Pipeline 1 — SVD Tucker + surrogate
 
@@ -137,7 +147,7 @@ Les deux surrogates héritent de `BaseDecoder` et exposent la même interface :
 **Fichiers clés :**
 - `utils/laplace.py` — `laplace_forward` et `laplace_inverse`
 - `transient/train_laplace.py` — trois fonctions :
-  - `train_one(k, s_k, ...)` → entraîne un `LaplaceSurrogate` pour la fréquence k, sauvegarde dans `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`
+  - `train_one(k, s_k, ...)` → entraîne un `LaplaceSurrogate` (ou `LaplaceLatentSurrogate` si `vae` fourni) pour la fréquence k, sauvegarde dans `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`
   - `train_all(dataset, train_idx, val_idx, test_idx, ...)` → boucle sur toutes les fréquences, puis appelle `assemble_model`
   - `assemble_model(dataset, ckpt_dir, test_idx, save_dir)` → charge les N checkpoints individuels, assemble un `LaplaceModel` unique, sauvegarde dans `save_dir/LaplaceModel.pt`
 
@@ -151,10 +161,43 @@ Les deux surrogates héritent de `BaseDecoder` et exposent la même interface :
 .conda/bin/python transient/train_laplace.py
 ```
 
+## Pipeline 3 — AE latent dans l'espace de Laplace (3 étapes)
+
+**Principe :** entraîner d'abord un autoencoder `LaplaceAE` sur tous les champs Laplace (conditionné sur la fréquence via FiLM), puis apprendre θ → z (espace latent) pour chaque fréquence avec le décodeur gelé, et enfin finetuner end-to-end.
+
+**Étape 1 — Entraînement de l'AE** (`transient/train_ae_laplace.py`) :
+- Dataset aplati `(simulation, fréquence)` : chaque paire est un échantillon.
+- `_LaplaceFlatDataset` : ordre sim-first, `reshuffle()` à chaque epoch pour mélanger les sims.
+- Sauvegarde `checkpoints/LaplaceAE_best.pt` avec `model_state`, `N`, `latent_dim`, `val_loss`.
+
+**Étape 2 — Entraînement des surrogates θ→z** (`transient/train_laplace.py` avec `vae` fourni) :
+- Utilise `train_one(..., vae=ae)` : crée un `LaplaceLatentSurrogate`, injecte le décodeur gelé, entraîne seulement `proj` (MLP θ→z).
+- Sauvegarde `checkpoints/laplace_latent/LatentSurrogate_freq{k:03d}.pt` par fréquence.
+- `assemble_model(...)` assemble l'ensemble en `LaplaceLatentModel`, sauvegarde `checkpoints/LaplaceLatentModel.pt`.
+
+**Étape 3 — Finetune end-to-end** (`transient/finetune_decoder_laplace.py`) :
+- Charge `LaplaceLatentModel.pt`, dégèle le `shared_decoder`.
+- `_FinetuneDataset` : ordre freq-first → 1 seule fréquence par batch → forward batché rapide (1 proj + 1 decoder call).
+- LR différentiel : `lr_surrogate > lr_decoder` (typiquement 5e-5 / 1e-5).
+- Log wandb par fréquence (`val_freq/loss_k`) toutes les 5 epochs.
+- Sauvegarde `checkpoints/LaplaceLatentModel_finetuned.pt` (avec flag `finetuned=True`).
+
+**Checkpoints :**
+- `checkpoints/LaplaceAE_best.pt` — autoencoder Laplace entraîné
+- `checkpoints/laplace_latent/LatentSurrogate_freq{k:03d}.pt` — surrogate par fréquence
+- `checkpoints/LaplaceLatentModel.pt` — modèle assemblé (avant finetune)
+- `checkpoints/LaplaceLatentModel_finetuned.pt` — modèle finetuné end-to-end
+
+```bash
+.conda/bin/python transient/train_ae_laplace.py
+# puis modifier train_laplace.py pour utiliser le mode LaplaceLatentSurrogate (vae fourni)
+.conda/bin/python transient/finetune_decoder_laplace.py
+```
+
 ## Inférence transitoire
 
 `transient/main.py` miroir de `stationary/main.py` :
-- `load_model(ckpt_path, device)` — charge `LaplaceModel` ou `SVDSurrogate` depuis un fichier `.pt`
+- `load_model(ckpt_path, device)` — charge `LaplaceModel`, `LaplaceLatentModel` ou `SVDSurrogate` depuis un fichier `.pt` (détection automatique via `model_type`)
 - `run_inference(theta_raw, model, ckpt, device, dt, gamma, rule)` — normalise θ depuis le checkpoint, appelle `model.generate(theta_norm, ...)`, retourne `U_pred (B, Nt, N, N)`
 - `predict(theta_raw, ckpt_path, ...)` — combine les deux
 - `evaluate(U, theta, ckpt_path, ...)` — métriques L2rel (en %), histogramme et animations GIFs dans `plots/`
