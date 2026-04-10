@@ -36,18 +36,18 @@ class _LaplaceFlatDataset(_Dataset):
     Cela rend les accès memmap quasi-séquentiels (une sim = un bloc contigu).
     Appeler reshuffle() au début de chaque epoch pour mélanger l'ordre des sims.
     """
-    def __init__(self, U_laplace, target_mean, target_std, indices, Nt_half):
+    def __init__(self, U_laplace, target_mean, target_std, indices, Nt_half, k_max=None):
         self.U_laplace   = U_laplace
-        self.target_mean = target_mean   # (Nt_half, 2, 1, 1)
+        self.target_mean = target_mean   # (Nt_half, 2, N, N)
         self.target_std  = target_std
         self._indices    = [int(i) for i in indices]
-        self._Nt_half    = Nt_half
-        self._freq_ratio = [k / max(Nt_half - 1, 1) for k in range(Nt_half)]
+        self._n_freqs    = (min(k_max, Nt_half - 1) + 1) if k_max is not None else Nt_half
+        self._freq_ratio = [k / max(Nt_half - 1, 1) for k in range(self._n_freqs)]
         self.pairs       = self._make_pairs()
 
     def _make_pairs(self):
         """sim-first : (sim0, k0), (sim0, k1), …, (sim1, k0), …"""
-        return [(i, k) for i in self._indices for k in range(self._Nt_half)]
+        return [(i, k) for i in self._indices for k in range(self._n_freqs)]
 
     def reshuffle(self):
         """Mélange l'ordre des sims et reconstruit pairs. Appeler avant chaque epoch."""
@@ -80,9 +80,10 @@ def train_ae(
     ckpt_dir,
     project,
     freq_L,
+    k_max     = None,
 ):
     """
-    Entraîne LaplaceAE sur TOUS les champs Laplace (toutes fréquences confondues).
+    Entraîne LaplaceAE sur les champs Laplace pour k <= k_max (toutes si k_max=None).
     Chaque paire (simulation n, fréquence k) est traitée comme un échantillon.
     """
     N         = dataset.N
@@ -91,9 +92,9 @@ def train_ae(
     os.makedirs(ckpt_dir, exist_ok=True)
 
     train_ds = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
-                                   train_idx, Nt_half)
+                                   train_idx, Nt_half, k_max=k_max)
     val_ds   = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
-                                   val_idx,   Nt_half)
+                                   val_idx,   Nt_half, k_max=k_max)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
                               num_workers=8, pin_memory=True, persistent_workers=True)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
@@ -113,7 +114,7 @@ def train_ae(
     wandb.init(project=project, name='LaplaceAE', config=dict(
         N=N, latent_dim=latent_dim, beta=beta, freq_L=freq_L,
         epochs=epochs, batch_size=batch_size, lr=lr,
-        n_samples_train=len(train_ds),
+        n_samples_train=len(train_ds), k_max=k_max,
         n_params=n_params, device=str(device),
     ))
     wandb.watch(model, log='gradients', log_freq=50)
@@ -279,12 +280,13 @@ def main(
     epochs      = 100,
     batch_size  = 256,
     lr          = 5e-4,
-    beta        = 1e-3,      # ridge 
+    beta        = 1e-3,
     patience    = 30,
-    freq_L      = 8,         
+    freq_L      = 8,
     project     = 'convdiff',
     interp_size = 128,
     dt          = 1.0,
+    k_max       = 20,
 ):
 
     dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
@@ -311,7 +313,7 @@ def main(
                   latent_dim=latent_dim,
                   epochs=epochs, batch_size=batch_size,
                   lr=lr, beta=beta, patience=patience,
-                  freq_L=freq_L,
+                  freq_L=freq_L, k_max=k_max,
                   ckpt_dir=ckpt_dir, project=project)
 
 

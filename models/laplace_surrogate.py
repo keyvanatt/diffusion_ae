@@ -91,7 +91,8 @@ class LaplaceModel(BaseDecoder):
     La normalisation est gérée en dehors du modèle (dans main.py / checkpoint).
     """
 
-    def __init__(self, N_freq: int, N_half: int, N: int, theta_dim: int = 4):
+    def __init__(self, N_freq: int, N_half: int, N: int, theta_dim: int = 4,
+                 k_max: int | None = None):
         super().__init__()
         self.surrogates = nn.ModuleList([
             LaplaceSurrogate(N, theta_dim, freq_ratio=k / max(N_half - 1, 1))
@@ -101,18 +102,21 @@ class LaplaceModel(BaseDecoder):
         self.N_half    = N_half
         self.N         = N
         self.theta_dim = theta_dim
+        # Fréquences k > k_max → prédiction = moyenne (0 normalisé → target_mean après dénorm)
+        self.k_max     = k_max
 
         # Stats de dénormalisation target — remplies via set_normalization()
-        self.register_buffer('target_mean', torch.zeros(N_half, 2, 1, 1))
-        self.register_buffer('target_std',  torch.ones(N_half,  2, 1, 1))
+        self.register_buffer('target_mean', torch.zeros(N_half, 2, N, N))
+        self.register_buffer('target_std',  torch.ones(N_half,  2, N, N))
 
     def _forward_half(self, theta_norm: torch.Tensor, k_max: int | None = None) -> torch.Tensor:
         """(B, N*N, N_half) complexe, valeurs normalisées par fréquence.
-        Si k_max est donné, seules les fréquences k <= k_max sont calculées, le reste vaut 0."""
+        Les fréquences au-delà de k_max (ou self.k_max) restent à 0 → moyenne après dénorm."""
         B = theta_norm.shape[0]
         M_half = torch.zeros((B, self.N * self.N, self.N_half),
                               dtype=torch.complex64, device=theta_norm.device)
-        n_active = min(k_max + 1, self.N_half) if k_max is not None else self.N_half
+        limit    = k_max if k_max is not None else self.k_max
+        n_active = min(limit + 1, self.N_half) if limit is not None else self.N_half
         for k in range(n_active):
             pred = self.surrogates[k](theta_norm)                      # (B, 2, N, N)
             M_half[:, :, k] = (pred[:, 0] + 1j * pred[:, 1]).reshape(B, self.N * self.N)
@@ -141,6 +145,21 @@ class LaplaceModel(BaseDecoder):
             "L'entraînement se fait par fréquence via LaplaceSurrogate.loss()."
         )
 
+    def _forward_half_diff(self, theta_norm: torch.Tensor, n_active: int) -> torch.Tensor:
+        """
+        Calcule le demi-spectre normalisé différentiable pour les n_active premières fréquences.
+        Retourne M_active : (B, N*N, n_active) complex64.
+        Surchargé dans LaplaceLatentModel pour utiliser un décodeur partagé batché.
+        """
+        B  = theta_norm.shape[0]
+        NN = self.N * self.N
+        preds = [self.surrogates[k](theta_norm) for k in range(n_active)]  # n_active × (B, 2, N, N)
+        return torch.stack(
+            [torch.complex(p[:, 0].reshape(B, NN).float(),
+                           p[:, 1].reshape(B, NN).float()) for p in preds],
+            dim=2,
+        )  # (B, N*N, n_active) complex64
+
     def _generate_diff(self, theta_norm: torch.Tensor,
                        dt: float = 1.0, gamma: float = 0.0,
                        rule: str = 'trap', k_max: int | None = None) -> torch.Tensor:
@@ -154,14 +173,10 @@ class LaplaceModel(BaseDecoder):
         B  = theta_norm.shape[0]
         NN = self.N * self.N
 
-        # Forward tous les surrogates, empilé avec torch.stack (pas d'in-place)
-        n_active = min(k_max + 1, self.N_half) if k_max is not None else self.N_half
-        preds  = [self.surrogates[k](theta_norm) for k in range(n_active)]   # n_active × (B, 2, N, N)
-        M_active = torch.stack(
-            [torch.complex(p[:, 0].reshape(B, NN).float(),
-                           p[:, 1].reshape(B, NN).float()) for p in preds],
-            dim=2,
-        )  # (B, N*N, n_active) complex64
+        limit    = k_max if k_max is not None else self.k_max
+        n_active = min(limit + 1, self.N_half) if limit is not None else self.N_half
+        M_active = self._forward_half_diff(theta_norm, n_active)  # (B, N*N, n_active)
+
         if n_active < self.N_half:
             pad = torch.zeros(B, NN, self.N_half - n_active,
                               dtype=torch.complex64, device=theta_norm.device)
@@ -169,11 +184,14 @@ class LaplaceModel(BaseDecoder):
         else:
             M_half = M_active
 
-        # Dénormalisation vectorisée
-        tm_re = self.target_mean[:, 0, 0, 0].view(1, 1, -1)   # (1, 1, N_half)
-        tm_im = self.target_mean[:, 1, 0, 0].view(1, 1, -1)
-        ts_re = self.target_std[:,  0, 0, 0].view(1, 1, -1)
-        ts_im = self.target_std[:,  1, 0, 0].view(1, 1, -1)
+        # Dénormalisation vectorisée — target_mean/std : (N_half, 2, N, N)
+        # → (1, N*N, N_half) pour broadcaster avec M_half (B, N*N, N_half)
+        def _denorm_vec(buf_c):  # buf_c : (N_half, N, N)
+            return buf_c.reshape(self.N_half, NN).permute(1, 0).unsqueeze(0)  # (1, NN, N_half)
+        tm_re = _denorm_vec(self.target_mean[:, 0])
+        tm_im = _denorm_vec(self.target_mean[:, 1])
+        ts_re = _denorm_vec(self.target_std[:,  0])
+        ts_im = _denorm_vec(self.target_std[:,  1])
         M_half = torch.complex(
             M_half.real * ts_re + tm_re,
             M_half.imag * ts_im + tm_im,
@@ -210,12 +228,13 @@ class LaplaceModel(BaseDecoder):
         B = theta_norm.shape[0]
         M_half = self._forward_half(theta_norm, k_max=k_max)          # (B, N*N, N_half)
 
-        # Dénormalisation par fréquence
+        # Dénormalisation par fréquence — tm/ts : (2, N, N) → flatten en (N*N,)
+        NN = self.N * self.N
         for k in range(self.N_half):
-            tm = self.target_mean[k]                                   # (2, 1, 1)
+            tm = self.target_mean[k]  # (2, N, N)
             ts = self.target_std[k]
-            re = M_half[:, :, k].real * ts[0, 0, 0] + tm[0, 0, 0]
-            im = M_half[:, :, k].imag * ts[1, 0, 0] + tm[1, 0, 0]
+            re = M_half[:, :, k].real * ts[0].reshape(NN) + tm[0].reshape(NN)
+            im = M_half[:, :, k].imag * ts[1].reshape(NN) + tm[1].reshape(NN)
             M_half[:, :, k] = torch.complex(re, im)
 
         # Symétrie conjuguée → spectre complet

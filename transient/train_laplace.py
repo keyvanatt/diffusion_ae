@@ -237,9 +237,12 @@ def train_all(
     batch_size = 256,
     lr         = 1e-3,
     patience   = 15,
-    ckpt_dir   = 'checkpoints/laplace',
-    project    = 'convdiff',
-    ae         = None,
+    ckpt_dir    = 'checkpoints/laplace',
+    project     = 'convdiff',
+    ae          = None,
+    latent_mode = True,   # True → loss sur z (pré-calculés) ; False → loss sur U (décodeur gelé)
+    k_max       = None,   # fréquences k > k_max → pas d'entraînement, prédiction = moyenne
+    hidden_dim  = 256,
 ):
     """
     Entraîne un surrogate par fréquence de Laplace, séquentiellement.
@@ -248,12 +251,15 @@ def train_all(
     les codes z sont pré-calculés une fois, puis chaque surrogate apprend
     proj(theta) → z via MSE (sans décodeur pendant l'entraînement).
     La L2rel sur U est calculée séparément en validation via ae.decoder.
+
+    Si k_max est fourni, les fréquences k > k_max ne sont pas entraînées :
+    le modèle assemblé prédit la moyenne (target_mean[k]) pour ces fréquences.
     """
     Nt_half     = dataset.Nt_half
     N           = dataset.N
     Nt          = dataset.Nt
     theta_dim   = dataset.theta_dim
-    latent_mode = ae is not None
+    latent_mode = latent_mode and (ae is not None)
     device      = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     print(f"Device : {device}   ns={len(dataset)}  Nt={Nt} (Nt_half={Nt_half})  N={N}  theta_dim={theta_dim}")
@@ -262,7 +268,7 @@ def train_all(
     theta_n = (dataset.theta - dataset.theta_mean) / dataset.theta_std  # (ns, theta_dim)
 
     if latent_mode:
-        dummy    = LaplaceLatentSurrogate(latent_dim=ae.latent_dim, theta_dim=theta_dim)
+        dummy    = LaplaceLatentSurrogate(latent_dim=ae.latent_dim, theta_dim=theta_dim, hidden_dim=hidden_dim)
         run_name = f'LaplaceLatentSurrogate_Nt{Nt}'
     else:
         dummy    = LaplaceSurrogate(s=0j, N=N, theta_dim=theta_dim)
@@ -273,21 +279,25 @@ def train_all(
         Nt=Nt, Nt_half=Nt_half, N=N, ns=len(dataset), theta_dim=theta_dim,
         epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
         n_params_surrogate=n_params, use_ae=latent_mode,
+        hidden_dim=hidden_dim, k_max=k_max,
     ))
+
+    n_train_freqs = (min(k_max, Nt_half - 1) + 1) if k_max is not None else Nt_half
 
     Z: torch.Tensor | None = None
     if latent_mode:
         print("Pré-calcul des codes latents (encoder)…")
         Z = precompute_latents(
             ae, dataset.U_laplace, dataset.target_mean, dataset.target_std,
-            Nt_half, device, batch_size=batch_size,
+            n_train_freqs, device, batch_size=batch_size,
         )
         print(f"Z calculé : {tuple(Z.shape)}  ({Z.nbytes / 1e6:.0f} MB)")
 
     best_vals   = []
     global_step = 0
 
-    for k in tqdm(range(Nt_half), desc='Fréquences', position=0, leave=True):
+    for k in tqdm(range(n_train_freqs), desc='Fréquences', position=0, leave=True):
+
         s_k        = complex(dataset.s[k])
         freq_ratio = k / max(Nt_half - 1, 1)
 
@@ -344,11 +354,11 @@ def train_all(
     print(f"\nEntraînement terminé — val loss  mean={np.mean(best_vals):.3e}"
           f"  max={np.max(best_vals):.3e}  min={np.min(best_vals):.3e}")
 
-    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), ae=ae)
+    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), ae=ae, k_max=k_max, hidden_dim=hidden_dim)
     return best_vals
 
 
-def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', ae=None):
+def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', ae=None, k_max=None, hidden_dim=256):
     """
     Charge les checkpoints individuels et assemble LaplaceModel ou LaplaceLatentModel.
     Sauvegarde dans <save_dir>/LaplaceModel.pt ou LaplaceLatentModel.pt.
@@ -361,23 +371,26 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
 
     if ae is not None:
         model      = LaplaceLatentModel(N_freq=Nt, N_half=Nt_half, N=N,
-                                        theta_dim=theta_dim, latent_dim=ae.latent_dim)
+                                        theta_dim=theta_dim, latent_dim=ae.latent_dim, k_max=k_max, hidden_dim=hidden_dim)
         model.set_ae_decoder(ae)
         prefix     = 'LatentSurrogate'
         model_type = 'LaplaceLatentModel'
         out_name   = 'LaplaceLatentModel.pt'
         extra      = {'latent_dim': ae.latent_dim}
     else:
-        model      = LaplaceModel(N_freq=Nt, N_half=Nt_half, N=N, theta_dim=theta_dim)
+        model      = LaplaceModel(N_freq=Nt, N_half=Nt_half, N=N, theta_dim=theta_dim, k_max=k_max)
         prefix     = 'LaplaceSurrogate'
         model_type = 'LaplaceModel'
         out_name   = 'LaplaceModel.pt'
         extra      = {}
 
-    for k in range(Nt_half):
+    n_load = (min(k_max, Nt_half - 1) + 1) if k_max is not None else Nt_half
+    for k in range(n_load):
         path_k = os.path.join(ckpt_dir, f'{prefix}_freq{k:03d}.pt')
         ckpt_k = torch.load(path_k, map_location='cpu', weights_only=False)
         model.surrogates[k].load_state_dict(ckpt_k['model_state'])
+    if k_max is not None and k_max < Nt_half - 1:
+        print(f"  k_max={k_max} : fréquences {k_max+1}..{Nt_half-1} → prédiction = moyenne")
 
     model.set_normalization(dataset.target_mean, dataset.target_std)
 
@@ -395,6 +408,8 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
         'theta_mean':  dataset.theta_mean,
         'theta_std':   dataset.theta_std,
         'test_idx':    np.asarray(test_idx),
+        'k_max':      k_max,
+        'hidden_dim': hidden_dim,
         **extra,
     }, out_path)
     print(f"{model_type} assemblé → {out_path}")
@@ -406,11 +421,13 @@ if __name__ == '__main__':
     data_path  = os.path.join("dataset", "ch4_rotated.npy")
     ae_ckpt    = os.path.join("checkpoints", "LaplaceAE_best.pt")
     ckpt_dir   = os.path.join("checkpoints", "laplace_latent")
-    epochs, batch_size, lr, patience = 300, 256, 1e-3, 15
+    epochs, batch_size, lr, patience = 500, 256, 1e-3, 15
     gamma, rule, seed = 0.0, 'trap', 42
     interp_size = 128  # doit correspondre au N utilisé pour entraîner le AE
     dt          = 1.0
     latent_dim  = 64   # doit correspondre au latent_dim du AE
+    k_max       = 20  # None = toutes les fréquences 
+    hidden_dim  = 512
 
     ae_ckpt_data = torch.load(ae_ckpt, map_location='cpu', weights_only=False)
     ae = LaplaceAE(N=interp_size, latent_dim=latent_dim)
@@ -435,4 +452,4 @@ if __name__ == '__main__':
     os.makedirs(ckpt_dir, exist_ok=True)
     train_all(dataset, train_idx, val_idx, test_idx,
               epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
-              ckpt_dir=ckpt_dir, ae=ae)
+              ckpt_dir=ckpt_dir, ae=ae, latent_mode=False, k_max=k_max, hidden_dim=hidden_dim)

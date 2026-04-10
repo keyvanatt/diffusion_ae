@@ -241,20 +241,22 @@ class LaplaceLatentSurrogate(nn.Module):
     Le décodeur partagé reçoit freq_ratio à chaque appel forward.
     """
 
-    def __init__(self, latent_dim: int, theta_dim: int, freq_ratio: float = 0.0):
+    def __init__(self, latent_dim: int, theta_dim: int, freq_ratio: float = 0.0,
+                 hidden_dim: int = 256):
         super().__init__()
         self.freq_ratio = freq_ratio
+        mid = hidden_dim // 2
         self.proj = nn.Sequential(
-            nn.Linear(theta_dim, 256),
-            nn.LayerNorm(256),
+            nn.Linear(theta_dim, mid),
+            nn.LayerNorm(mid),
             nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.LayerNorm(256),
+            nn.Linear(mid, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.LayerNorm(256),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Linear(256, latent_dim),
+            nn.Linear(hidden_dim, latent_dim),
         )
         self._decoder: nn.Module | None = None  # référence non-enregistrée
 
@@ -283,13 +285,15 @@ class LaplaceLatentModel(LaplaceModel):
     """
 
     def __init__(self, N_freq: int, N_half: int, N: int,
-                 theta_dim: int = 4, latent_dim: int = 64, freq_L: int = 8):
+                 theta_dim: int = 4, latent_dim: int = 64, freq_L: int = 8,
+                 k_max: int | None = None, hidden_dim: int = 256):
         BaseDecoder.__init__(self)
         self.surrogates = nn.ModuleList([
             LaplaceLatentSurrogate(
                 latent_dim=latent_dim,
                 theta_dim=theta_dim,
                 freq_ratio=k / max(N_half - 1, 1),
+                hidden_dim=hidden_dim,
             )
             for k in range(N_half)
         ])
@@ -302,8 +306,11 @@ class LaplaceLatentModel(LaplaceModel):
         self.N          = N
         self.theta_dim  = theta_dim
         self.latent_dim = latent_dim
-        self.register_buffer('target_mean', torch.zeros(N_half, 2, 1, 1))
-        self.register_buffer('target_std',  torch.ones(N_half,  2, 1, 1))
+        # Fréquences k > k_max → prédiction = moyenne (0 normalisé → target_mean après dénorm)
+        self.k_max      = k_max
+        self.hidden_dim = hidden_dim
+        self.register_buffer('target_mean', torch.zeros(N_half, 2, N, N))
+        self.register_buffer('target_std',  torch.ones(N_half,  2, N, N))
 
     def _inject_decoder(self):
         for s in self.surrogates:
@@ -321,76 +328,31 @@ class LaplaceLatentModel(LaplaceModel):
         self._inject_decoder()
         return result
 
-    def _generate_diff(self, theta_norm: torch.Tensor,
-                        dt: float = 1.0, gamma: float = 0.0,
-                        rule: str = 'trap', k_max = None) -> torch.Tensor:
+    def _forward_half_diff(self, theta_norm: torch.Tensor, n_active: int) -> torch.Tensor:
         """
-        Inverse Laplace différentiable, optimisé pour LaplaceLatentModel :
-        toutes les projections θ→z sont calculées, puis UN SEUL appel
-        au shared_decoder batché (au lieu de N_half appels séquentiels).
-
-        theta_norm : (B, theta_dim) — déjà normalisé
-        Retourne U_pred (B, Nt, N, N) en valeurs physiques.
+        Override optimisé : toutes les projections θ→z en n_active appels MLP,
+        puis UN SEUL appel au shared_decoder batché.
+        Retourne M_active : (B, N*N, n_active) complex64.
         """
         B  = theta_norm.shape[0]
         NN = self.N * self.N
-        n_active = min(k_max + 1, self.N_half) if k_max is not None else self.N_half
 
-        # 1. Projections θ→z : n_active petits MLP
-        z_list = [self.surrogates[k].proj(theta_norm) for k in range(n_active)]
-        z_all  = torch.cat(z_list, dim=0)                          # (n_active*B, latent_dim)
+        z_all = torch.cat(
+            [self.surrogates[k].proj(theta_norm) for k in range(n_active)],  # type: ignore[operator]
+            dim=0,
+        )  # (n_active*B, latent_dim)
 
-        # 2. freq_ratios pour le mega-batch
         fr = torch.tensor(
             [self.surrogates[k].freq_ratio for k in range(n_active)],
             device=theta_norm.device, dtype=torch.float32,
-        ).repeat_interleave(B)                                      # (n_active*B,)
+        ).repeat_interleave(B)  # (n_active*B,)
 
-        # 3. Un seul appel décodeur batché
-        preds = self.shared_decoder(z_all.float(), fr)              # (n_active*B, 2, N, N)
-
-        # 4. Reshape → (B, NN, N_half) complexe (zéros pour k > k_max)
+        preds = self.shared_decoder(z_all.float(), fr)  # (n_active*B, 2, N, N)
         preds = preds.view(n_active, B, 2, self.N, self.N)
-        M_active = torch.complex(
+        return torch.complex(
             preds[:, :, 0].reshape(n_active, B, NN).permute(1, 2, 0).float(),
             preds[:, :, 1].reshape(n_active, B, NN).permute(1, 2, 0).float(),
         )  # (B, NN, n_active)
-        if n_active < self.N_half:
-            pad = torch.zeros(B, NN, self.N_half - n_active,
-                              dtype=torch.complex64, device=theta_norm.device)
-            M_half = torch.cat([M_active, pad], dim=2)
-        else:
-            M_half = M_active
-
-        # 5. Dénormalisation vectorisée
-        tm_re = self.target_mean[:, 0, 0, 0].view(1, 1, -1)
-        tm_im = self.target_mean[:, 1, 0, 0].view(1, 1, -1)
-        ts_re = self.target_std[:,  0, 0, 0].view(1, 1, -1)
-        ts_im = self.target_std[:,  1, 0, 0].view(1, 1, -1)
-        M_half = torch.complex(
-            M_half.real * ts_re + tm_re,
-            M_half.imag * ts_im + tm_im,
-        )
-
-        # 6. Symétrie conjuguée → spectre complet
-        n_tail = self.N_freq - self.N_half
-        if n_tail > 0:
-            tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
-            M_full = torch.cat([M_half, tail], dim=2)
-        else:
-            M_full = M_half
-
-        # 7. Inverse Laplace différentiable (torch.fft.ifft)
-        Nt    = self.N_freq
-        t     = torch.arange(Nt, dtype=torch.float32, device=M_full.device) * dt
-        w     = torch.ones(Nt,  dtype=torch.float32, device=M_full.device)
-        if rule == 'trap':
-            w[0] = 0.5; w[-1] = 0.5
-        denom = dt * w * torch.exp(-gamma * t)
-
-        a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)
-        U_pred = a_rec.real / denom
-        return U_pred.permute(0, 2, 1).reshape(B, Nt, self.N, self.N)
 
     def loss(self, *_, **__):
         raise NotImplementedError(

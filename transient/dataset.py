@@ -148,7 +148,7 @@ class TransientDataset(Dataset):
                 # Clé de cache : hash des indices + paramètres du dataset
                 idx_hash  = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
                 stem      = Path(self._data_path).stem
-                stats_path = self._cache_dir / f"{stem}_stats_N{self.N}_idx{idx_hash}.pt"
+                stats_path = self._cache_dir / f"{stem}_stats_N{self.N}_idx{idx_hash}_perpix.pt"
 
                 if stats_path.exists():
                     print(f"Cache stats Laplace trouvé : {stats_path}")
@@ -157,25 +157,23 @@ class TransientDataset(Dataset):
                     self.target_std  = saved['target_std']
                     return
 
-                # Mmap : calcul par fréquence pour éviter de tout charger (~800 MB/freq)
+                # Mmap : calcul par fréquence pour éviter de tout charger
                 means, stds = [], []
                 for k in tqdm(range(self.Nt_half), desc="Stats Laplace", leave=False):
                     chunk = torch.from_numpy(self.U_laplace[train_indices, k].copy())  # (n_train, 2, N, N)
-                    means.append(chunk.mean(dim=(0, 2, 3)))          # (2,)
-                    stds.append(chunk.std(dim=(0, 2, 3)) + 1e-8)
-                self.target_mean = torch.stack(means).unsqueeze(-1).unsqueeze(-1)  # (Nt_half, 2, 1, 1)
-                self.target_std  = torch.stack(stds).unsqueeze(-1).unsqueeze(-1)
+                    means.append(chunk.mean(dim=0))          # (2, N, N)
+                    stds.append(chunk.std(dim=0) + 1e-8)
+                self.target_mean = torch.stack(means)  # (Nt_half, 2, N, N)
+                self.target_std  = torch.stack(stds)
 
                 torch.save({'target_mean': self.target_mean,
                             'target_std':  self.target_std}, str(stats_path))
                 print(f"Cache stats Laplace sauvegardé : {stats_path}")
             else:
                 # Tensor en mémoire : calcul global direct
-                target_train = self.U_laplace[train_indices]
-                self.target_mean = (target_train.mean(dim=(0, 3, 4))
-                                    .unsqueeze(-1).unsqueeze(-1))
-                self.target_std  = (target_train.std(dim=(0, 3, 4))
-                                    .unsqueeze(-1).unsqueeze(-1) + 1e-8)
+                target_train = self.U_laplace[train_indices]  # (n_train, Nt_half, 2, N, N)
+                self.target_mean = target_train.mean(dim=0)        # (Nt_half, 2, N, N)
+                self.target_std  = target_train.std(dim=0) + 1e-8
 
     # ------------------------------------------------------------------
     # Dataset interface
