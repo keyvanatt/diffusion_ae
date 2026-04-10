@@ -106,13 +106,15 @@ class LaplaceModel(BaseDecoder):
         self.register_buffer('target_mean', torch.zeros(N_half, 2, 1, 1))
         self.register_buffer('target_std',  torch.ones(N_half,  2, 1, 1))
 
-    def _forward_half(self, theta_norm: torch.Tensor) -> torch.Tensor:
-        """(B, N*N, N_half) complexe, valeurs normalisées par fréquence."""
+    def _forward_half(self, theta_norm: torch.Tensor, k_max: int | None = None) -> torch.Tensor:
+        """(B, N*N, N_half) complexe, valeurs normalisées par fréquence.
+        Si k_max est donné, seules les fréquences k <= k_max sont calculées, le reste vaut 0."""
         B = theta_norm.shape[0]
         M_half = torch.zeros((B, self.N * self.N, self.N_half),
                               dtype=torch.complex64, device=theta_norm.device)
-        for k, surrogate in enumerate(self.surrogates):
-            pred = surrogate(theta_norm)                                # (B, 2, N, N)
+        n_active = min(k_max + 1, self.N_half) if k_max is not None else self.N_half
+        for k in range(n_active):
+            pred = self.surrogates[k](theta_norm)                      # (B, 2, N, N)
             M_half[:, :, k] = (pred[:, 0] + 1j * pred[:, 1]).reshape(B, self.N * self.N)
         return M_half
 
@@ -141,7 +143,7 @@ class LaplaceModel(BaseDecoder):
 
     def _generate_diff(self, theta_norm: torch.Tensor,
                        dt: float = 1.0, gamma: float = 0.0,
-                       rule: str = 'trap') -> torch.Tensor:
+                       rule: str = 'trap', k_max: int | None = None) -> torch.Tensor:
         """
         Inverse Laplace différentiable via torch.fft.ifft.
         Le gradient traverse tout le chemin θ → surrogates → spectre → U(t).
@@ -153,12 +155,19 @@ class LaplaceModel(BaseDecoder):
         NN = self.N * self.N
 
         # Forward tous les surrogates, empilé avec torch.stack (pas d'in-place)
-        preds  = [s(theta_norm) for s in self.surrogates]   # N_half × (B, 2, N, N)
-        M_half = torch.stack(
+        n_active = min(k_max + 1, self.N_half) if k_max is not None else self.N_half
+        preds  = [self.surrogates[k](theta_norm) for k in range(n_active)]   # n_active × (B, 2, N, N)
+        M_active = torch.stack(
             [torch.complex(p[:, 0].reshape(B, NN).float(),
                            p[:, 1].reshape(B, NN).float()) for p in preds],
             dim=2,
-        )  # (B, N*N, N_half) complex64 — gradient OK via torch.stack
+        )  # (B, N*N, n_active) complex64
+        if n_active < self.N_half:
+            pad = torch.zeros(B, NN, self.N_half - n_active,
+                              dtype=torch.complex64, device=theta_norm.device)
+            M_half = torch.cat([M_active, pad], dim=2)
+        else:
+            M_half = M_active
 
         # Dénormalisation vectorisée
         tm_re = self.target_mean[:, 0, 0, 0].view(1, 1, -1)   # (1, 1, N_half)
@@ -192,13 +201,14 @@ class LaplaceModel(BaseDecoder):
 
     def _generate(self, theta_norm: torch.Tensor,
                   dt: float = 1.0, gamma: float = 0.0,
-                  rule: str = 'trap') -> torch.Tensor:
+                  rule: str = 'trap', k_max: int | None = None) -> torch.Tensor:
         """
         theta_norm : (B, theta_dim) — déjà normalisé
+        k_max      : si donné, seules les fréquences k <= k_max sont calculées
         Retourne U_pred (B, Nt, N, N) en valeurs physiques.
         """
         B = theta_norm.shape[0]
-        M_half = self._forward_half(theta_norm)                        # (B, N*N, N_half)
+        M_half = self._forward_half(theta_norm, k_max=k_max)          # (B, N*N, N_half)
 
         # Dénormalisation par fréquence
         for k in range(self.N_half):

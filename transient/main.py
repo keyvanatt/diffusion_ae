@@ -71,7 +71,8 @@ def load_model(ckpt_path: str, device: torch.device):
 def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
                   dt: float | None = None,
                   gamma: float = 0.0,
-                  rule: str = 'trap') -> np.ndarray:
+                  rule: str = 'trap',
+                  k_max: int | None = None) -> np.ndarray:
     """
     Inférence avec un modèle déjà chargé.
 
@@ -87,10 +88,10 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
 
     model_type = ckpt.get('model_type', 'SVDSurrogate')
 
-    if model_type in ('LaplaceModel', 'LaplaceLatentModel'):
+    if model_type in ('LaplaceModel', 'LaplaceLatentModel', 'LaplaceSVDModel'):
         dt_eff = dt if dt is not None else float(ckpt.get('dt', 1.0))
         gamma  = float(ckpt.get('gamma', gamma))
-        U_pred = model.generate(theta_norm, dt=dt_eff, gamma=gamma, rule=rule)
+        U_pred = model.generate(theta_norm, dt=dt_eff, gamma=gamma, rule=rule, k_max=k_max)
         return U_pred.cpu().numpy()
 
     else:  # SVDSurrogate
@@ -100,7 +101,8 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
 
 def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
             device_str: str = 'auto', dt: float | None = None,
-            gamma: float = 0.0, rule: str = 'trap') -> np.ndarray:
+            gamma: float = 0.0, rule: str = 'trap',
+            k_max: int | None = None) -> np.ndarray:
     """
     Prédit U(t) pour un batch de theta.
 
@@ -118,7 +120,7 @@ def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
         device = torch.device(device_str)
 
     model, ckpt = load_model(ckpt_path, device)
-    return run_inference(theta_raw, model, ckpt, device, dt=dt, gamma=gamma, rule=rule)
+    return run_inference(theta_raw, model, ckpt, device, dt=dt, gamma=gamma, rule=rule, k_max=k_max)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +131,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
              dt: float | None = None, gamma: float = 0.0,
              rule: str = 'trap', step: int = 1,
              n_animate: int = 3, batch_size: int = 32,
-             device_str: str = 'auto'):
+             device_str: str = 'auto', k_max: int | None = None):
     """
     Évalue le surrogate sur le test set et produit des GIFs + histogramme.
 
@@ -173,7 +175,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
         # Prédiction
         U_pred_b = run_inference(
-            theta_arr[idx_batch], model, ckpt, device, dt=dt, gamma=gamma, rule=rule
+            theta_arr[idx_batch], model, ckpt, device, dt=dt, gamma=gamma, rule=rule, k_max=k_max
         )  # (B, Nt, H_pred, W_pred)
 
         # Vérité terrain — chargée sample par sample depuis le mmap
@@ -238,7 +240,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/LaplaceLatentModel.pt',
+    ckpt_path = 'checkpoints/LaplaceSVDModel.pt',
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
@@ -248,6 +250,7 @@ def main(
     out       = None,
     plot      = True,
     do_evaluation  = True,
+    k_max     = 20,
 ):
 
     if do_evaluation:
@@ -261,10 +264,10 @@ def main(
             U_data     = data['U']
             theta_data = data['theta'].astype(np.float32)
         evaluate(U_data, theta_data, ckpt_path,
-                 dt=dt, gamma=gamma, rule=rule, step=step)
+                 dt=dt, gamma=gamma, rule=rule, step=step, k_max=k_max)
         return
 
-    U_pred = predict(theta, ckpt_path, dt=dt, gamma=gamma, rule=rule)[0]  # (Nt, N, N)
+    U_pred = predict(theta, ckpt_path, dt=dt, gamma=gamma, rule=rule, k_max=k_max)[0]  # (Nt, N, N)
     print(f"Prédiction : shape={U_pred.shape}  min={U_pred.min():.4f}  max={U_pred.max():.4f}")
 
     if out:

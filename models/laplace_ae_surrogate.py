@@ -334,34 +334,33 @@ class LaplaceLatentModel(LaplaceModel):
         """
         B  = theta_norm.shape[0]
         NN = self.N * self.N
-            
-        # 1. Projections θ→z : N_half petits MLP (rapide, séquentiel OK)
-        z_list = [s.proj(theta_norm) for s in self.surrogates]
-        z_all  = torch.cat(z_list, dim=0)                          # (N_half*B, latent_dim)
+        n_active = min(k_max + 1, self.N_half) if k_max is not None else self.N_half
 
-        if k_max is not None:
-            mask = torch.arange(self.N_half, device=theta_norm.device) < k_max
-
-            # Appliquer le masque sur z_all pour ne garder que les fréquences jusqu'à k_max
-            z_all = z_all.view(self.N_half, B, -1)  # (N_half, B, latent_dim)
-            z_all = z_all[mask]                     # (k_max, B, latent_dim)
-            z_all = z_all.view(-1, self.latent_dim) # (k_max*B, latent_dim)
+        # 1. Projections θ→z : n_active petits MLP
+        z_list = [self.surrogates[k].proj(theta_norm) for k in range(n_active)]
+        z_all  = torch.cat(z_list, dim=0)                          # (n_active*B, latent_dim)
 
         # 2. freq_ratios pour le mega-batch
         fr = torch.tensor(
-            [s.freq_ratio for s in self.surrogates],
+            [self.surrogates[k].freq_ratio for k in range(n_active)],
             device=theta_norm.device, dtype=torch.float32,
-        ).repeat_interleave(B)                                      # (N_half*B,)
+        ).repeat_interleave(B)                                      # (n_active*B,)
 
         # 3. Un seul appel décodeur batché
-        preds = self.shared_decoder(z_all.float(), fr)              # (N_half*B, 2, N, N)
+        preds = self.shared_decoder(z_all.float(), fr)              # (n_active*B, 2, N, N)
 
-        # 4. Reshape → (B, NN, N_half) complexe
-        preds = preds.view(self.N_half, B, 2, self.N, self.N)
-        M_half = torch.complex(
-            preds[:, :, 0].reshape(self.N_half, B, NN).permute(1, 2, 0).float(),
-            preds[:, :, 1].reshape(self.N_half, B, NN).permute(1, 2, 0).float(),
-        )
+        # 4. Reshape → (B, NN, N_half) complexe (zéros pour k > k_max)
+        preds = preds.view(n_active, B, 2, self.N, self.N)
+        M_active = torch.complex(
+            preds[:, :, 0].reshape(n_active, B, NN).permute(1, 2, 0).float(),
+            preds[:, :, 1].reshape(n_active, B, NN).permute(1, 2, 0).float(),
+        )  # (B, NN, n_active)
+        if n_active < self.N_half:
+            pad = torch.zeros(B, NN, self.N_half - n_active,
+                              dtype=torch.complex64, device=theta_norm.device)
+            M_half = torch.cat([M_active, pad], dim=2)
+        else:
+            M_half = M_active
 
         # 5. Dénormalisation vectorisée
         tm_re = self.target_mean[:, 0, 0, 0].view(1, 1, -1)
