@@ -50,6 +50,17 @@ def load_model(ckpt_path: str, device: torch.device):
             latent_dim = ckpt['latent_dim'],
         ).to(device)
 
+    elif model_type == 'LaplaceSVDModel':
+        from models.laplace_svd_surrogate import LaplaceSVDModel
+        model = LaplaceSVDModel(
+            k_freq    = ckpt['k_freq'],
+            N_freq    = ckpt['N_freq'],
+            N_half    = ckpt['N_half'],
+            N         = ckpt['N'],
+            theta_dim = ckpt['theta_dim'],
+            k_svd     = ckpt['k_svd'],
+        ).to(device)
+
     elif model_type == 'SVDSurrogate':
         from models.svd_surrogate import SVDSurrogate
 
