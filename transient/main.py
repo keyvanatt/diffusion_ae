@@ -254,7 +254,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/LaplaceLatentModel.pt',
+    ckpt_path = 'checkpoints/LaplaceLatentModel_finetuned.pt',
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
