@@ -142,6 +142,7 @@ def finetune(
     model = LaplaceLatentModel(
         N_freq=ckpt['N_freq'], N_half=ckpt['N_half'], N=ckpt['N'],
         theta_dim=ckpt['theta_dim'], latent_dim=ckpt['latent_dim'],
+        hidden_dim=ckpt['hidden_dim'], k_max=ckpt.get('k_max'),
     )
     model.load_state_dict(ckpt['model_state'])
     model.to(device)
@@ -328,6 +329,8 @@ def finetune(
                 'N':           N,
                 'theta_dim':   theta_dim,
                 'latent_dim':  ckpt['latent_dim'],
+                'hidden_dim':  ckpt['hidden_dim'],
+                'k_max':       ckpt.get('k_max'),
                 'dt':          dt,
                 'gamma':       gamma,
                 'theta_mean':  dataset.theta_mean,

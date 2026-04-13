@@ -38,16 +38,19 @@ def load_model(ckpt_path: str, device: torch.device):
             N_half    = ckpt['N_half'],
             N         = ckpt['N'],
             theta_dim = ckpt['theta_dim'],
+            k_max     = ckpt.get('k_max'),
         ).to(device)
 
     elif model_type == 'LaplaceLatentModel':
         from models.laplace_ae_surrogate import LaplaceLatentModel
         model = LaplaceLatentModel(
-            N_freq    = ckpt['N_freq'],
-            N_half    = ckpt['N_half'],
-            N         = ckpt['N'],
-            theta_dim = ckpt['theta_dim'],
+            N_freq     = ckpt['N_freq'],
+            N_half     = ckpt['N_half'],
+            N          = ckpt['N'],
+            theta_dim  = ckpt['theta_dim'],
             latent_dim = ckpt['latent_dim'],
+            hidden_dim = ckpt['hidden_dim'],
+            k_max      = ckpt.get('k_max'),
         ).to(device)
 
     elif model_type == 'LaplaceSVDModel':
@@ -251,7 +254,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/LaplaceSVDModel.pt',
+    ckpt_path = 'checkpoints/LaplaceLatentModel.pt',
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,

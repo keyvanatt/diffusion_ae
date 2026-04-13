@@ -46,6 +46,7 @@ def train_one(
     freq_ratio   = 0.0,         # k / (Nt_half - 1), pour le conditionnement FiLM
     latent_mode  = False,       # True → targets sont des z pré-calculés, loss MSE en espace latent
     val_loader_u = None,        # loader (theta_n, u_norm) pour L2rel sur U en mode latent
+    hidden_dim   = 256,
 ):
     """
     Entraîne un LaplaceSurrogate (ou LaplaceLatentSurrogate si ae fourni) pour la fréquence k.
@@ -61,10 +62,10 @@ def train_one(
     if ae is not None:
         model = LaplaceLatentSurrogate(
             latent_dim=ae.latent_dim, theta_dim=theta_dim, freq_ratio=freq_ratio,
+            hidden_dim=hidden_dim,
         ).to(device)
-        if not latent_mode:
-            ae.decoder.to(device).requires_grad_(False)
-            model.set_decoder(ae.decoder)
+        ae.decoder.to(device).requires_grad_(False)
+        model.set_decoder(ae.decoder)
         params_to_train = model.proj.parameters()  # décodeur gelé
     else:
         model           = LaplaceSurrogate(s=s_k, N=N, theta_dim=theta_dim, freq_ratio=freq_ratio).to(device)
@@ -91,6 +92,7 @@ def train_one(
         position=1,
     )
     epoch = 0
+    latent_mode = ae is not None
     for epoch in epoch_bar:
         t0 = time.perf_counter()
 
@@ -98,15 +100,15 @@ def train_one(
         model.train()
         train_loss  = torch.zeros(1, device=device)
         train_l2rel = torch.zeros(1, device=device)
-        for th, u in train_loader:
-            th, u = th.to(device), u.to(device)
+        for th, target in train_loader:
+            th, target = th.to(device), target.to(device)
             with torch.cuda.amp.autocast(enabled=use_amp):
                 if latent_mode:
-                    u_hat = model.proj(th)  # type: ignore[operator]
-                    loss  = F.mse_loss(u_hat, u)
+                    target_hat = model.proj(th)  # type: ignore[operator]
+                    loss  = F.mse_loss(target_hat, target)
                 else:
-                    u_hat = model(th)
-                    loss  = model.loss(u_hat, u)
+                    target_hat = model(th)
+                    loss  = model.loss(target_hat, target)
             optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -114,8 +116,8 @@ def train_one(
             scaler.step(optimizer)
             scaler.update()
             train_loss  += loss.detach()
-            train_l2rel += ((u_hat.detach() - u).flatten(1).norm(dim=1)
-                            / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
+            train_l2rel += ((target_hat.detach() - target).flatten(1).norm(dim=1)
+                            / (target.flatten(1).norm(dim=1) + 1e-8)).mean()
         train_loss  = train_loss.item()  / len(train_loader)
         train_l2rel = train_l2rel.item() / len(train_loader)
 
@@ -124,24 +126,24 @@ def train_one(
         val_loss  = torch.zeros(1, device=device)
         val_l2rel = torch.zeros(1, device=device)
         with torch.no_grad():
-            for th, u in val_loader:
-                th, u = th.to(device), u.to(device)
+            for th, target in val_loader:
+                th, target = th.to(device), target.to(device)
                 with torch.cuda.amp.autocast(enabled=use_amp):
                     if latent_mode:
-                        u_hat    = model.proj(th)  # type: ignore[operator]
-                        loss_val = F.mse_loss(u_hat, u)
+                        target_hat    = model.proj(th)  # type: ignore[operator]
+                        loss_val = F.mse_loss(target_hat, target)
                     else:
-                        u_hat    = model(th)
-                        loss_val = model.loss(u_hat, u)
+                        target_hat    = model(th)
+                        loss_val = model.loss(target_hat, target)
                 val_loss  += loss_val
-                val_l2rel += ((u_hat - u).flatten(1).norm(dim=1)
-                              / (u.flatten(1).norm(dim=1) + 1e-8)).mean()
+                val_l2rel += ((target_hat - target).flatten(1).norm(dim=1)
+                              / (target.flatten(1).norm(dim=1) + 1e-8)).mean()
         val_loss  = val_loss.item()  / len(val_loader)
         val_l2rel = val_l2rel.item() / len(val_loader)
 
         # --- Val L2rel sur U (mode latent uniquement) ---
         val_l2rel_U = None
-        if latent_mode and val_loader_u is not None and ae is not None:
+        if latent_mode and ae is not None and val_loader_u is not None:
             decoder = ae.decoder.to(device)
             acc = torch.zeros(1, device=device)
             with torch.no_grad():
@@ -195,6 +197,7 @@ def train_one(
         'target_std':  target_std.numpy(),
         'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
         'freq_idx': k, 's_k_real': s_k.real, 's_k_imag': s_k.imag,
+        'hidden_dim': hidden_dim,
     }, ckpt_path)
 
     if wandb.run is not None:
@@ -240,7 +243,6 @@ def train_all(
     ckpt_dir    = 'checkpoints/laplace',
     project     = 'convdiff',
     ae          = None,
-    latent_mode = True,   # True → loss sur z (pré-calculés) ; False → loss sur U (décodeur gelé)
     k_max       = None,   # fréquences k > k_max → pas d'entraînement, prédiction = moyenne
     hidden_dim  = 256,
 ):
@@ -259,7 +261,7 @@ def train_all(
     N           = dataset.N
     Nt          = dataset.Nt
     theta_dim   = dataset.theta_dim
-    latent_mode = latent_mode and (ae is not None)
+    latent_mode = ae is not None
     device      = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     print(f"Device : {device}   ns={len(dataset)}  Nt={Nt} (Nt_half={Nt_half})  N={N}  theta_dim={theta_dim}")
@@ -337,8 +339,8 @@ def train_all(
             target_std   = dataset.target_std[k],
             N=N, Nt=Nt, epochs=epochs, lr=lr, patience=patience,
             theta_dim=theta_dim, device=device, ckpt_dir=ckpt_dir,
-            global_step=global_step, ae=ae, freq_ratio=freq_ratio,
-            latent_mode=latent_mode, val_loader_u=val_loader_u,
+            global_step=global_step, ae=ae, freq_ratio=freq_ratio, val_loader_u=val_loader_u,
+            hidden_dim=hidden_dim,
         )
         best_vals.append(best_val)
         global_step += n_epochs
@@ -350,6 +352,9 @@ def train_all(
         'summary/best_val_max' : float(np.max(best_vals)),
         'summary/best_val_min' : float(np.min(best_vals)),
     })
+    values = [[k, float(v)] for k, v in enumerate(best_vals)]
+    tab = wandb.Table(data=values, columns=['frequency_k', 'best_val_loss'])
+    wandb.log({'best_vals': wandb.plot.bar(tab, 'frequency_k', 'best_val_loss', title='Best Val Loss par Fréquence')})
     wandb.finish()
     print(f"\nEntraînement terminé — val loss  mean={np.mean(best_vals):.3e}"
           f"  max={np.max(best_vals):.3e}  min={np.min(best_vals):.3e}")
@@ -370,6 +375,9 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
     gamma     = float(dataset.s[0].real) if hasattr(dataset, 's') else 0.0
 
     if ae is not None:
+        # Lire hidden_dim depuis le checkpoint pour éviter les mismatches
+        _ckpt0 = torch.load(os.path.join(ckpt_dir, 'LatentSurrogate_freq000.pt'), map_location='cpu', weights_only=False)
+        hidden_dim = _ckpt0.get('hidden_dim', hidden_dim)
         model      = LaplaceLatentModel(N_freq=Nt, N_half=Nt_half, N=N,
                                         theta_dim=theta_dim, latent_dim=ae.latent_dim, k_max=k_max, hidden_dim=hidden_dim)
         model.set_ae_decoder(ae)
@@ -421,7 +429,7 @@ if __name__ == '__main__':
     data_path  = os.path.join("dataset", "ch4_rotated.npy")
     ae_ckpt    = os.path.join("checkpoints", "LaplaceAE_best.pt")
     ckpt_dir   = os.path.join("checkpoints", "laplace_latent")
-    epochs, batch_size, lr, patience = 500, 256, 1e-3, 15
+    epochs, batch_size, lr, patience = 1000, 512, 1e-3, 50
     gamma, rule, seed = 0.0, 'trap', 42
     interp_size = 128  # doit correspondre au N utilisé pour entraîner le AE
     dt          = 1.0
@@ -452,4 +460,4 @@ if __name__ == '__main__':
     os.makedirs(ckpt_dir, exist_ok=True)
     train_all(dataset, train_idx, val_idx, test_idx,
               epochs=epochs, batch_size=batch_size, lr=lr, patience=patience,
-              ckpt_dir=ckpt_dir, ae=ae, latent_mode=False, k_max=k_max, hidden_dim=hidden_dim)
+              ckpt_dir=ckpt_dir, ae=ae, k_max=k_max, hidden_dim=hidden_dim)
