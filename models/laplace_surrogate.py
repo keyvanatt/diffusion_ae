@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from models.base import BaseDecoder
-from tqdm import tqdm
 import numpy as np
 from utils.laplace import laplace_inverse
 
@@ -248,7 +247,7 @@ class LaplaceModel(BaseDecoder):
         # Transformée inverse de Laplace
         M_np   = M_full.cpu().numpy()                                  # (B, N*N, N_freq)
         U_pred = np.zeros((B, self.N_freq, self.N, self.N), dtype=np.float32)
-        for b in tqdm(range(B), desc="Inverse Laplace", leave=True):
+        for b in range(B):
             C_b, _ = laplace_inverse(M_np[b], dt, self.N_freq, rule=rule, gamma=gamma)
             U_pred[b] = C_b.reshape(self.N, self.N, self.N_freq).transpose(2, 0, 1).astype(np.float32)
 
