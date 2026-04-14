@@ -202,6 +202,28 @@ Training operates on the Cartesian product of all (simulation, frequency) pairs 
 \end{equation}
 where the first term is the reconstruction MSE and the second is an $L^2$ regularisation penalty on the output. To ensure diverse frequency coverage within each mini-batch, (simulation, frequency) pairs are reshuffled at the start of each epoch.
 
+\paragraph{Autoencoder performance evaluation.}
+The trained autoencoder achieves varying reconstruction accuracy across frequencies. Analysis over 64 test samples reveals the following error profile (Figure~\ref{fig:ae_freq_error}):
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.75\textwidth]{ae_study_frequency_error.png}
+    \caption{Autoencoder L2 relative reconstruction error per frequency, evaluated on 64 test samples. The AE exhibits increasing error at higher frequencies, reflecting the difficulty of capturing high-frequency oscillations in the latent code.}
+    \label{fig:ae_freq_error}
+\end{figure}
+
+The reconstruction error exhibits a systematic trend across the frequency spectrum:
+\begin{itemize}
+    \item \textbf{Low frequencies} ($k < 7$): mean error 7.41\%. These frequencies contain the dominant energy and are most accurately captured by the latent representation.
+    \item \textbf{Mid frequencies} ($7 \le k < 14$): mean error 10.16\%. A gradual degradation as frequency increases, requiring larger latent codes to represent finer spatial details.
+    \item \textbf{High frequencies} ($k \ge 14$): mean error 15.08\%. Highest reconstruction cost due to oscillatory fine structure. The peak error at $k=20$ (18.84\%) reflects the challenge of embedding high-frequency ripples in the fixed-size latent code.
+\end{itemize}
+
+Overall, the AE achieves a mean reconstruction error of 10.88\% (median: 9.95\%, std: 3.55\%) across all trained frequencies. This modest error baseline sets the stage for the parameter-to-latent surrogates: the surrogate will inherit any AE errors at each frequency, and subsequent fine-tuning and post-processing must overcome these irreducible limitations.
+
+\textbf{Choice of $k_{\max}$.}
+The monotone increase in AE error from 7.41\% at low frequencies to 15.08\% at high frequencies provides an empirical justification for limiting surrogate training to $k_{\max} = 20$ rather than all $N_{\text{half}} = 76$ frequencies. Beyond $k=20$, the autoencoder reconstruction quality degrades sharply; at these frequencies, any surrogate trained to predict the latent code will inherit substantial baseline errors and face a difficult learning problem. Rather than chasing diminishing returns on high-frequency prediction—where the AE is already making substantial errors—the strategy focuses computational effort on the lower frequencies where the representation is more reliable and the surrogate has clearer signal to learn from. The unmodelled high frequencies are implicitly replaced by the mean field upon inversion, which, while lossy, avoids training expensive surrogates on irreducibly noisy targets.
+
 \subsection{Surrogate and Fine-Tuning}
 
 \subsubsection{Per-Frequency Surrogate \texorpdfstring{$\vtheta \to z$}{theta to z}}
@@ -227,6 +249,9 @@ To further improve accuracy, the frozen decoder is unfrozen and the entire model
     \caption{Relative $L^2$ error distribution after end-to-end fine-tuning (mean: 10.19\%, median: 9.30\%). Fine-tuning reduces error by approximately 48\% compared to the frozen baseline.}
     \label{fig:laplacelatent_finetuned}
 \end{figure}
+
+\paragraph{Limitations: Laplace truncation and Gibbs effects.}
+Despite the substantial gains from fine-tuning, a fundamental limitation arises from the truncation of the Laplace spectrum. The surrogate predicts only the first $k_{\max} = 20$ frequencies out of the available $N_{\mathrm{half}} = 51$ frequencies (for $N_t = 150$ snapshots). Higher frequencies are set to zero during inversion, effectively replacing the truncated spectrum with the mean field. This spectral truncation introduces \emph{Gibbs phenomenon}---a well-known oscillatory artefact that appears near sharp transitions in fields reconstructed from truncated orthogonal expansions. The high-frequency details necessary to capture sharp concentration gradients or rapid transients are lost, creating residual ripples that the surrogate cannot overcome. This truncation error manifests as a prediction floor around 6--8\% median error, below which further improvements require either: (i) training on more frequencies, (ii) using a larger $k_{\max}$, or (iii) applying non-spectral surrogate approaches. The residual corrector, described next, partially alleviates this limitation by learning to suppress Gibbs oscillations frame by frame.
 
 
 
