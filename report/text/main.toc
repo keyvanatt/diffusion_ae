@@ -20,9 +20,8 @@
 \contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{7}{subsection.3.3}%
 \contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm {\theta }\to z$}{7}{subsubsection.3.3.1}%
 \contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{8}{subsubsection.3.3.2}%
-\contentsline {subsubsection}{\numberline {3.3.3}Results}{8}{subsubsection.3.3.3}%
 \contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{8}{subsection.3.4}%
-\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{8}{subsubsection.3.4.1}%
+\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{9}{subsubsection.3.4.1}%
 \contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{9}{subsubsection.3.4.2}%
 \contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{9}{subsubsection.3.4.3}%
 \contentsline {section}{\numberline {4}Conclusion}{10}{section.4}%

@@ -189,9 +189,12 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
         assert 'test_idx' in ckpt, "test_idx absent du checkpoint — relance l'entraînement."
         test_idx = ckpt['test_idx']
 
+    # Extraire le nom du checkpoint pour préfixer les fichiers
+    ckpt_name = Path(ckpt_path).stem
+
     theta_arr = np.asarray(theta, dtype=np.float32)   # theta est petit, OK
     n_test    = len(test_idx)
-    print(f"Test set : {n_test} simulations  |  backend : {model_type}")
+    print(f"Test set : {n_test} simulations  |  backend : {model_type}  |  checkpoint : {ckpt_name}")
 
     anim_pos       = set(np.random.choice(n_test, size=min(n_animate, n_test), replace=False))
     l2rel_list     = []
@@ -249,7 +252,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     plt.title(f'L2 Relative Error — {model_type}  (n={n_test})\n'
               f'mean={l2rel.mean()*100:.2f}%  std={l2rel.std()*100:.2f}%')
     plt.grid(True, alpha=0.3)
-    hist_path = os.path.join('plots', f'{model_type}_l2rel_hist.png')
+    hist_path = os.path.join('plots', f'{ckpt_name}_l2rel_hist.png')
     plt.savefig(hist_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"Histogramme -> {hist_path}")
@@ -257,7 +260,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
     for i, global_p in enumerate(sorted(saved_pred)):
         si        = int(test_idx[global_p])
         l2        = l2rel[global_p]
-        anim_path = os.path.join('plots', f'{model_type}_anim_{i}.gif')
+        anim_path = os.path.join('plots', f'{ckpt_name}_anim_{i}.gif')
         print(f"Animation {i+1}/{len(saved_pred)} — simulation #{si} (L2rel={l2*100:.1f}%)...")
         animate_comparaison(
             saved_true[global_p], saved_pred[global_p],

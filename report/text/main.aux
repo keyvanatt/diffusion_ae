@@ -64,18 +64,22 @@
 \newlabel{eq:aeloss}{{7}{7}{Architecture and training}{equation.3.7}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{7}{subsection.3.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm  {\theta }\to z$}{7}{subsubsection.3.3.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Relative $L^2$ error distribution for the baseline latent surrogate (mean: 19.86\%, median: 18.50\%).\relax }}{8}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:latentmodel_baseline}{{4}{8}{Relative $L^2$ error distribution for the baseline latent surrogate (mean: 19.86\%, median: 18.50\%).\relax }{figure.caption.9}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{8}{subsubsection.3.3.2}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Relative $L^2$ error on the test set after end-to-end fine-tuning.\relax }}{8}{figure.caption.9}\protected@file@percent }
-\newlabel{fig:laplacelatent}{{4}{8}{Relative $L^2$ error on the test set after end-to-end fine-tuning.\relax }{figure.caption.9}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.3}Results}{8}{subsubsection.3.3.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Relative $L^2$ error distribution after end-to-end fine-tuning (mean: 10.19\%, median: 9.30\%). Fine-tuning reduces error by approximately 48\% compared to the frozen baseline.\relax }}{8}{figure.caption.10}\protected@file@percent }
+\newlabel{fig:laplacelatent_finetuned}{{5}{8}{Relative $L^2$ error distribution after end-to-end fine-tuning (mean: 10.19\%, median: 9.30\%). Fine-tuning reduces error by approximately 48\% compared to the frozen baseline.\relax }{figure.caption.10}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{8}{subsection.3.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{8}{subsubsection.3.4.1}\protected@file@percent }
-\newlabel{eq:correction}{{8}{8}{Residual Correction}{equation.3.8}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{9}{subsubsection.3.4.1}\protected@file@percent }
+\newlabel{eq:correction}{{8}{9}{Residual Correction}{equation.3.8}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{9}{subsubsection.3.4.2}\protected@file@percent }
 \newlabel{eq:corrloss}{{9}{9}{Training the Corrector}{equation.3.9}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{9}{subsubsection.3.4.3}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Relative $L^2$ error distribution after residual correction.\relax }}{9}{figure.caption.10}\protected@file@percent }
-\newlabel{fig:correction}{{5}{9}{Relative $L^2$ error distribution after residual correction.\relax }{figure.caption.10}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Relative $L^2$ error distribution after residual UNet correction (mean: 4.80\%, median: 4.46\%). The correction reduces error by approximately 76\% compared to the baseline latent surrogate.\relax }}{10}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:correction_unet}{{6}{10}{Relative $L^2$ error distribution after residual UNet correction (mean: 4.80\%, median: 4.46\%). The correction reduces error by approximately 76\% compared to the baseline latent surrogate.\relax }{figure.caption.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Quantitative comparison of transient surrogates on the test set. The baseline latent surrogate achieves 19.86\% mean error. End-to-end fine-tuning reduces this to 10.19\% (48\% improvement), while the UNet residual corrector further reduces error to 4.80\% (76\% improvement over baseline).\relax }}{10}{table.caption.13}\protected@file@percent }
+\newlabel{tab:comparison}{{1}{10}{Quantitative comparison of transient surrogates on the test set. The baseline latent surrogate achieves 19.86\% mean error. End-to-end fine-tuning reduces this to 10.19\% (48\% improvement), while the UNet residual corrector further reduces error to 4.80\% (76\% improvement over baseline).\relax }{table.caption.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Conclusion}{10}{section.4}\protected@file@percent }
 \bibcite{ammar2024hybrid}{1}
 \bibcite{fan2024}{2}
 \bibcite{guo2022}{3}
@@ -83,7 +87,6 @@
 \bibcite{meng2021survey}{5}
 \bibcite{perez2018film}{6}
 \bibcite{quarteroni2025}{7}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Comparison of transient surrogates on the test set.\relax }}{10}{table.caption.11}\protected@file@percent }
-\newlabel{tab:comparison}{{1}{10}{Comparison of transient surrogates on the test set.\relax }{table.caption.11}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}Conclusion}{10}{section.4}\protected@file@percent }
-\gdef \@abspage@last{10}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Violin plot comparison of prediction error distributions across all three models. The plot shows the median (horizontal line), quartiles (box), and full distribution (violin shape) for each method.\relax }}{11}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:violin_benchmark}{{7}{11}{Violin plot comparison of prediction error distributions across all three models. The plot shows the median (horizontal line), quartiles (box), and full distribution (violin shape) for each method.\relax }{figure.caption.12}{}}
+\gdef \@abspage@last{11}

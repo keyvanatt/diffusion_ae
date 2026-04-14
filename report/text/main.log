@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.3.21)  14 APR 2026 10:26
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.3.21)  14 APR 2026 10:58
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -420,7 +420,14 @@ LaTeX Info: Redefining \bm on input line 209.
 File: l3backend-pdftex.def 2021-03-18 L3 backend support: PDF output (pdfTeX)
 \l__color_backend_stack_int=\count291
 \l__pdf_internal_box=\box50
-) (./main.aux)
+) (./main.aux
+
+LaTeX Warning: Label `eq:correction' multiply defined.
+
+
+LaTeX Warning: Label `eq:corrloss' multiply defined.
+
+)
 \openout1 = `main.aux'.
 
 LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 31.
@@ -513,7 +520,7 @@ LaTeX Info: Redefining \nameref on input line 31.
 
 Package caption Info: Begin \AtBeginDocument code.
 Package caption Info: End \AtBeginDocument code.
-<polytechnique-armes.pdf, id=92, 195.20929pt x 257.65259pt>
+<polytechnique-armes.pdf, id=100, 195.20929pt x 257.65259pt>
 File: polytechnique-armes.pdf Graphic file (type pdf)
 <use polytechnique-armes.pdf>
 Package pdftex.def Info: polytechnique-armes.pdf  used on input line 33.
@@ -523,7 +530,7 @@ LaTeX Font Info:    Trying to load font information for T1+lmss on input line 33
 File: t1lmss.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
 LaTeX Info: Redefining \\ on input line 33.
-<polytechnique-filetcourt.pdf, id=93, 28.40613pt x 2.1681pt>
+<polytechnique-filetcourt.pdf, id=101, 28.40613pt x 2.1681pt>
 File: polytechnique-filetcourt.pdf Graphic file (type pdf)
 <use polytechnique-filetcourt.pdf>
 Package pdftex.def Info: polytechnique-filetcourt.pdf  used on input line 33.
@@ -558,12 +565,12 @@ LaTeX Font Info:    Trying to load font information for U+msb on input line 33.
  (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
-<polytechnique-logohori.pdf, id=94, 625.50987pt x 227.64648pt>
+<polytechnique-logohori.pdf, id=102, 625.50987pt x 227.64648pt>
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 33.
 (pdftex.def)             Requested size: 158.68044pt x 57.74861pt.
-<logodescartes.png, id=95, 301.125pt x 95.35625pt>
+<logodescartes.png, id=103, 301.125pt x 95.35625pt>
 File: logodescartes.png Graphic file (type png)
 <use logodescartes.png>
 Package pdftex.def Info: logodescartes.png  used on input line 33.
@@ -577,7 +584,7 @@ Overfull \hbox (45.23792pt too wide) in paragraph at lines 33--33
 
 {/usr/share/texlive/texmf-dist/fonts/map/pdftex/updmap/pdftex.map} <./polytechnique-armes.pdf> <./polytechnique-filetcourt.pdf> <./polytechnique-logohori.pdf> <./logodescartes.png>]
 LaTeX Info: Redefining \\ on input line 33.
-<polytechnique-filetlongrouge.pdf, id=122, 124.21407pt x 2.1681pt>
+<polytechnique-filetlongrouge.pdf, id=130, 124.21407pt x 2.1681pt>
 File: polytechnique-filetlongrouge.pdf Graphic file (type pdf)
 <use polytechnique-filetlongrouge.pdf>
 Package pdftex.def Info: polytechnique-filetlongrouge.pdf  used on input line 33.
@@ -625,7 +632,7 @@ File: polytechnique-logohori.pdf Graphic file (type pdf)
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 66.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [3]
-<../../plots//dataset_preview.png, id=184, 867.24pt x 505.89pt>
+<../../plots//dataset_preview.png, id=194, 867.24pt x 505.89pt>
 File: ../../plots//dataset_preview.png Graphic file (type png)
 <use ../../plots//dataset_preview.png>
 Package pdftex.def Info: ../../plots//dataset_preview.png  used on input line 71.
@@ -667,14 +674,14 @@ File: polytechnique-filetcourt.pdf Graphic file (type pdf)
 <use polytechnique-filetcourt.pdf>
 Package pdftex.def Info: polytechnique-filetcourt.pdf  used on input line 119.
 (pdftex.def)             Requested size: 28.40604pt x 2.16808pt.
-<../../plots//svd_convergence.png, id=200, 578.16pt x 289.08pt>
+<../../plots//svd_convergence.png, id=210, 578.16pt x 289.08pt>
 File: ../../plots//svd_convergence.png Graphic file (type png)
 <use ../../plots//svd_convergence.png>
 Package pdftex.def Info: ../../plots//svd_convergence.png  used on input line 135.
 (pdftex.def)             Requested size: 232.17242pt x 116.08427pt.
 LaTeX Font Info:    External font `lmex10' loaded for size
 (Font)              <9> on input line 136.
-<../../plots//SVDSurrogate_l2rel_hist.png, id=201, 618.1494pt x 351.2322pt>
+<../../plots//SVDSurrogate_l2rel_hist.png, id=211, 618.1494pt x 351.2322pt>
 File: ../../plots//SVDSurrogate_l2rel_hist.png Graphic file (type png)
 <use ../../plots//SVDSurrogate_l2rel_hist.png>
 Package pdftex.def Info: ../../plots//SVDSurrogate_l2rel_hist.png  used on input line 141.
@@ -689,12 +696,12 @@ File: polytechnique-logohori.pdf Graphic file (type pdf)
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 150.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [5]
-<../../plots//LaplaceSVDModel_svd_error_ksvd100.png, id=210, 722.7pt x 289.08pt>
+<../../plots//LaplaceSVDModel_svd_error_ksvd100.png, id=220, 722.7pt x 289.08pt>
 File: ../../plots//LaplaceSVDModel_svd_error_ksvd100.png Graphic file (type png)
 <use ../../plots//LaplaceSVDModel_svd_error_ksvd100.png>
 Package pdftex.def Info: ../../plots//LaplaceSVDModel_svd_error_ksvd100.png  used on input line 160.
 (pdftex.def)             Requested size: 232.17242pt x 92.86919pt.
-<../../plots//LaplaceSVDModel_l2rel_hist.png, id=211, 624.4128pt x 351.2322pt>
+<../../plots//LaplaceSVDModel_l2rel_hist.png, id=221, 624.4128pt x 351.2322pt>
 File: ../../plots//LaplaceSVDModel_l2rel_hist.png Graphic file (type png)
 <use ../../plots//LaplaceSVDModel_l2rel_hist.png>
 Package pdftex.def Info: ../../plots//LaplaceSVDModel_l2rel_hist.png  used on input line 166.
@@ -713,6 +720,11 @@ File: polytechnique-filetcourt.pdf Graphic file (type pdf)
 <use polytechnique-filetcourt.pdf>
 Package pdftex.def Info: polytechnique-filetcourt.pdf  used on input line 205.
 (pdftex.def)             Requested size: 28.40604pt x 2.16808pt.
+<../../plots//laplacelatentmodel_l2rel_hist.png, id=238, 624.4128pt x 351.2322pt>
+File: ../../plots//laplacelatentmodel_l2rel_hist.png Graphic file (type png)
+<use ../../plots//laplacelatentmodel_l2rel_hist.png>
+Package pdftex.def Info: ../../plots//laplacelatentmodel_l2rel_hist.png  used on input line 215.
+(pdftex.def)             Requested size: 314.40001pt x 176.84831pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
 [][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
@@ -720,17 +732,17 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 213.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 220.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [7]
-<../../plots//LaplaceLatentModel_l2rel_hist.png, id=239, 624.4128pt x 351.2322pt>
-File: ../../plots//LaplaceLatentModel_l2rel_hist.png Graphic file (type png)
-<use ../../plots//LaplaceLatentModel_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//LaplaceLatentModel_l2rel_hist.png  used on input line 219.
-(pdftex.def)             Requested size: 266.03474pt x 149.64418pt.
+<../../plots//laplacelatentmodel_finetuned_l2rel_hist.png, id=250, 624.4128pt x 351.2322pt>
+File: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png Graphic file (type png)
+<use ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>
+Package pdftex.def Info: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png  used on input line 226.
+(pdftex.def)             Requested size: 314.40001pt x 176.84831pt.
 File: polytechnique-filetcourt.pdf Graphic file (type pdf)
 <use polytechnique-filetcourt.pdf>
-Package pdftex.def Info: polytechnique-filetcourt.pdf  used on input line 228.
+Package pdftex.def Info: polytechnique-filetcourt.pdf  used on input line 233.
 (pdftex.def)             Requested size: 28.40604pt x 2.16808pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -739,18 +751,33 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 241.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 238.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[8 <../../plots//LaplaceLatentModel_l2rel_hist.png>]
-<../../plots//CorrectionAE_l2rel_hist.png, id=247, 618.1494pt x 351.2322pt>
-File: ../../plots//CorrectionAE_l2rel_hist.png Graphic file (type png)
-<use ../../plots//CorrectionAE_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//CorrectionAE_l2rel_hist.png  used on input line 256.
-(pdftex.def)             Requested size: 483.69687pt x 274.8443pt.
-LaTeX Info: Redefining \\ on input line 281.
+[8 <../../plots//laplacelatentmodel_l2rel_hist.png> <../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>]
+<../../plots//correctionae_unet_l2rel_hist.png, id=260, 618.1494pt x 351.2322pt>
+File: ../../plots//correctionae_unet_l2rel_hist.png Graphic file (type png)
+<use ../../plots//correctionae_unet_l2rel_hist.png>
+Package pdftex.def Info: ../../plots//correctionae_unet_l2rel_hist.png  used on input line 263.
+(pdftex.def)             Requested size: 314.40001pt x 178.6437pt.
+<../../plots//benchmark_l2rel.png, id=261, 860.4948pt x 426.393pt>
+File: ../../plots//benchmark_l2rel.png Graphic file (type png)
+<use ../../plots//benchmark_l2rel.png>
+Package pdftex.def Info: ../../plots//benchmark_l2rel.png  used on input line 270.
+(pdftex.def)             Requested size: 362.77264pt x 179.76048pt.
+
+Underfull \hbox (badness 2310) has occurred while \output is active
+[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
+ []
+
+File: polytechnique-logohori.pdf Graphic file (type pdf)
+<use polytechnique-logohori.pdf>
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 296.
+(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
+[9]
+LaTeX Info: Redefining \\ on input line 302.
 File: polytechnique-filetlongrouge.pdf Graphic file (type pdf)
 <use polytechnique-filetlongrouge.pdf>
-Package pdftex.def Info: polytechnique-filetlongrouge.pdf  used on input line 281.
+Package pdftex.def Info: polytechnique-filetlongrouge.pdf  used on input line 302.
 (pdftex.def)             Requested size: 124.21375pt x 2.16808pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -759,15 +786,15 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 285.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 308.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[9 <../../plots//CorrectionAE_l2rel_hist.png>]
-LaTeX Info: Redefining \\ on input line 288.
+[10 <../../plots//correctionae_unet_l2rel_hist.png>]
+LaTeX Info: Redefining \\ on input line 309.
 File: polytechnique-filetlongrouge.pdf Graphic file (type pdf)
 <use polytechnique-filetlongrouge.pdf>
-Package pdftex.def Info: polytechnique-filetlongrouge.pdf  used on input line 288.
+Package pdftex.def Info: polytechnique-filetlongrouge.pdf  used on input line 309.
 (pdftex.def)             Requested size: 124.21375pt x 2.16808pt.
-LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 295.
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 316.
  (/usr/share/texlive/texmf-dist/tex/latex/lm/t1lmtt.fd
 File: t1lmtt.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
@@ -777,28 +804,42 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 339.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 360.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[10] (./main.aux)
+[11 <../../plots//benchmark_l2rel.png>] (./main.aux)
 
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
+LaTeX Warning: There were multiply-defined labels.
 
-Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 3CDCB2321CFD5D0D6BA64B1982111AA9;4062.
+
+Package rerunfilecheck Warning: File `main.out' has changed.
+(rerunfilecheck)                Rerun to get outlines right
+(rerunfilecheck)                or use package `bookmark'.
+
+Package rerunfilecheck Info: Checksums for `main.out':
+(rerunfilecheck)             Before: 2F8E2CF4C4B69DF72ED11AD5E7BA240A;4508
+(rerunfilecheck)             After:  37E74F7E4623B713CF5BC341D849308E;3959.
  ) 
 Here is how much of TeX's memory you used:
- 13253 strings out of 481008
- 196299 string characters out of 5909439
- 531415 words of memory out of 5000000
- 30117 multiletter control sequences out of 15000+600000
- 521747 words of font info for 113 fonts, out of 8000000 for 9000
+ 13277 strings out of 481008
+ 197085 string characters out of 5909439
+ 532303 words of memory out of 5000000
+ 30132 multiletter control sequences out of 15000+600000
+ 522112 words of font info for 114 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
  83i,12n,88p,1110b,550s stack positions out of 5000i,500n,10000p,200000b,80000s
-{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}</usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmri10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmssbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (10 pages, 1116186 bytes).
+pdfTeX warning (dest): name{subsubsection.3.5.3} has been referenced but does not exist, replaced by a fixed one
+
+pdfTeX warning (dest): name{subsubsection.3.5.2} has been referenced but does not exist, replaced by a fixed one
+
+pdfTeX warning (dest): name{subsubsection.3.5.1} has been referenced but does not exist, replaced by a fixed one
+
+pdfTeX warning (dest): name{subsection.3.5} has been referenced but does not exist, replaced by a fixed one
+
+{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}</usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmri10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmssbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmtt10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
+Output written on main.pdf (11 pages, 1269580 bytes).
 PDF statistics:
- 355 PDF objects out of 1000 (max. 8388607)
- 293 compressed objects within 3 object streams
- 60 named destinations out of 1000 (max. 500000)
- 237 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 381 PDF objects out of 1000 (max. 8388607)
+ 313 compressed objects within 4 object streams
+ 66 named destinations out of 1000 (max. 500000)
+ 263 words of extra memory for PDF output out of 10000 (max. 10000000)
 
