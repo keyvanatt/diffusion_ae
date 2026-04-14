@@ -194,10 +194,34 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 .conda/bin/python transient/finetune_decoder_laplace.py
 ```
 
+## Pipeline 4 — CorrectionAE (post-traitement frame-par-frame)
+
+**Principe :** corriger les artefacts oscillatoires du surrogate en appliquant un UNet résiduel frame-par-frame. Pré-calcul unique des paires (U_pred, U_true) sous forme de memmaps, puis entraînement du UNet sans appel au surrogate.
+
+**Fichiers clés :**
+- `models/correction_ae.py` :
+  - `CorrectionAE(N, base_ch)` — UNet résiduel (encodeur 3 niveaux + bottleneck + décodeur skip). `out_conv` zero-init → identité au démarrage. `forward()` normalise chaque frame per-sample avant le UNet et rescale le résidu en sortie (Option B). `loss(U_corr, U_true, U_pred)` porte sur le résidu normalisé par son écart-type (Option A) + terme gradient spatial.
+  - `CorrectedPipeline(surrogate, correction_ae)` — hérite de `LaplaceLatentModel`. Partage les modules du surrogate par référence (pas de duplication mémoire). Surcharge `_generate()` : appelle `super()._generate()` puis applique la correction par chunks de 64 frames.
+- `transient/train_correction_ae.py` :
+  - `precompute()` — génère des memmaps `(ns, kt, N, N) × 2` dans `cache_dir`. Libère le surrogate GPU (`del surrogate; torch.cuda.empty_cache()`) avant l'entraînement.
+  - `_FrameDataset` — lit directement depuis les memmaps, `num_workers=4`.
+  - `train()` — deux barres tqdm (epoch + batch), wandb avec images toutes les 5 epochs.
+
+**Hyperparamètres clés :** `kt=20` (frames par sim), `base_ch=16` (481K params), `lambda_grad=10.0`.
+
+**Loss :** MSE résidu normalisé + `lambda_grad` × MSE gradients spatiaux du résidu normalisé.
+
+**Checkpoint :**
+- `checkpoints/CorrectionAE_best.pt` — contient `model_state`, `model_type='CorrectionAE'`, `N`, `base_ch`, `surrogate_ckpt` (chemin vers le surrogate associé), `test_idx`.
+
+```bash
+.conda/bin/python transient/train_correction_ae.py
+```
+
 ## Inférence transitoire
 
 `transient/main.py` miroir de `stationary/main.py` :
-- `load_model(ckpt_path, device)` — charge `LaplaceModel`, `LaplaceLatentModel` ou `SVDSurrogate` depuis un fichier `.pt` (détection automatique via `model_type`)
+- `load_model(ckpt_path, device)` — charge `LaplaceModel`, `LaplaceLatentModel`, `SVDSurrogate` ou `CorrectionAE` depuis un fichier `.pt` (détection automatique via `model_type`). Pour `CorrectionAE` : charge le surrogate depuis `ckpt['surrogate_ckpt']`, construit un `CorrectedPipeline`, et remonte `theta_mean/std/dt/gamma` du surrogate dans le ckpt.
 - `run_inference(theta_raw, model, ckpt, device, dt, gamma, rule)` — normalise θ depuis le checkpoint, appelle `model.generate(theta_norm, ...)`, retourne `U_pred (B, Nt, N, N)`
 - `predict(theta_raw, ckpt_path, ...)` — combine les deux
 - `evaluate(U, theta, ckpt_path, ...)` — métriques L2rel (en %), histogramme et animations GIFs dans `plots/`

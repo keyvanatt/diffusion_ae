@@ -1,0 +1,33 @@
+\babel@toc {english}{}
+\contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {section}{\numberline {2}Preliminary Study: Stationary Dataset}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Problem Statement}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Dataset Generation}{3}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Two-Stage Architecture}{3}{subsection.2.3}%
+\contentsline {subsubsection}{\numberline {2.3.1}Stage 1 --- Variational Autoencoder}{4}{subsubsection.2.3.1}%
+\contentsline {subsubsection}{\numberline {2.3.2}Stage 2 --- Indirect Decoder $\bm {\theta }\to z \to U$}{4}{subsubsection.2.3.2}%
+\contentsline {subsection}{\numberline {2.4}Interactive Application}{4}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Results}{4}{subsection.2.5}%
+\contentsline {section}{\numberline {3}Transient CH4 Concentration Fields}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Dataset and Problem Formulation}{5}{subsection.3.1}%
+\contentsline {subsubsection}{\numberline {3.1.1}Dataset}{5}{subsubsection.3.1.1}%
+\contentsline {subsubsection}{\numberline {3.1.2}Temporal Representation via the Laplace Transform}{6}{subsubsection.3.1.2}%
+\contentsline {subsection}{\numberline {3.2}Latent Space Representation}{6}{subsection.3.2}%
+\contentsline {subsubsection}{\numberline {3.2.1}SVD-Based Approaches}{6}{subsubsection.3.2.1}%
+\contentsline {paragraph}{Tucker POD decomposition.}{6}{paragraph*.4}%
+\contentsline {paragraph}{Per-frequency SVD in the Laplace domain.}{7}{paragraph*.6}%
+\contentsline {paragraph}{Limitations of SVD-based representations.}{7}{paragraph*.8}%
+\contentsline {subsubsection}{\numberline {3.2.2}Autoencoder-Based Latent Space}{7}{subsubsection.3.2.2}%
+\contentsline {paragraph}{Sinusoidal frequency conditioning.}{7}{paragraph*.9}%
+\contentsline {paragraph}{Architecture.}{7}{paragraph*.10}%
+\contentsline {paragraph}{Advantage over SVD.}{8}{paragraph*.11}%
+\contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{8}{subsection.3.3}%
+\contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm {\theta }\to z$}{8}{subsubsection.3.3.1}%
+\contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{8}{subsubsection.3.3.2}%
+\contentsline {subsubsection}{\numberline {3.3.3}Results}{8}{subsubsection.3.3.3}%
+\contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{8}{subsection.3.4}%
+\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{9}{subsubsection.3.4.1}%
+\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{9}{subsubsection.3.4.2}%
+\contentsline {subsubsection}{\numberline {3.4.3}Full Pipeline}{9}{subsubsection.3.4.3}%
+\contentsline {subsubsection}{\numberline {3.4.4}Results and Comparison}{9}{subsubsection.3.4.4}%
+\contentsline {section}{\numberline {4}Conclusion}{10}{section.4}%
