@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.laplace_ae_surrogate import LaplaceLatentModel
+
 
 def _conv_block(in_ch, out_ch):
     return nn.Sequential(
@@ -118,3 +120,56 @@ class CorrectionAE(nn.Module):
     def __repr__(self) -> str:
         n = sum(p.numel() for p in self.parameters())
         return f"CorrectionAE(N={self.N}, UNet) — {n:,} params"
+
+
+class CorrectedPipeline(LaplaceLatentModel):
+    """
+    Surrogate LaplaceLatentModel + CorrectionAE enchaînés.
+
+    Hérite de LaplaceLatentModel : compatible avec load_model / run_inference
+    sans modification de main.py.
+
+    Construit à partir d'une instance surrogate déjà chargée :
+        pipeline = CorrectedPipeline(surrogate, correction_ae)
+        U_corr   = pipeline.generate(theta_norm, dt=dt, ...)  # (B, Nt, N, N)
+    """
+
+    def __init__(self, surrogate, correction_ae: CorrectionAE):
+        # Importer ici pour éviter un import circulaire au niveau module
+        from models.laplace_ae_surrogate import LaplaceLatentModel
+
+        if not isinstance(surrogate, LaplaceLatentModel):
+            raise TypeError(f"CorrectedPipeline attend un LaplaceLatentModel, "
+                            f"reçu {type(surrogate).__name__}")
+
+        # Initialisation nn.Module sans recréer les sous-modules du surrogate :
+        # on partage directement ses modules/buffers pour éviter de dupliquer
+        # les ~17 GB en mémoire GPU lors de la construction.
+        nn.Module.__init__(self)
+        for name, mod in surrogate._modules.items():
+            self._modules[name] = mod
+        for name, buf in surrogate._buffers.items():
+            self._buffers[name] = buf
+        for attr in ('N_freq', 'N_half', 'N', 'theta_dim',
+                     'latent_dim', 'k_max', 'hidden_dim'):
+            setattr(self, attr, getattr(surrogate, attr))
+
+        self.correction_ae = correction_ae
+
+    def _generate(self, theta_norm: torch.Tensor,
+                  dt: float = 1.0, gamma: float = 0.0,
+                  rule: str = 'trap', k_max=None,
+                  correction_chunk: int = 64) -> torch.Tensor:
+        U_pred = super()._generate(theta_norm, dt=dt, gamma=gamma, rule=rule, k_max=k_max)
+        B, Nt, N, _ = U_pred.shape
+        frames = U_pred.reshape(B * Nt, N, N)
+        chunks = [self.correction_ae(frames[i:i + correction_chunk])
+                  for i in range(0, B * Nt, correction_chunk)]
+        return torch.cat(chunks, dim=0).reshape(B, Nt, N, N)
+
+    def __repr__(self) -> str:
+        n_surr = sum(p.numel() for p in self.surrogates.parameters())
+        n_ae   = sum(p.numel() for p in self.correction_ae.parameters())
+        return (f"CorrectedPipeline(N={self.N}, N_half={self.N_half})\n"
+                f"  surrogate : {n_surr:,} params\n"
+                f"  correction: {n_ae:,} params")

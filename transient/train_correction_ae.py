@@ -84,6 +84,11 @@ def precompute(dataset, surrogate_ckpt, kt, cache_dir, batch_size=32,
 
     pred_mmap.flush(); true_mmap.flush()
     print(f"Sauvegardé — {pred_mmap.nbytes / 1e9:.1f} Go × 2")
+
+    # Libérer le surrogate GPU avant l'entraînement
+    del surrogate
+    torch.cuda.empty_cache()
+
     return (np.load(pred_path, mmap_mode='r'),
             np.load(true_path, mmap_mode='r'))
 

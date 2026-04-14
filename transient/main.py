@@ -69,6 +69,22 @@ def load_model(ckpt_path: str, device: torch.device):
 
         model = SVDSurrogate(nr=ckpt['nr'], nt=ckpt['Nt'], nf_eff=ckpt['nf_eff'], theta_dim=ckpt['theta_dim']).to(device)
 
+    elif model_type == 'CorrectionAE':
+        from models.correction_ae import CorrectionAE, CorrectedPipeline
+        ae = CorrectionAE(N=ckpt['N'], base_ch=ckpt['base_ch']).to(device)
+        ae.load_state_dict(ckpt['model_state'])
+        ae.eval()
+
+        surr_model, surr_ckpt = load_model(ckpt['surrogate_ckpt'], device)
+        model = CorrectedPipeline(surr_model, ae).to(device)
+        # Expose les infos du surrogate pour run_inference (theta_mean/std, dt, gamma)
+        ckpt['theta_mean'] = surr_ckpt['theta_mean']
+        ckpt['theta_std']  = surr_ckpt['theta_std']
+        ckpt['dt']         = surr_ckpt.get('dt', 1.0)
+        ckpt['gamma']      = surr_ckpt.get('gamma', 0.0)
+        model.eval()
+        return model, ckpt
+
     else:
         raise ValueError(f"Checkpoint de type '{model_type}' non supporté.")
 
@@ -102,7 +118,7 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
 
     model_type = ckpt.get('model_type', 'SVDSurrogate')
 
-    if model_type in ('LaplaceModel', 'LaplaceLatentModel', 'LaplaceSVDModel'):
+    if model_type in ('LaplaceModel', 'LaplaceLatentModel', 'LaplaceSVDModel', 'CorrectionAE'):
         dt_eff = dt if dt is not None else float(ckpt.get('dt', 1.0))
         gamma  = float(ckpt.get('gamma', gamma))
         U_pred = model.generate(theta_norm, dt=dt_eff, gamma=gamma, rule=rule, k_max=k_max)
@@ -254,7 +270,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/LaplaceLatentModel_finetuned.pt',
+    ckpt_path = 'checkpoints/CorrectionAE_best.pt',
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
