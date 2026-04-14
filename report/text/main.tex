@@ -23,8 +23,8 @@
 
 \author{Keyvan Attarian}
 \date{\today}
-\title{Neural Surrogates for PDE Emulation}
-\subtitle{Stationary pipeline, Tucker POD/SVD, Laplace-SVD, Latent Laplace, and Residual Correction}
+\title{Learning Latent Representations for Neural PDE Surrogates}
+\subtitle{From POD to Frequency-Conditioned Autoencoders}
 \logo{logodescartes}
 
 
@@ -37,123 +37,96 @@
 \section{Introduction}
 % ============================================================
 
-Numerical simulation of physical systems governed by partial differential equations (PDEs) is indispensable in science and engineering, yet often prohibitively expensive for applications requiring repeated solver evaluations over large parameter spaces—such as design optimisation, uncertainty quantification, or real-time data assimilation. Neural surrogates address this bottleneck by learning a fast, differentiable approximation of the map $\vtheta \mapsto U$ from physical parameters to solution fields, replacing minute-long solver calls with millisecond-scale inference.
+The numerical simulation of physical systems governed by partial differential equations (PDEs) underpins a vast range of scientific and engineering disciplines, from computational fluid dynamics and structural mechanics to atmospheric modelling and chemical process engineering. High-fidelity solvers—whether based on finite elements, finite volumes, or spectral methods—can capture complex multi-scale phenomena with great accuracy, but at a computational cost that renders them impractical for applications requiring thousands or millions of forward evaluations. Real-time decision making, Bayesian inference over large parameter spaces, optimal experimental design, and digital twin frameworks all fall into this category: each query to the solver may take minutes to hours, making exhaustive exploration computationally intractable \cite{ammar2024hybrid,quarteroni2025}.
 
-This report documents the successive surrogate architectures developed throughout this project. Two physical settings are considered. The first is a stationary 2-D convection-diffusion problem, which serves as a controlled testbed for variational autoencoder (VAE)-based approaches. The second, and principal, problem concerns transient CH4 concentration fields, for which a hierarchy of increasingly expressive methods is presented: from Tucker POD decomposition and SVD-based spectral representations, through a frequency-conditioned autoencoder latent space, to a full end-to-end latent surrogate with residual correction post-processing.
+This tension between accuracy and computational cost has motivated a rapidly growing body of work on \emph{surrogate modelling} (also referred to as emulation or metamodelling), in which a cheaper approximate model replaces the high-fidelity solver for a given parameter range. Classical surrogate approaches, such as Gaussian processes or polynomial chaos expansions, offer rigorous uncertainty estimates but scale poorly with input dimensionality and struggle to capture the high-dimensional structure of field-valued outputs. Data-driven methods based on deep learning have emerged as a compelling alternative, offering both the flexibility to represent complex non-linear maps and the ability to produce full spatial fields as outputs \cite{karniadakis2021,quarteroni2025}.
+
+A particularly productive paradigm in this context is \emph{physics-informed machine learning}, which seeks to embed physical knowledge—whether through governing equations, symmetry constraints, or conservation laws—directly into the learning architecture or loss function \cite{karniadakis2021,meng2021survey}. The present work draws on this philosophy by leveraging the structure of the Laplace transform as a physically motivated temporal basis, decomposing transient fields into independent frequency components that are individually amenable to surrogate modelling.
+
+\textbf{Application context.} The motivating application is the emulation of atmospheric dispersion models for pollutant concentration prediction, including methane (CH4) \cite{fan2024,guo2022}. Replacing such simulations with fast neural surrogates accelerates real-time monitoring and inverse source identification.
+
+\textbf{Central contribution.} The high dimensionality of field-valued outputs—up to $N_t \times N^2$ degrees of freedom per simulation—makes direct regression intractable. The central approach is to first learn a compact latent representation of the solution fields, either through linear dimensionality reduction (POD, SVD) or through non-linear autoencoders, and then train a surrogate that maps physical parameters $\vtheta$ into this latent space. This decoupling reduces the surrogate output dimensionality by orders of magnitude while allowing each component to be trained and validated independently.
+
+\textbf{Outline.} Section~\ref{sec:stationary} introduces the framework on a stationary 2-D convection-diffusion problem. Section~\ref{sec:transient} presents the transient CH4 problem, comparing linear SVD-based latent representations against a non-linear frequency-conditioned autoencoder, followed by the full surrogate pipeline and a residual correction post-processor.
 
 % ============================================================
 \section{Preliminary Study: Stationary Dataset}
+\label{sec:stationary}
 % ============================================================
 
-\subsection{Problem Statement}
+\subsection{Problem Statement and Dataset}
 
-We consider the stationary convection-diffusion equation on the unit square $\Omega = [0,1]^2$:
+The stationary test case is a convection-diffusion problem on the unit square $\Omega = [0,1]^2$:
 \begin{equation}
     -D\,\Delta U + \bm{b} \cdot \nabla U = f \quad \text{in } \Omega,
     \qquad U = 0 \quad \text{on } \partial\Omega,
     \label{eq:convdiff}
 \end{equation}
-where $D > 0$ is the scalar diffusivity, $\bm{b} = (b_x, b_y)$ the convection velocity, and $f$ the intensity of a point source. The parameter vector is $\vtheta = (D, b_x, b_y, f) \in \R^4$, and the goal is to learn the map $\vtheta \mapsto U \in \R^{N \times N}$ without calling the finite element solver at test time.
+where $D > 0$ is the diffusivity, $\bm{b} = (b_x, b_y)$ is the convection velocity, and $f$ is a point-source intensity. The parameter vector $\vtheta = (D, b_x, b_y, f) \in \R^4$ fully specifies a solution instance, and the surrogate task is to learn the forward map $\vtheta \mapsto U \in \R^{N \times N}$.
 
-\subsection{Dataset Generation}
-
-The reference solver (\texttt{utils/sim.py}) discretises~\eqref{eq:convdiff} with P1 finite elements on a triangular mesh using FEniCS/DOLFINx. The convective term is stabilised via SUPG/GLS with a locally computed parameter $\tau$. The finite element solution is then interpolated onto a uniform $N \times N$ Cartesian grid. The dataset generator (\texttt{utils/dataset\_generator.py}) samples $\vtheta$ uniformly at random within prescribed physical ranges and stores the resulting pairs $(\vtheta, U)$ in \texttt{dataset/dataset.npz}.
-
-\textbf{Normalisation.} Each spatial component of $U$ is centred and linearly rescaled to $[-1,1]$ using per-pixel statistics computed on the training split. The parameter vector $\vtheta$ is standardised with pre-computed mean and standard deviation. All statistics are serialised into the checkpoint.
-
-\begin{figure}[ht]
-    \centering
-    \begin{subfigure}[b]{0.48\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{convdiff_grid.png}
-        \caption{Grid of solution fields for varying $\vtheta$.}
-    \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.48\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{convdiff_solution.png}
-        \caption{Example stationary solution $U$ on $[0,1]^2$.}
-    \end{subfigure}
-    \caption{Stationary convection-diffusion dataset.}
-    \label{fig:convdiff}
-\end{figure}
-
-\subsection{Two-Stage Architecture}
-
-\subsubsection{Stage 1 --- Variational Autoencoder}
-
-A VAE compresses solution fields $U \in \R^{1 \times N \times N}$ into a low-dimensional latent code $z \in \R^{d_z}$ (default $d_z = 32$). The encoder is a four-block strided convolutional network followed by two linear heads producing the posterior mean $\mu$ and log-variance $\log \sigma^2$. The decoder maps a sampled code back through a linear projection and four ConvTranspose2d+BatchNorm+ReLU blocks to the image space.
-
-Training minimises the negative evidence lower bound augmented with a spatial gradient penalty:
-\begin{equation}
-    \mathcal{L}_{\mathrm{VAE}} = \E_{q(z|U)}\bigl[\|U - \hat{U}\|^2 + \lambda_{\nabla}\|\nabla U - \nabla\hat{U}\|^2\bigr] + \beta\,\KL\bigl(q(z|U)\,\|\,\mathcal{N}(0,I)\bigr),
-    \label{eq:elbo}
-\end{equation}
-where a \emph{free-bits} threshold per latent dimension prevents premature collapse of the KL term.
-
-\subsubsection{Stage 2 --- Indirect Decoder \texorpdfstring{$\vtheta \to z \to U$}{theta to z to U}}
-
-With the VAE decoder frozen, an \texttt{IndirectDecoder} network learns the regression $\vtheta \to z$ with a two-layer MLP (hidden size 128, ReLU). The predicted code is then passed through the frozen decoder. The loss is MSE on the reconstructed field plus the same spatial gradient term as in~\eqref{eq:elbo}. This two-stage strategy decouples representation learning from the parameter-to-latent regression, resulting in more stable training.
-
-\subsection{Interactive Application}
-
-A Streamlit application (\texttt{stationary/app.py}) wraps inference into an interactive interface: sliders expose $D$, the magnitude and angle of $\bm{b}$, and $f$, and the predicted field is optionally compared against the nearest dataset neighbour. Model and dataset loading are cached for real-time response.
-
-\begin{figure}[ht]
-    \centering
-    \includegraphics[width=0.72\textwidth]{demo.png}
-    \caption{Streamlit interface: surrogate prediction (left) vs.\ nearest dataset sample (right).}
-    \label{fig:demo}
-\end{figure}
-
-\subsection{Results}
-
-% TODO: VAE reconstruction metrics (val/recon, val/kl) and indirect decoder
-% metrics (val/loss, median relative L2 error on the test set).
-
-% ============================================================
-\section{Transient CH4 Concentration Fields}
-% ============================================================
-
-\subsection{Dataset and Problem Formulation}
-
-\subsubsection{Dataset}
-
-The primary dataset (\texttt{ch4\_rotated}) contains approximately 8\,100 simulations of transient CH4 concentration fields. Each simulation yields $N_t = 150$ time steps on a $200 \times 200$ spatial grid, corresponding to a raw tensor of shape $(8100, 150, 200, 200)$. Physical parameters are $\vtheta = (k, A, C)$ (reaction rate, amplitude, initial concentration) stored in \texttt{doe\_rotated.npy}. Data are accessed in memory-map mode to avoid materialising the full ${\sim}17$\,GB dataset in RAM.
+The dataset is generated by uniformly sampling $\vtheta$ over the parameter domain and solving~\eqref{eq:convdiff} using P1 finite elements with SUPG/GLS stabilisation (FEniCS/DOLFINx). Solutions are interpolated onto a uniform $N \times N$ grid. For machine learning, each field $U$ is centred and rescaled to $[-1,1]$ using per-pixel statistics computed on the training set; the parameters $\vtheta$ are standardised using pre-computed mean and standard deviation.
 
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.82\textwidth]{dataset_preview.png}
-    \caption{Dataset preview: representative CH4 concentration fields at selected time steps.}
+    \caption{Representative sample of the generated dataset.}
     \label{fig:dataset}
 \end{figure}
 
-\subsubsection{Temporal Representation via the Laplace Transform}
+\subsubsection{Stage 1 --- Variational Autoencoder}
 
-A key modelling choice for the transient problem is to operate in the \emph{Laplace domain} rather than directly in the time domain. The numerical Laplace transform is computed along the Bromwich contour:
+The first stage trains a variational autoencoder to compress solution fields $U$ into a low-dimensional latent code $z \in \R^{d_z}$ ($d_z = 32$). The encoder is a strided convolutional network that maps $U$ to the parameters $(\mu, \sigma^2)$ of a Gaussian approximate posterior $q(z|U) = \mathcal{N}(\mu, \sigma^2 I)$. The decoder then reconstructs an estimate $\hat{U}$ from samples of $z$ via transposed convolutions. The training objective combines reconstruction fidelity with distributional regularisation:
+\begin{equation}
+    \mathcal{L}_{\mathrm{VAE}} = \E_{q(z|U)}\bigl[\|U - \hat{U}\|^2 + \lambda_{\nabla}\|\nabla U - \nabla\hat{U}\|^2\bigr] + \beta\,\KL\bigl(q(z|U)\,\|\,\mathcal{N}(0,I)\bigr),
+    \label{eq:elbo}
+\end{equation}
+where the expectation is taken over the posterior, the second term inside penalises spatial discontinuities, and the KL divergence encourages the latent distribution to remain close to a unit Gaussian. A free-bits threshold $\lambda_{\mathrm{fb}}$ is applied per latent dimension to prevent posterior collapse.
+
+\subsubsection{Stage 2 --- Indirect Decoder \texorpdfstring{$\vtheta \to z \to U$}{theta to z to U}}
+
+The second stage decouples surrogate training from representation learning by freezing the VAE decoder. A two-layer MLP is trained to regress from normalised parameters $\vtheta_{\mathrm{norm}}$ to the latent code $z$. At test time, the predicted code is then decoded by the frozen VAE decoder to recover the full field estimate. The surrogate loss combines MSE reconstruction error on the decoded field with the spatial gradient penalty already present in~\eqref{eq:elbo}, ensuring consistency with the representation learned by the VAE.
+
+\subsection{Results}
+
+% TODO: VAE reconstruction metrics and indirect decoder median relative L2 error.
+
+% ============================================================
+\section{Transient CH4 Concentration Fields}
+\label{sec:transient}
+% ============================================================
+
+\subsection{Dataset and Temporal Representation}
+
+\subsubsection{Dataset}
+
+The transient experiments use a dataset of 8\,100 simulations of atmospheric methane concentration fields. Each simulation yields a time series of 150 snapshots on a $200 \times 200$ spatial grid, forming a tensor of shape $(8100, 150, 200, 200)$. The physical parameter vector is $\vtheta = (k, A, C)$, representing the reaction rate, source amplitude, and initial concentration respectively. To accommodate the $\sim 17$ GB total dataset size, all data are loaded and processed using memory-mapped arrays, avoiding materialisation of the full tensor in RAM at any point.
+
+
+
+\subsubsection{Laplace Transform}
+
+Rather than operating in physical time, the surrogate works in the Laplace frequency domain. The Laplace transform of a time-dependent field is approximated via a discretised Bromwich contour integral, computed efficiently using the discrete Fourier transform with exponential damping:
 \begin{equation}
     \hat{U}(s_k) = \int_0^T U(t)\,e^{-s_k t}\,\mathrm{d}t
     \approx \mathrm{DFT}\bigl[U(t) \cdot w_t \cdot e^{-\gamma t}\bigr],
     \qquad s_k = \gamma + i\omega_k,
     \label{eq:laplace}
 \end{equation}
-where $w_t$ are trapezoidal quadrature weights and $\gamma \geq 0$ is a damping parameter. Inversion is performed by IFFT with a compensating exponential factor. By the Hermitian symmetry of real-valued signals, only the $N_{\mathrm{half}} = N_t/2 + 1$ non-redundant frequencies need to be modelled; the full spectrum is reconstructed via $\hat{U}(s_{N_t-k}) = \overline{\hat{U}(s_k)}$.
+where $w_t$ are trapezoidal integration weights and $\gamma \geq 0$ is a damping parameter that improves numerical stability. The spatial field $U$ is transformed at each frequency $s_k$ into a complex-valued field $\hat{U}(s_k) \in \C^{N \times N}$. For real-valued physical fields, Hermitian symmetry provides $\hat{U}(s_{N_t-k}) = \overline{\hat{U}(s_k)}$, so only $N_{\mathrm{half}} = N_t/2 + 1$ frequencies need be stored. In practice, each frequency $s_k$ is represented as the pair of real fields $(\Re(\hat{U}_k), \Im(\hat{U}_k)) \in \R^{2 \times N \times N}$.
 
-This representation decomposes the temporal dynamics into independent frequency components, enabling the construction of specialised surrogates per frequency and facilitating both latent space learning and residual correction.
+The surrogate models only the first $k_{\max}$ frequencies (specifically, $k_{\max} = 20$), which typically capture the essential dynamics while reducing computational cost. Higher frequencies ($k > k_{\max}$) are set to zero in the normalised representation, corresponding to the mean field after denormalisation. Inversion to physical time is performed by discrete Fourier inversion with exponential compensation on the full reconstructed spectrum.
 
 \subsection{Latent Space Representation}
 
-A central challenge in the transient setting is to find a compact, learned representation of the Laplace coefficient fields $\hat{U}(s_k) \in \C^{N \times N}$ (equivalently, the pair $(\Re(\hat{U}_k), \Im(\hat{U}_k)) \in \R^{2 \times N \times N}$). Two families of representations are explored.
-
 \subsubsection{SVD-Based Approaches}
 
-\paragraph{Tucker POD decomposition.}
-Following the hybrid twin framework of~\cite{ammar2024hybrid}, the Tucker SVD (\texttt{utils/SVD\_Amine\_3D.py}) factorises the spatially sub-sampled training tensor $\bm{H} \in \R^{n_r \times n_s \times N_t}$ as
+\paragraph{Tucker POD.}
+The Tucker POD approach~\cite{ammar2024hybrid} decomposes the transient field tensor via a low-rank factorisation. The spatially sub-sampled training tensor $\bm{H} \in \R^{n_r \times n_s \times N_t}$ (with $n_r$ and $n_s$ being the subsampled spatial dimensions and $N_t$ the number of time steps) is factorised into a sum of separable modes:
 \begin{equation}
     H_{r,s,t} \approx \sum_{j=1}^{n_f} \alpha_j\, F_{r,j}\, G_{s,j}\, P_{t,j},
     \label{eq:tucker}
 \end{equation}
-with spatial basis $\bm{F}$, temporal basis $\bm{P}$, singular values $\bm{\alpha}$, and simulation-specific coefficients $\bm{G}$. Once the bases are fixed, the problem reduces to learning $\vtheta \mapsto \bm{g} \in \R^{n_f}$ with a simple MLP. This approach is extremely lightweight but fundamentally limited by the linear structure of~\eqref{eq:tucker}.
+The factors $\bm{F}$, $\bm{P}$, and singular values $\bm{\alpha}$ are computed once and held fixed across all test samples. The simulation-dependent coefficients $\bm{G} \in \R^{n_s \times n_f}$ encode information about the individual solutions. A four-layer MLP is trained to predict these coefficients from the physical parameters: $\vtheta \mapsto \bm{g} \in \R^{n_f}$. Reconstruction of a full field follows by applying the fixed spatial and temporal modes to the predicted coefficients.
 
 \begin{figure}[ht]
     \centering
@@ -166,148 +139,123 @@ with spatial basis $\bm{F}$, temporal basis $\bm{P}$, singular values $\bm{\alph
     \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{SVDSurrogate_l2rel_hist.png}
-        \caption{Relative $L^2$ error on the test set (Tucker POD).}
+        \caption{Relative $L^2$ error on the test set.}
     \end{subfigure}
     \caption{Tucker POD surrogate.}
     \label{fig:svd}
 \end{figure}
 
-\paragraph{Per-frequency SVD in the Laplace domain.}
-For each Laplace frequency $k$, a truncated SVD is computed on the matrix of training coefficients (real and imaginary parts independently):
+\paragraph{Per-frequency SVD.}
+An alternative linear approach applies truncated SVD independently to each Laplace frequency. For frequency $k$, the real and imaginary parts of $\hat{U}_k$ across all training samples are arranged into a matrix, and the leading $k_{\mathrm{svd}}$ right singular vectors $\bm{V}^{(k,r)}$ and $\bm{V}^{(k,i)}$ are extracted:
 \[
-    \Re(\hat{\bm{U}}_k) \approx \bm{c}^{(k,r)} \bigl(\bm{V}^{(k,r)}\bigr)^\top, \quad
-    \Im(\hat{\bm{U}}_k) \approx \bm{c}^{(k,i)} \bigl(\bm{V}^{(k,i)}\bigr)^\top,
+    \Re(\hat{U}_k) \approx \bm{c}^{(k,r)} \bigl(\bm{V}^{(k,r)}\bigr)^\top, \qquad
+    \Im(\hat{U}_k) \approx \bm{c}^{(k,i)} \bigl(\bm{V}^{(k,i)}\bigr)^\top.
 \]
-where $\bm{V} \in \R^{N^2 \times k_{\mathrm{svd}}}$ and $\bm{c} \in \R^{k_{\mathrm{svd}}}$ are the leading right singular vectors and associated coefficients respectively. A lightweight three-layer MLP per frequency then predicts the normalised coefficients $\hat{\bm{c}}$. This approach, implemented as \texttt{LaplaceSVDModel}, combines the Laplace decomposition with a linear spatial basis, enabling frequency-specific compression.
+The spatial basis $\bm{V}$ is fixed during training. For each frequency $k$, a dedicated three-layer MLP learns to predict the normalised coefficients $\bm{c}^{(k,r)}$ and $\bm{c}^{(k,i)}$ from the physical parameters. Field reconstruction follows by projecting the predicted coefficients onto the fixed bases; the full time series is then recovered by inverting the Laplace transform as in~\eqref{eq:laplace}.
 
 \begin{figure}[ht]
     \centering
     \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{LaplaceSVDModel_svd_error_ksvd100.png}
-        \caption{SVD reconstruction error vs.\ number of components ($k_{\mathrm{svd}} = 100$).}
+        \caption{SVD reconstruction error vs.\ $k_{\mathrm{svd}}$.}
     \end{subfigure}
     \hfill
     \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{LaplaceSVDModel_l2rel_hist.png}
-        \caption{Relative $L^2$ error on the test set (Laplace SVD).}
+        \caption{Relative $L^2$ error on the test set.}
     \end{subfigure}
-    \caption{SVD surrogate in the Laplace domain.}
+    \caption{Per-frequency SVD surrogate in the Laplace domain.}
     \label{fig:lapsvd}
 \end{figure}
 
-\paragraph{Limitations of SVD-based representations.}
-Both SVD approaches impose a \emph{linear} structure on the latent space: the field $\hat{U}_k$ is constrained to lie in a fixed linear subspace spanned by pre-computed basis vectors. While this is computationally simple and theoretically well-founded for low-rank fields, it becomes a bottleneck when the physical fields exhibit complex, non-linear variation across the parameter space. In particular, the spatial structures of $\hat{U}_k$ can vary non-linearly with $\vtheta$, making a fixed linear basis suboptimal.
+Both SVD approaches constrain the latent representation to a fixed linear subspace. When the Laplace fields vary non-linearly across the parameter space, this becomes a binding limitation.
 
 \subsubsection{Autoencoder-Based Latent Space}
 
-To overcome the linearity constraint, we learn a non-linear latent space via a frequency-conditioned autoencoder (\texttt{LaplaceAE}, \texttt{models/laplace\_ae\_surrogate.py}).
+Both SVD approaches above constrain the surrogate to lie in a fixed linear subspace extracted from the training data. When Laplace fields exhibit non-linear variation across the parameter space, this linearity becomes restrictive. To overcome this limitation, a learned autoencoder is trained to extract a non-linear latent representation that is shared across all frequencies. The encoder and decoder are conditioned on the frequency index $k$, allowing a single pair of networks to process fields at any frequency while adapting their behaviour through frequency-specific control signals.
 
-\paragraph{Sinusoidal frequency conditioning.}
-Since a single autoencoder must handle Laplace fields at all frequencies simultaneously, it is conditioned on the normalised frequency ratio $f = k/N_{\mathrm{half}} \in [0,1]$. A NeRF-style sinusoidal positional encoding provides a dense, multi-resolution representation of this scalar:
+\paragraph{Sinusoidal frequency encoding.}
+The frequency index $k$ is first normalised to the range $[0,1]$ by dividing by $N_{\mathrm{half}}$, giving a frequency ratio $f = k/N_{\mathrm{half}}$. This scalar is then embedded into a higher-dimensional vector $\bm{e}(f) \in \R^{64}$ via sinusoidal basis functions inspired by positional encoding in transformers. The embedding is computed as follows: for each octave $i = 0, 1, \ldots, L-1$, sinusoidal components $\sin(2^i\pi f)$ and $\cos(2^i\pi f)$ are computed, yielding a $2L$-dimensional vector. This vector is passed through a small MLP to produce the final frequency embedding:
 \begin{equation}
-    \bm{e}(f) = \mathrm{MLP}\Bigl(\bigl[\sin(2^i\pi f),\; \cos(2^i\pi f)\bigr]_{i=0}^{L-1}\Bigr) \in \R^{64},
+    \bm{e}(f) = \mathrm{MLP}\Bigl(\bigl[\sin(2^i\pi f),\; \cos(2^i\pi f)\bigr]_{i=0}^{L-1}\Bigr), \qquad L = 8.
     \label{eq:posenc}
 \end{equation}
-with $L = 8$ frequency levels. This encoding allows the network to discriminate between neighbouring Laplace frequencies while capturing coarse spectral structure through the lower-frequency components.
+This multi-scale representation allows the network to capture frequency information at multiple resolutions simultaneously, enabling fine discrimination among different frequency bands.
 
-\paragraph{Architecture.}
-The FiLM (Feature-wise Linear Modulation) mechanism \cite{perez2018film} injects the frequency embedding at each network layer by computing affine modulation parameters $(\gamma_\ell, \beta_\ell)$ from $\bm{e}(f)$:
+\paragraph{FiLM conditioning.}
+To allow the encoder and decoder weights to be shared across all frequencies while adapting their behaviour to each specific frequency, the Feature-wise Linear Modulation (FiLM) mechanism is employed. At each convolutional layer $\ell$ of the encoder and decoder, the frequency embedding $\bm{e}(f)$ is passed through two learned linear projections to produce a channel-wise gain vector $\gamma_\ell(\bm{e}(f)) \in \R^{C_\ell}$ and a channel-wise bias vector $\beta_\ell(\bm{e}(f)) \in \R^{C_\ell}$, where $C_\ell$ denotes the number of feature channels at layer $\ell$. These gains and biases are used to modulate the intermediate activations $\bm{x}_\ell$ element-wise:
 \begin{equation}
-    \bm{x} \leftarrow \bm{x} \odot (1 + \gamma_\ell) + \beta_\ell.
+    \bm{x}_\ell \;\leftarrow\; \bm{x}_\ell \odot \bigl(1 + \gamma_\ell(\bm{e}(f))\bigr) \;+\; \beta_\ell(\bm{e}(f)).
     \label{eq:film}
 \end{equation}
-The encoder (\texttt{LaplaceEncoder}) applies three strided Conv2d blocks ($2 \to 16 \to 32 \to 64$ channels, stride 2), each followed by FiLM conditioning, then maps the spatial features to $z \in \R^{d_z}$ via two linear layers. The scaling parameters $\gamma_\ell$ are passed through $\tanh$ to avoid numerical instability in half-precision training. The decoder (\texttt{LaplaceDecoder}) reverses this with three ConvTranspose2d+BatchNorm+ReLU blocks, FiLM-modulated at each level, followed by two independent refinement branches (one for $\Re$, one for $\Im$) that produce the final two-channel output.
+For each channel $c$, the gain $\gamma_\ell^{(c)}$ applies a multiplicative correction and the bias $\beta_\ell^{(c)}$ applies an additive correction, both functions of the frequency alone. This design allows all frequencies to share the same convolutional weights while the FiLM parameters (derived from the frequency embedding) provide frequency-specific adjustment at each layer.
 
-The training objective combines reconstruction MSE and a ridge regularisation on the decoder outputs:
+\paragraph{Architecture and training.}
+The autoencoder encoder takes a two-channel input $(\Re(\hat{U}_k), \Im(\hat{U}_k)) \in \R^{2 \times N \times N}$ representing the real and imaginary parts of a Laplace field at frequency $k$, and progressively downsamples it through strided convolutions to produce a latent code $z \in \R^{d_z}$. Each convolutional block is followed by FiLM modulation using the frequency embedding $\bm{e}(f)$. The decoder reverses this process, starting from $z$ and upsampling through transposed convolutions, also FiLM-conditioned at each layer. The decoder outputs two separate branches, one predicting $\Re(\hat{U}_k)$ and the other $\Im(\hat{U}_k)$.
+
+Training operates on the Cartesian product of all (simulation, frequency) pairs in the dataset, with the objective:
 \begin{equation}
-    \mathcal{L}_{\mathrm{AE}} = \|\hat{U} - U\|^2 + \beta\,\|\hat{U}\|^2.
+    \mathcal{L}_{\mathrm{AE}} = \|\hat{U} - U\|^2 + \beta\,\|\hat{U}\|^2,
     \label{eq:aeloss}
 \end{equation}
-The training dataset is flattened over the (simulation, frequency) dimensions and reshuffled between epochs to prevent frequency-specific overfitting.
-
-\paragraph{Advantage over SVD.}
-The autoencoder latent space is non-linear, adaptive, and jointly trained across all frequencies. The shared encoder and decoder weights are specialised to each frequency only through the lightweight FiLM modulation, enabling efficient parameter sharing without sacrificing frequency-specific expressiveness. Empirically, this leads to lower reconstruction error than SVD at comparable latent dimensionality $d_z$.
+where the first term is the reconstruction MSE and the second is an $L^2$ regularisation penalty on the output. To ensure diverse frequency coverage within each mini-batch, (simulation, frequency) pairs are reshuffled at the start of each epoch.
 
 \subsection{Surrogate and Fine-Tuning}
 
 \subsubsection{Per-Frequency Surrogate \texorpdfstring{$\vtheta \to z$}{theta to z}}
 
-With the \texttt{LaplaceAE} trained and its decoder frozen, we train one lightweight MLP per Laplace frequency to learn the regression $\vtheta \to z_k$ (\texttt{LaplaceLatentSurrogate}). Each surrogate consists of a four-layer MLP (\texttt{proj}) with LayerNorm after each linear transformation:
-\begin{equation}
-    \vtheta_{\mathrm{norm}} \;\xrightarrow{d_h/2}\; \xrightarrow{d_h}\; \xrightarrow{d_h}\; d_z,
-    \label{eq:proj}
-\end{equation}
-where $d_h = 256$ is the hidden width. The shared decoder is injected by reference (not registered as a submodule), avoiding any weight duplication in GPU memory.
+Once the frequency-conditioned autoencoder has been trained, its decoder is frozen, and independent surrogates are trained for each frequency. The surrogate operates only on the first $k_{\max}$ frequencies (with $k_{\max} = 20$); higher frequencies are not explicitly predicted. For frequencies $k = 0, 1, \ldots, k_{\max}$, a four-layer MLP with layer normalisation learns the mapping from normalised physical parameters to the latent code: $\vtheta_{\mathrm{norm}} \mapsto z_k \in \R^{d_z}$. The shared decoder is kept frozen to preserve the learned latent structure.
 
-The assembled \texttt{LaplaceLatentModel} contains $N_{\mathrm{half}}$ such surrogates together with a single frozen \texttt{shared\_decoder}. At inference, all projections $\{\vtheta \to z_k\}$ are computed in parallel, then a single batched decoder call produces the entire Laplace spectrum:
-\begin{equation}
-    \{z_k\}_{k=0}^{N_{\mathrm{half}}-1} \;\xrightarrow{\text{batched}}\; \text{shared\_decoder} \;\to\; \{\hat{U}_k\}_k.
-\end{equation}
-The time series is recovered by Hermitian symmetry completion followed by IFFT inversion of the Bromwich integral~\eqref{eq:laplace}.
+At inference time, each predicted code $z_k$ is decoded using the frozen decoder, which is itself conditioned on the frequency ratio $f_k$ via FiLM, yielding predictions for frequencies $k \leq k_{\max}$. Frequencies $k > k_{\max}$ are left at zero in the normalised space, which corresponds to the mean value after denormalisation. The complete Laplace spectrum is then obtained by Hermitian symmetry (the upper frequencies are conjugates of the lower ones), and the time-domain field is recovered by Laplace inversion as in~\eqref{eq:laplace}.
 
 \subsubsection{End-to-End Fine-Tuning}
 
-After independent per-frequency training of the \texttt{proj} networks, the shared decoder is unfrozen and the complete model is fine-tuned end-to-end (\texttt{transient/finetune\_decoder\_laplace.py}). Differential learning rates are applied: the surrogate MLPs are updated with a larger step size $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$, while the decoder uses a smaller rate $\eta_{\mathrm{dec}} = 10^{-5}$, preserving the learned spectral decoder structure while allowing it to adapt to the surrogate outputs. The fine-tuning dataset is reorganised in frequency-first order so that each mini-batch covers all training simulations for a single frequency, enabling a single batched decoder call per gradient step and substantially reducing wall-clock time.
+To further improve accuracy, the frozen decoder is unfrozen and the entire model—both the per-frequency MLPs and the shared decoder—is fine-tuned jointly end-to-end on the training set. Differential learning rates are employed to balance the adaptation: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency parameter-to-latent MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. The training batches are organised in a frequency-first fashion, processing all simulations for a single frequency in one mini-batch. This structure allows for efficient batching: a single forward call through the FiLM-conditioned decoder handles all batch samples simultaneously, improving computational efficiency compared to a naive per-simulation approach.
 
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.55\textwidth]{LaplaceLatentModel_l2rel_hist.png}
-    \caption{Relative $L^2$ error on the test set after end-to-end fine-tuning (latent Laplace surrogate).}
+    \caption{Relative $L^2$ error on the test set after end-to-end fine-tuning.}
     \label{fig:laplacelatent}
 \end{figure}
 
 \subsubsection{Results}
 
-% TODO: median relative L2 error before and after fine-tuning; comparison with Tucker POD and Laplace SVD.
+% TODO: median L2rel before and after fine-tuning; comparison with Tucker POD and Laplace SVD.
 
-% ============================================================
 \subsection{Post-Processing and Results}
-% ============================================================
 
 \subsubsection{Residual Correction}
 
-Laplace-based surrogates can exhibit oscillatory artefacts—particularly near sharp transitions and in high-gradient regions—due to the finite number of retained spectral frequencies and residual surrogate approximation error. Rather than retraining the surrogate, a lightweight residual corrector is applied \emph{post hoc} frame by frame, learning only the systematic error pattern.
+A UNet residual corrector is applied post hoc, frame by frame, to the surrogate output. A UNet is an encoder--decoder convolutional network in which the encoder progressively downsamples the spatial resolution through successive convolution and pooling operations, while the decoder restores the original resolution through transposed convolutions. At each resolution level, the decoder receives, via a skip connection, the feature maps produced by the encoder at the corresponding level; these are concatenated channel-wise before the next convolution. This architecture allows the network to combine coarse, context-rich features from the bottleneck with fine spatial detail preserved by the skip connections. A standard autoencoder forces all information through the bottleneck, discarding spatial detail that cannot be encoded in the latent code; the skip connections of the UNet bypass this bottleneck, providing the decoder with direct access to high-resolution encoder features and enabling precise spatial localisation in the output.
 
-The \texttt{CorrectionAE} (\texttt{models/correction\_ae.py}) is a three-level UNet. Given a predicted frame $U_{\mathrm{pred}} \in \R^{N \times N}$, it is first normalised per-sample: $\tilde{U} = (U_{\mathrm{pred}} - \mu)/\sigma$. The encoder applies three double-convolution blocks (Conv2d $3\times3$ + ReLU, $\times2$) with MaxPool2d downsampling, with channel progression $1 \to c \to 2c \to 4c$ ($c = 16$). A bottleneck at resolution $N/8$ uses $8c$ channels. The decoder reverses the encoder with ConvTranspose2d upsampling, concatenating skip connections at each level. The output $1\times1$ convolution is \textbf{zero-initialised}, so the model starts from the identity (zero residual correction) and learns corrections gradually:
+Given the surrogate prediction $U_{\mathrm{pred}}(t) \in \R^{N \times N}$, the residual correction operates as follows. The predicted field is first normalised per-frame using its own spatial statistics (mean $\mu$ and standard deviation $\sigma$), then passed through a UNet that predicts a residual correction in the normalised space. The residual is rescaled back to physical space and added to the original prediction:
 \begin{equation}
-    U_{\mathrm{corr}} = U_{\mathrm{pred}} + \sigma \cdot r\!\left(\tilde{U}\right),
+    U_{\mathrm{corr}} = U_{\mathrm{pred}} + \sigma(U_{\mathrm{pred}}) \cdot r\!\left(\frac{U_{\mathrm{pred}} - \mu(U_{\mathrm{pred}})}{\sigma(U_{\mathrm{pred}})}\right),
     \label{eq:correction}
 \end{equation}
-where $r(\cdot)$ denotes the UNet output. With base channel width $c = 16$, the model has approximately 481\,000 parameters.
+Here $r(\cdot)$ is a three-level UNet with skip connections, employing $c = 16$ base channels and approximately 481k parameters. A crucial design choice is that the final output layer of the UNet is zero-initialised, ensuring that $r \equiv 0$ at the start of training. This initialisation strategy causes the corrected field to equal the surrogate prediction initially, allowing the network to learn only the correction needed rather than the full field.
 
 \subsubsection{Training the Corrector}
 
-To avoid repeated expensive calls to the base surrogate, all $(U_{\mathrm{pred}}, U_{\mathrm{true}})$ pairs are pre-computed and stored as memory-mapped arrays of shape $(n_s, k_t, N, N)$ on disk ($k_t = 20$ randomly sampled frames per simulation). The surrogate is then freed from GPU memory before corrector training begins.
+A key practical consideration in training the residual corrector is computational efficiency. Rather than calling the frozen surrogate model repeatedly during training, all $(U_{\mathrm{pred}}, U_{\mathrm{true}})$ pairs are pre-computed and stored on disk as memory-mapped arrays before the corrector training begins. This pre-computation step ensures that no forward pass through the surrogate is needed during the training loop, significantly accelerating convergence.
 
-The training objective is an MSE on the normalised residual augmented by a spatial gradient matching term:
+The corrector loss combines reconstruction accuracy with spatial smoothness. Denoting $r_{\mathrm{pred}} = U_{\mathrm{corr}} - U_{\mathrm{pred}}$ as the predicted residual and $r_{\mathrm{true}} = U_{\mathrm{true}} - U_{\mathrm{pred}}$ as the target residual, the loss function is:
 \begin{equation}
     \mathcal{L}_{\mathrm{corr}} = \left\|\frac{r_{\mathrm{pred}} - r_{\mathrm{true}}}{\sigma_r}\right\|^2 + \lambda_{\nabla}\left\|\frac{\nabla r_{\mathrm{pred}} - \nabla r_{\mathrm{true}}}{\sigma_r}\right\|^2,
     \label{eq:corrloss}
 \end{equation}
-where $r_{\mathrm{pred}} = U_{\mathrm{corr}} - U_{\mathrm{pred}}$, $r_{\mathrm{true}} = U_{\mathrm{true}} - U_{\mathrm{pred}}$, $\sigma_r = \sigma(r_{\mathrm{true}})$, and $\lambda_{\nabla} = 10$.
-
-\subsubsection{Full Pipeline}
-
-The \texttt{CorrectedPipeline} class inherits from \texttt{LaplaceLatentModel} and overrides the generation step: after Laplace inversion, all frames pass through the correction UNet in chunks of 64 to manage GPU memory. Surrogate modules are shared by reference with no weight duplication.
+where $\sigma_r = \sigma(r_{\mathrm{true}})$ is the standard deviation of the target residual field, and $\lambda_{\nabla} = 10$ is the gradient weighting parameter. Both the residual MSE and the spatial gradient MSE are normalised by $\sigma_r$, which accounts for the magnitude of the true correction and prevents the loss from being dominated by frames requiring large corrections.
 
 \subsubsection{Results and Comparison}
 
 \begin{figure}[ht]
     \centering
-    \begin{subfigure}[b]{0.48\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{CorrectionAE_l2rel_hist.png}
-        \caption{Relative $L^2$ error distribution after residual correction.}
-    \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.48\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{benchmark.png}
-        \caption{Pipeline comparison on the test set.}
-    \end{subfigure}
-    \caption{Residual correction post-processor and overall comparison.}
+    \includegraphics[width=\textwidth]{CorrectionAE_l2rel_hist.png}
+    \caption{Relative $L^2$ error distribution after residual correction.}
+
     \label{fig:correction}
 \end{figure}
 
@@ -317,43 +265,75 @@ The \texttt{CorrectedPipeline} class inherits from \texttt{LaplaceLatentModel} a
         \toprule
         \textbf{Method} & \textbf{Representation} & \textbf{Parameters} & \textbf{Median $L^2_{\mathrm{rel}}$ (\%)} \\
         \midrule
-        Tucker POD           & POD coefficients $\bm{g}$       & ${\sim}$1\,M          & --- \\
-        Laplace SVD          & SVD coefficients per frequency   & ---                   & --- \\
-        Latent Laplace       & Shared autoencoder latent code   & ---                   & --- \\
-        Latent Laplace + AEC & + UNet residual correction       & $+481$k               & --- \\
+        Tucker POD           & Linear POD coefficients        & ${\sim}$1\,M & --- \\
+        Laplace SVD          & Per-frequency linear SVD       & ---           & --- \\
+        Latent Laplace       & Shared non-linear latent code  & ---           & --- \\
+        Latent Laplace + AEC & + UNet residual                & $+481$k       & --- \\
         \bottomrule
     \end{tabular}
-    \caption{Comparison of transient surrogates on the test set. Numeric entries to be filled.}
+    \caption{Comparison of transient surrogates on the test set.}
     \label{tab:comparison}
 \end{table}
 
-% TODO: fill in parameter counts, median L2rel for each method, inference time if available.
-% Provide qualitative frame examples before/after correction.
+% TODO: fill in parameter counts, median L2rel, inference time.
 
 % ============================================================
 \section{Conclusion}
 % ============================================================
 
-This work presents a complete hierarchy of neural surrogate architectures for PDE emulation, progressing from classical POD regression to sophisticated non-linear latent-space generative models. The preliminary study on the stationary convection-diffusion problem demonstrates the effectiveness of the VAE two-stage paradigm and validates the infrastructure for data generation, normalisation, and inference.
+This work presents a hierarchy of neural surrogate architectures for PDE emulation centred on learned latent representations. On the stationary problem, a VAE two-stage approach decouples representation learning from parameter regression. On the transient problem, Tucker POD and per-frequency SVD provide linear baselines, while a frequency-conditioned autoencoder with sinusoidal encoding and FiLM modulation learns a non-linear latent space shared across all Laplace frequencies. Per-frequency MLPs map the physical parameters into this latent space; end-to-end fine-tuning then aligns the surrogate with the decoder. A UNet residual corrector applied post hoc further reduces prediction error at marginal cost.
 
-For the more challenging transient problem, the Tucker POD and SVD-in-Laplace approaches establish competitive baselines under a linear compression assumption. The frequency-conditioned \texttt{LaplaceAE} overcomes this limitation by learning an adaptive, non-linear latent space shared across all spectral frequencies, achieving better reconstruction at comparable latent dimensionality. The subsequent per-frequency MLP surrogates, refined through end-to-end fine-tuning, produce accurate predictions of the full spatio-temporal field.
-
-Finally, the lightweight UNet residual corrector demonstrates that a post-processing step of modest capacity (481k parameters) can substantially reduce oscillatory artefacts without retraining the base surrogate. The resulting \texttt{CorrectedPipeline} combines the best of both worlds: a structured spectral representation with non-linear latent space learning and a data-driven correction stage.
-
-Future directions include incorporating physics-informed constraints into the latent space, extending the framework to varying geometries, and applying the residual corrector to other reduced-order surrogate families beyond the Laplace representation.
+Future directions include incorporating physics-informed constraints into the latent space, extending the framework to varying source geometries, and applying the residual corrector to other reduced-order surrogate families.
 
 \begin{thebibliography}{9}
-    \bibitem{perez2018film}
-    E.~Perez, F.~Strub, H.~de Vries, V.~Dumoulin, and A.~Courville.
-    \emph{FiLM: Visual Reasoning with a General Conditioning Layer}.
-    In \emph{Proceedings of the AAAI Conference on Artificial Intelligence}, 2018.
 
     \bibitem{ammar2024hybrid}
     A.~Ammar, M.~Ben~Saada, E.~Cueto, and F.~Chinesta.
     Casting hybrid twin: physics-based reduced order models enriched with
     data-driven models enabling the highest accuracy in real-time.
-    \emph{International Journal of Material Forming}, 17(16), 2024.
-    \texttt{doi:10.1007/s12289-024-01812-4}, hal-05056779.
+    \emph{International Journal of Material Forming}, 17(2):16, 2024.
+    \texttt{doi:10.1007/s12289-024-01812-4}.
+
+    \bibitem{fan2024}
+    X.~Fan, Y.~Lin, B.~Gong, and H.~Li.
+    Offline meteorology-pollution coupling global air pollution forecasting
+    model with bilinear pooling.
+    Preprint, n.d.
+
+    \bibitem{guo2022}
+    Q.~Guo, M.~Ren, S.~Wu, et al.
+    Applications of artificial intelligence in the field of air pollution:
+    a bibliometric analysis.
+    \emph{Frontiers in Public Health}, 10:933665, 2022.
+    \texttt{doi:10.3389/fpubh.2022.933665}.
+
+    \bibitem{karniadakis2021}
+    G.~E.~Karniadakis, I.~G.~Kevrekidis, L.~Lu, P.~Perdikaris, S.~Wang,
+    and L.~Yang.
+    Physics-informed machine learning.
+    \emph{Nature Reviews Physics}, 3(6):422--440, 2021.
+    \texttt{doi:10.1038/s42254-021-00314-5}.
+
+    \bibitem{meng2021survey}
+    C.~Meng, S.~Seo, D.~Cao, S.~Griesemer, and Y.~Liu.
+    When physics meets machine learning: a survey of physics-informed
+    machine learning.
+    Preprint, n.d.
+
+    \bibitem{perez2018film}
+    E.~Perez, F.~Strub, H.~de~Vries, V.~Dumoulin, and A.~Courville.
+    FiLM: visual reasoning with a general conditioning layer.
+    In \emph{Proceedings of the AAAI Conference on Artificial Intelligence},
+    2018.
+
+    \bibitem{quarteroni2025}
+    A.~Quarteroni, P.~Gervasio, and F.~Regazzoni.
+    Combining physics-based and data-driven models: advancing the frontiers
+    of research with scientific machine learning.
+    \emph{Mathematical Models and Methods in Applied Sciences},
+    35(4):905--1071, 2025.
+    \texttt{doi:10.1142/S0218202525500125}.
+
 \end{thebibliography}
 
 \end{document}
