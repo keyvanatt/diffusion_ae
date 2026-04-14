@@ -1,15 +1,11 @@
 """
-correction_ae.py — AE de correction frame-par-frame.
+correction_ae.py — AE de correction frame-par-frame (architecture UNet).
 
-Prend U_pred(t) (sortie légèrement erronée du surrogate) et prédit U_corrected(t).
-La sortie est résiduelle : U_corrected = U_pred + decoder(z).
-
-Architecture légère pour N=128 (base = N//8 = 16) :
-  Encoder : 3 Conv2d (stride 2) → 64 × 16 × 16 → z ∈ R^latent_dim
-  Decoder : fc + 2 ConvTranspose2d → (1, N//2, N//2) → Linear → (N, N)
+UNet léger avec skip connections : préserve le détail spatial sans goulot
+d'étranglement destructeur. Sortie résiduelle : U_corrected = U_pred + UNet(U_pred).
 
 Usage :
-    ae = CorrectionAE(N=128, latent_dim=32)
+    ae = CorrectionAE(N=128)
     U_corr = ae(U_pred)          # (B, N, N) → (B, N, N)
     U_corr = ae.correct(U_pred)  # inférence no_grad
 """
@@ -18,63 +14,77 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _conv_block(in_ch, out_ch):
+    return nn.Sequential(
+        nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1), nn.ReLU(),
+        nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1), nn.ReLU(),
+    )
+
+
 class CorrectionAE(nn.Module):
     """
-    AE résiduel de correction frame-par-frame.
+    UNet résiduel de correction frame-par-frame.
 
     Paramètres
     ----------
-    N         : résolution spatiale (multiple de 8)
-    latent_dim: dimension du code latent z
+    N      : résolution spatiale (multiple de 8)
+    base_ch: canaux de base (×1, ×2, ×4 dans l'encodeur)
     """
 
-    def __init__(self, N: int = 128, latent_dim: int = 32):
+    def __init__(self, N: int = 128, base_ch: int = 16):
         super().__init__()
-        self.N          = N
-        self.latent_dim = latent_dim
-        base = N // 8
-        half = N // 2
+        self.N = N
+        c = base_ch
 
         # --- Encodeur ---
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1,  16, kernel_size=4, stride=2, padding=1), nn.LeakyReLU(0.2),
-            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1), nn.LeakyReLU(0.2),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1), nn.LeakyReLU(0.2),
-        )
-        flat = 64 * base * base
-        self.fc_enc = nn.Linear(flat, latent_dim)
+        self.enc1 = _conv_block(1,      c)       # N   → N,   c ch
+        self.enc2 = _conv_block(c,  2 * c)       # N/2 → N/2, 2c ch
+        self.enc3 = _conv_block(2*c, 4 * c)      # N/4 → N/4, 4c ch
 
-        # --- Décodeur (prédit le résidu) ---
-        self.fc_dec = nn.Sequential(
-            nn.Linear(latent_dim, flat),
-            nn.ReLU(),
-        )
-        self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1), nn.ReLU(),
-            nn.ConvTranspose2d(32,  1, kernel_size=4, stride=2, padding=1), nn.ReLU(),
-            # → (B, 1, N//2, N//2)
-        )
-        self.out_fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(half * half, N * N),
-        )
-        self._base = base
+        self.pool = nn.MaxPool2d(2)
 
-    def encode(self, U: torch.Tensor) -> torch.Tensor:
-        """U : (B, N, N) ou (B, 1, N, N) → z : (B, latent_dim)"""
-        if U.dim() == 3:
-            U = U.unsqueeze(1)
-        return self.fc_enc(self.encoder(U).flatten(start_dim=1))
+        # --- Bottleneck ---
+        self.bottleneck = _conv_block(4*c, 8 * c)  # N/8, 8c ch
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """z : (B, latent_dim) → résidu : (B, N, N)"""
-        h = self.fc_dec(z).view(-1, 64, self._base, self._base)
-        return self.out_fc(self.deconv(h)).view(-1, self.N, self.N)
+        # --- Décodeur avec skip connections ---
+        self.up3    = nn.ConvTranspose2d(8*c, 4*c, kernel_size=2, stride=2)
+        self.dec3   = _conv_block(8*c, 4*c)   # 4c (up) + 4c (skip)
+
+        self.up2    = nn.ConvTranspose2d(4*c, 2*c, kernel_size=2, stride=2)
+        self.dec2   = _conv_block(4*c, 2*c)   # 2c (up) + 2c (skip)
+
+        self.up1    = nn.ConvTranspose2d(2*c, c,   kernel_size=2, stride=2)
+        self.dec1   = _conv_block(2*c, c)     # c (up) + c (skip)
+
+        # Projection finale → résidu 1 canal
+        # Initialisée à zéro : le modèle part de l'identité (résidu=0) et apprend progressivement
+        self.out_conv = nn.Conv2d(c, 1, kernel_size=1)
+        nn.init.zeros_(self.out_conv.weight)
+        if self.out_conv.bias is not None:
+            nn.init.zeros_(self.out_conv.bias)
 
     def forward(self, U_pred: torch.Tensor) -> torch.Tensor:
         """U_pred : (B, N, N) → U_corrected : (B, N, N)"""
-        z = self.encode(U_pred)
-        return U_pred + self.decode(z)
+        mean = U_pred.mean(dim=(-2, -1), keepdim=True)   # (B, 1, 1)
+        std  = U_pred.std(dim=(-2, -1), keepdim=True) + 1e-8
+        x = ((U_pred - mean) / std).unsqueeze(1)          # (B, 1, N, N)
+
+        # Encodeur
+        s1 = self.enc1(x)                    # (B, c,   N,   N)
+        s2 = self.enc2(self.pool(s1))        # (B, 2c,  N/2, N/2)
+        s3 = self.enc3(self.pool(s2))        # (B, 4c,  N/4, N/4)
+
+        # Bottleneck
+        b  = self.bottleneck(self.pool(s3))  # (B, 8c,  N/8, N/8)
+
+        # Décodeur
+        d3 = self.dec3(torch.cat([self.up3(b),  s3], dim=1))  # (B, 4c, N/4, N/4)
+        d2 = self.dec2(torch.cat([self.up2(d3), s2], dim=1))  # (B, 2c, N/2, N/2)
+        d1 = self.dec1(torch.cat([self.up1(d2), s1], dim=1))  # (B, c,  N,   N)
+
+        # Résidu re-scalé dans l'espace original
+        residual = self.out_conv(d1).squeeze(1) * std  # (B, N, N), std=(B,1,1) broadcast
+        return U_pred + residual
 
     @torch.no_grad()
     def correct(self, U_pred: torch.Tensor) -> torch.Tensor:
@@ -85,9 +95,26 @@ class CorrectionAE(nn.Module):
         out = self.forward(U_pred)
         return out.squeeze(0) if single else out
 
-    def loss(self, U_corrected: torch.Tensor, U_true: torch.Tensor) -> torch.Tensor:
-        return F.mse_loss(U_corrected, U_true)
+    def loss(self, U_corrected: torch.Tensor, U_true: torch.Tensor,
+             U_pred: torch.Tensor,
+             lambda_grad: float = 1.0) -> tuple[torch.Tensor, dict]:
+        # Option A : loss dans l'espace résidu, normalisée par l'amplitude de la correction cible
+        res_pred  = U_corrected - U_pred
+        res_true  = U_true      - U_pred
+        res_scale = res_true.std() + 1e-8   # scalaire, amplifie les gradients
+
+        mse = F.mse_loss(res_pred / res_scale, res_true / res_scale)
+
+        dx_pred = res_pred[:, :, 1:] - res_pred[:, :, :-1]
+        dy_pred = res_pred[:, 1:, :] - res_pred[:, :-1, :]
+        dx_true = res_true[:, :, 1:] - res_true[:, :, :-1]
+        dy_true = res_true[:, 1:, :] - res_true[:, :-1, :]
+        grad    = (F.mse_loss(dx_pred / res_scale, dx_true / res_scale) +
+                   F.mse_loss(dy_pred / res_scale, dy_true / res_scale)) * 0.5
+
+        total = mse + lambda_grad * grad
+        return total, {'mse': mse.detach(), 'grad': grad.detach()}
 
     def __repr__(self) -> str:
         n = sum(p.numel() for p in self.parameters())
-        return f"CorrectionAE(N={self.N}, latent_dim={self.latent_dim}) — {n:,} params"
+        return f"CorrectionAE(N={self.N}, UNet) — {n:,} params"

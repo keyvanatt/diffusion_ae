@@ -112,13 +112,14 @@ def train(
     train_idx, val_idx, test_idx,
     surrogate_ckpt,
     epochs, batch_size, kt,
-    latent_dim, lr, patience,
+    base_ch, lr, patience,
     save_dir, project, N, Nt,
+    lambda_grad=10.0,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(save_dir, exist_ok=True)
 
-    ae = CorrectionAE(N=N, latent_dim=latent_dim).to(device)
+    ae = CorrectionAE(N=N, base_ch=base_ch).to(device)
     print(ae)
 
     train_ds = _FrameDataset(U_pred, U_true, train_idx)
@@ -134,8 +135,8 @@ def train(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=8, min_lr=1e-7)
 
     wandb.init(project=project, name='CorrectionAE', config=dict(
-        N=N, Nt=Nt, latent_dim=latent_dim, lr=lr,
-        batch_size=batch_size, kt=kt,
+        N=N, Nt=Nt, base_ch=base_ch, lr=lr,
+        batch_size=batch_size, kt=kt, lambda_grad=lambda_grad,
         n_params=sum(p.numel() for p in ae.parameters()),
         n_train=len(train_idx), n_val=len(val_idx),
         surrogate=os.path.basename(surrogate_ckpt),
@@ -161,8 +162,8 @@ def train(
             pred = pred_frames.reshape(B * kt, N, N).to(device)
             true = true_frames.reshape(B * kt, N, N).to(device)
 
-            U_corr = ae(pred)
-            loss   = ae.loss(U_corr, true)
+            U_corr         = ae(pred)
+            loss, metrics  = ae.loss(U_corr, true, pred, lambda_grad=lambda_grad)
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -176,16 +177,20 @@ def train(
 
             tr_loss  += loss.item(); tr_l2rel += l2rel; n_tr += 1
             train_bar.set_postfix(loss=f"{loss.item():.3e}", l2=f"{l2rel:.2%}", surr=f"{l2rel_surr:.2%}")
-            wandb.log({'batch/loss': loss.item(), 'batch/l2rel': l2rel,
-                       'batch/l2rel_surrogate': l2rel_surr}, step=step)
+            wandb.log({'batch/loss': loss.item(), 'batch/mse': metrics['mse'].item(),
+                       'batch/grad_loss': metrics['grad'].item(),
+                       'batch/l2rel': l2rel, 'batch/l2rel_surrogate': l2rel_surr}, step=step)
             step += 1
 
         tr_loss /= n_tr; tr_l2rel /= n_tr
 
         # ---- Val ----
         ae.eval()
-        vl_loss = vl_l2rel = 0.0
+        vl_loss = vl_mse = vl_grad = vl_l2rel = 0.0
         n_vl = 0
+
+        log_images = (epoch % 5 == 0)
+        img_logged = False
 
         with torch.no_grad():
             for pred_frames, true_frames in tqdm(val_loader, desc=f'  Val   {epoch:>3}', position=1, leave=False, unit='batch'):
@@ -193,14 +198,29 @@ def train(
                 pred = pred_frames.reshape(B * kt, N, N).to(device)
                 true = true_frames.reshape(B * kt, N, N).to(device)
 
-                U_corr  = ae(pred)
-                loss    = ae.loss(U_corr, true)
-                denom   = true.norm() + 1e-8
-                l2rel   = (U_corr - true).norm().item() / denom.item()
+                U_corr          = ae(pred)
+                loss, metrics   = ae.loss(U_corr, true, pred)
+                denom           = true.norm() + 1e-8
+                l2rel           = (U_corr - true).norm().item() / denom.item()
 
-                vl_loss += loss.item(); vl_l2rel += l2rel; n_vl += 1
+                vl_loss += loss.item(); vl_mse += metrics['mse'].item()
+                vl_grad += metrics['grad'].item(); vl_l2rel += l2rel; n_vl += 1
 
-        vl_loss /= n_vl; vl_l2rel /= n_vl
+                # Log quelques frames du premier batch val
+                if log_images and not img_logged:
+                    def _to_img(t):   # (N, N) → wandb.Image normalisé
+                        t = t.float().cpu()
+                        t = (t - t.min()) / (t.max() - t.min() + 1e-8)
+                        return wandb.Image(t.numpy())
+                    wandb.log({
+                        'images/u_pred':      _to_img(pred[0]),
+                        'images/u_corrected': _to_img(U_corr[0]),
+                        'images/u_true':      _to_img(true[0]),
+                        'images/residual':    _to_img((U_corr[0] - pred[0]).abs()),
+                    }, step=step)
+                    img_logged = True
+
+        vl_loss /= n_vl; vl_mse /= n_vl; vl_grad /= n_vl; vl_l2rel /= n_vl
         scheduler.step(vl_l2rel)
 
         epoch_bar.set_postfix(
@@ -210,7 +230,8 @@ def train(
         )
         wandb.log({
             'train/loss': tr_loss, 'train/l2rel': tr_l2rel,
-            'val/loss':   vl_loss, 'val/l2rel':   vl_l2rel,
+            'val/loss':   vl_loss, 'val/mse':     vl_mse,
+            'val/grad_loss': vl_grad, 'val/l2rel': vl_l2rel,
             'lr': optimizer.param_groups[0]['lr'], 'epoch': epoch,
         }, step=step)
 
@@ -222,10 +243,10 @@ def train(
                 'model_state':   best_state,
                 'model_type':    'CorrectionAE',
                 'N':             N,
-                'latent_dim':    latent_dim,
                 'surrogate_ckpt': surrogate_ckpt,
                 'val_l2rel':     best_val,
                 'test_idx':      np.asarray(test_idx),
+                'base_ch':       base_ch,
             }, out_path)
             epoch_bar.write(f"  → best sauvegardé (val L2={best_val:.2%})")
         else:
@@ -252,13 +273,14 @@ if __name__ == '__main__':
     rule           = 'trap'
     interp_size    = 128
 
-    epochs     = 100
-    batch_size = 64
-    kt         = 20
-    latent_dim = 32
-    lr         = 1e-3
-    patience   = 15
-    project    = 'convdiff'
+    epochs      = 100
+    batch_size  = 64
+    kt          = 20
+    base_ch     = 16
+    lr          = 1e-3
+    patience    = 15
+    lambda_grad = 10.0
+    project     = 'convdiff'
 
     dataset = TransientDataset(data_path, laplace=False, interp_size=interp_size, dt=dt)
 
@@ -285,7 +307,7 @@ if __name__ == '__main__':
         train_idx, val_idx, test_idx,
         surrogate_ckpt=surrogate_ckpt,
         epochs=epochs, batch_size=batch_size, kt=kt,
-        latent_dim=latent_dim, lr=lr,
+        base_ch=base_ch, lr=lr, lambda_grad=lambda_grad,
         patience=patience, save_dir=save_dir, project=project,
         N=dataset.N, Nt=dataset.Nt,
     )
