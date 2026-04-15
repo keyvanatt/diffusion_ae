@@ -137,8 +137,8 @@ class TransientDataset(Dataset):
         Calcule les stats de normalisation sur le train set.
 
         - theta     : z-score global  → theta_mean (theta_dim,), theta_std (theta_dim,)
-        - U_laplace : z-score par fréquence → target_mean (Nt_half, 2, 1, 1),
-                                               target_std  (Nt_half, 2, 1, 1)
+        - U_laplace : z-score par fréquence → target_mean (Nt_half, 2, N, N),
+                                               target_std  (Nt_half, 2, N, N)
         """
         self.theta_mean = self.theta[train_indices].mean(0)        # (theta_dim,)
         self.theta_std  = self.theta[train_indices].std(0) + 1e-8
