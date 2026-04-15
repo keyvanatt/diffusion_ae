@@ -331,7 +331,14 @@ Training operates on the Cartesian product of all (simulation, frequency) pairs 
     \mathcal{L}_{\mathrm{AE}} = \|\hat{U} - U\|^2 + \beta\,\|\hat{U}\|^2,
     \label{eq:aeloss}
 \end{equation}
-where the first term is the reconstruction MSE and the second is an $L^2$ regularisation penalty on the output. To ensure diverse frequency coverage within each mini-batch, (simulation, frequency) pairs are reshuffled at the start of each epoch.
+where the first term is the reconstruction MSE and the second is an $L^2$ regularisation penalty on the output. To ensure diverse frequency coverage within each mini-batch, (simulation, frequency) pairs are reshuffled at the start of each epoch. Training and validation $L^2$ relative errors (Figure~\ref{fig:ae_training}) converge in lockstep to approximately 10\% over 100 epochs, with no measurable overfitting.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.65\textwidth]{LaplaceAE_l2rel.png}
+    \caption{LaplaceAE training: relative $L^2$ reconstruction error in the Laplace domain. Both curves converge to $\sim$10\%, setting the irreducible reconstruction floor for downstream surrogates.}
+    \label{fig:ae_training}
+\end{figure}
 
 \paragraph{Autoencoder performance evaluation.}
 The trained autoencoder achieves varying reconstruction accuracy across frequencies. Analysis over 64 test samples reveals the following error profile (Figure~\ref{fig:ae_freq_error}):
@@ -400,7 +407,31 @@ Despite the encouraging reconstruction numbers, this AE design carries several s
 
 Once the frequency-conditioned autoencoder has been trained, its decoder is frozen, and independent surrogates are trained for each frequency. The surrogate operates only on the first $k_{\max}$ frequencies (with $k_{\max} = 20$); higher frequencies are not explicitly predicted. For frequencies $k = 0, 1, \ldots, k_{\max}$, a four-layer MLP with layer normalisation learns the mapping from normalised physical parameters to the latent code: $\vtheta_{\mathrm{norm}} \mapsto z_k \in \R^{d_z}$. The shared decoder is kept frozen to preserve the learned latent structure.
 
-At inference time, each predicted code $z_k$ is decoded using the frozen decoder, which is itself conditioned on the frequency ratio $f_k$ via FiLM, yielding predictions for frequencies $k \leq k_{\max}$. Frequencies $k > k_{\max}$ are left at zero in the normalised space, which corresponds to the mean value after denormalisation. The complete Laplace spectrum is then obtained by Hermitian symmetry (the upper frequencies are conjugates of the lower ones), and the time-domain field is recovered by Laplace inversion as in~\eqref{eq:laplace}. The baseline surrogate (with frozen AE decoder) achieves the error distribution shown in Figure~\ref{fig:latentmodel_baseline}.
+At inference time, each predicted code $z_k$ is decoded using the frozen decoder, which is itself conditioned on the frequency ratio $f_k$ via FiLM, yielding predictions for frequencies $k \leq k_{\max}$. Frequencies $k > k_{\max}$ are left at zero in the normalised space, which corresponds to the mean value after denormalisation. The complete Laplace spectrum is then obtained by Hermitian symmetry (the upper frequencies are conjugates of the lower ones), and the time-domain field is recovered by Laplace inversion as in~\eqref{eq:laplace}. \paragraph{Training dynamics.}
+Surrogates are trained sequentially, one frequency at a time ($k=0,\ldots,k_{\max}$), producing the sawtooth pattern visible in Figures~\ref{fig:surrogate_training_loss}--\ref{fig:surrogate_training_l2rel}: each hump is one MLP trained from scratch.
+
+The validation $L^2$ error in Laplace field space (Figure~\ref{fig:surrogate_training_l2rel}) reflects two compounding sources. First, \emph{regression difficulty increases with frequency}: predicting $z_k$ for high-$k$ fields — which are more oscillatory and vary more non-linearly with $\vtheta$ — yields higher latent MSE (Figure~\ref{fig:surrogate_training_loss}), visible as an upward drift in the loss envelope. Second, \emph{the AE reconstruction floor grows with frequency}: even a perfect latent prediction cannot beat the decoder's own reconstruction error, which rises from $\sim$7\% at $k=0$ to $\sim$14\% at $k=20$ (Figure~\ref{fig:ae_freq_error}). These two effects add up, explaining why the minimum val $L^2$ per hump degrades from 3--5\% at low frequencies to 20--40\% at high frequencies.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{LaplaceLatentSurrogate_Nt150_loss.png}
+        \caption{Training loss in latent space $z$ (log scale).}
+        \label{fig:surrogate_training_loss}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{LaplaceLatentSurrogate_Nt150_l2rel_U.png}
+        \caption{Validation $L^2$ relative error in Laplace field space $\hat{U}$ (log scale).}
+        \label{fig:surrogate_training_l2rel}
+    \end{subfigure}
+    \caption{Per-frequency surrogate training curves (21 surrogates concatenated). Each sawtooth hump = one surrogate trained from scratch. The upward drift in the loss envelope and in the val $L^2$ error reflects the compounding of two effects: (i) harder prediction in $z$ at high frequencies; (ii) a rising AE reconstruction floor inherited from the frozen decoder.}
+    \label{fig:surrogate_training}
+\end{figure}
+
+The baseline surrogate (with frozen AE decoder) achieves the error distribution shown in Figure~\ref{fig:latentmodel_baseline}.
 
 \begin{figure}[htbp]
     \centering
@@ -411,7 +442,16 @@ At inference time, each predicted code $z_k$ is decoded using the frozen decoder
 
 \subsubsection{End-to-End Fine-Tuning}
 
-To further improve accuracy, the frozen decoder is unfrozen and the entire model—both the per-frequency MLPs and the shared decoder—is fine-tuned jointly end-to-end on the training set. Differential learning rates are employed to balance the adaptation: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency parameter-to-latent MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. The training batches are organised in a frequency-first fashion, processing all simulations for a single frequency in one mini-batch. This structure allows for efficient batching: a single forward call through the FiLM-conditioned decoder handles all batch samples simultaneously, improving computational efficiency compared to a naive per-simulation approach. The results of end-to-end fine-tuning are displayed in Figure~\ref{fig:laplacelatent_finetuned}.
+To further improve accuracy, the frozen decoder is unfrozen and the entire model—both the per-frequency MLPs and the shared decoder—is fine-tuned jointly end-to-end on the training set. A key feature of this stage is that the loss is computed directly on the physical-time field $U(t)$, not on the Laplace spectra: since the inverse Laplace transform is differentiable (as discussed in Section~\ref{sec:transient}), the full chain $\vtheta \to z_k \to \hat{U}_k \to U(t)$ can be optimised end-to-end. This choice is deliberate — not all frequencies contribute equally to the reconstructed field, so supervising on $U(t)$ naturally prioritises the frequencies that matter most for the final prediction quality, rather than treating each frequency uniformly. Differential learning rates are employed: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. Training and validation curves are shown in Figure~\ref{fig:finetune_training}: both decrease steadily from $\sim$16\% to $\sim$11\% over 50 epochs, with validation running slightly below training — an artifact of loss averaging (training loss averages over batches computed before the latest weight update, while validation is evaluated after). Training has not fully converged at 50 epochs, but fine-tuning the entire model jointly is significantly slower than training the frozen-decoder surrogates — each forward pass requires inverting the full Laplace spectrum — which practically limits the number of frequencies $k_{\max}$ that can be trained within a reasonable time budget.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.65\textwidth]{LaplaceLatentModel_finetune_e2e.png}
+    \caption{End-to-end fine-tuning: real-space $L^2$ relative error (train and validation) over 50 epochs.}
+    \label{fig:finetune_training}
+\end{figure}
+
+The results of end-to-end fine-tuning are displayed in Figure~\ref{fig:laplacelatent_finetuned}.
 
 \begin{figure}[htbp]
     \centering
@@ -448,6 +488,15 @@ The corrector loss combines reconstruction accuracy with spatial smoothness. Den
     \label{eq:corrloss}
 \end{equation}
 where $\sigma_r = \sigma(r_{\mathrm{true}})$ is the standard deviation of the target residual field, and $\lambda_{\nabla} = 10$ is the gradient weighting parameter. Both the residual MSE and the spatial gradient MSE are normalised by $\sigma_r$, which accounts for the magnitude of the true correction and prevents the loss from being dominated by frames requiring large corrections.
+
+The training and validation $L^2$ relative errors over 100 epochs are shown in Figure~\ref{fig:correction_training}: both decrease from $\sim$9\% to approximately 4--4.5\%, with a small train--val gap appearing from epoch 60 onward due to the sparse temporal sampling ($k_t = 20$ frames per simulation) used during training.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.65\textwidth]{CorrectionAE_l2rel.png}
+    \caption{CorrectionAE training: real-space $L^2$ relative error (train and validation) over 100 epochs.}
+    \label{fig:correction_training}
+\end{figure}
 
 \subsubsection{Results and Comparison}
 

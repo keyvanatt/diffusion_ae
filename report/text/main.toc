@@ -1,4 +1,4 @@
-\babel@toc {english}{}
+\babel@toc {english}{}\relax 
 \contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
 \contentsline {section}{\numberline {2}Preliminary Study: Stationary Dataset}{4}{section.2}%
 \contentsline {subsection}{\numberline {2.1}Problem Statement and Dataset}{4}{subsection.2.1}%
@@ -31,14 +31,15 @@
 \contentsline {paragraph}{Sinusoidal frequency encoding.}{13}{paragraph*.24}%
 \contentsline {paragraph}{FiLM conditioning.}{13}{paragraph*.25}%
 \contentsline {paragraph}{Architecture and training.}{13}{paragraph*.26}%
-\contentsline {paragraph}{Autoencoder performance evaluation.}{14}{paragraph*.27}%
-\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{15}{paragraph*.31}%
-\contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{15}{subsection.3.3}%
+\contentsline {paragraph}{Autoencoder performance evaluation.}{14}{paragraph*.28}%
+\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{17}{paragraph*.32}%
+\contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{17}{subsection.3.3}%
 \contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm {\theta }\to z$}{17}{subsubsection.3.3.1}%
+\contentsline {paragraph}{Training dynamics.}{17}{paragraph*.33}%
 \contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{17}{subsubsection.3.3.2}%
-\contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{17}{paragraph*.34}%
-\contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{18}{subsection.3.4}%
-\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{18}{subsubsection.3.4.1}%
-\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{18}{subsubsection.3.4.2}%
-\contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{19}{subsubsection.3.4.3}%
-\contentsline {section}{\numberline {4}Conclusion}{21}{section.4}%
+\contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{19}{paragraph*.38}%
+\contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{20}{subsection.3.4}%
+\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{20}{subsubsection.3.4.1}%
+\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{20}{subsubsection.3.4.2}%
+\contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{20}{subsubsection.3.4.3}%
+\contentsline {section}{\numberline {4}Conclusion}{23}{section.4}%

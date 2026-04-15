@@ -204,7 +204,7 @@ def train(
                 true = true_frames.reshape(B * kt, N, N).to(device)
 
                 U_corr          = ae(pred)
-                loss, metrics   = ae.loss(U_corr, true, pred)
+                loss, metrics   = ae.loss(U_corr, true, pred, lambda_grad=lambda_grad)
                 denom           = true.norm() + 1e-8
                 l2rel           = (U_corr - true).norm().item() / denom.item()
 
