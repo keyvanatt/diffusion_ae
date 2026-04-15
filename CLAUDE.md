@@ -235,3 +235,47 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 # Évaluation (modifier do_evaluation=True dans main())
 .conda/bin/python transient/main.py
 ```
+
+---
+
+# Rapport LaTeX
+
+Le rapport est dans `report/text/main.tex`. Les figures sont dans `plots/` (chemin relatif configuré via `\graphicspath{{../../plots/}}`).
+
+## Compilation
+
+```bash
+cd report/text && pdflatex -interaction=nonstopmode main.tex
+```
+
+Lancer deux fois si les références croisées changent (avertissement "Label(s) may have changed").
+
+## Structure du document
+
+- **Section 2** — Dataset stationnaire (convection-diffusion 2D) : VAE + décodeur indirect
+- **Section 3** — Dataset transitoire CH4 :
+  - `\subsection{Dataset and Temporal Representation}` : description des données, transformée de Laplace
+  - `\subsection{Latent Space Representation}` :
+    - `\subsubsection{Tucker POD Surrogate}` : algorithme ALS, application, entraînement θ→G, limitations (mémoire + erreur de représentation ~10%)
+    - `\subsubsection{SVD Surrogate in the Laplace Domain}` : SVD par fréquence, limitations
+    - `\subsubsection{Autoencoder-Based Latent Space}` : FiLM, encodage sinusoïdal, évaluation par fréquence
+  - `\subsection{Surrogate and Fine-Tuning}` : surrogate θ→z, finetune end-to-end
+  - `\subsection{Post-Processing and Results}` : UNet résiduel, tableau comparatif
+
+## Commandes LaTeX personnalisées
+
+- `\vtheta` → **θ** (gras)
+- `\R`, `\C`, `\E`, `\KL`, `\diag`
+
+## Figures clés
+
+| Label | Fichier | Introduit dans |
+|---|---|---|
+| `fig:svd`(a) | `svd_convergence.png` | Application to CH4 dataset |
+| `fig:svd`(b) | `SVDSurrogate_l2rel_hist.png` | Limitations (Tucker POD) |
+| `fig:ae_freq_error` | `ae_study_frequency_error.png` | Autoencoder performance |
+| `fig:ae_truncated_error` | `ae_study_laplace_truncated_error.png` | Choix de k_max |
+| `fig:latentmodel_baseline` | `laplacelatentmodel_l2rel_hist.png` | Surrogate baseline |
+| `fig:laplacelatent_finetuned` | `laplacelatentmodel_finetuned_l2rel_hist.png` | Fine-tuning |
+| `fig:correction_unet` | `correctionae_unet_l2rel_hist.png` | Résultats correction |
+| `fig:violin_benchmark` | `benchmark_l2rel.png` | Comparaison finale |
