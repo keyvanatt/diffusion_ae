@@ -87,16 +87,14 @@ def plot_comparison_hist(results, vae_l2rel, out_path):
     if len(results) == 1:
         axes = [axes]
 
-    all_vals = np.concatenate([r for _, r in results] + [vae_l2rel])
-    xmax = min(float(np.percentile(all_vals, 98)), 80.0)
-
     colors = ['steelblue', 'tomato', 'mediumseagreen', 'mediumpurple']
 
     for ax, (label, l2rel), color in zip(axes, results, colors):
         med = np.median(l2rel)
         mu  = np.mean(l2rel)
-        ax.hist(l2rel, bins=40, range=(0, xmax), color=color,
+        ax.hist(l2rel, bins=40, range=(0, 100), color=color,
                 edgecolor='white', alpha=0.85, label='Surrogate')
+        ax.set_xlim(0, 100)
         ax.axvline(med, color='black',  linestyle='--', lw=1.5, label=f'Median {med:.1f}%')
         ax.axvline(mu,  color='grey',   linestyle=':',  lw=1.5, label=f'Mean {mu:.1f}%')
         # VAE floor
@@ -201,6 +199,6 @@ if __name__ == '__main__':
             best_U, best_Uh = U_all, Uh_all
 
     plot_comparison_hist(results, vae_l2rel, OUT_DIR / 'surrogate_l2rel_hist.png')
-    plot_reconstruction(best_U, best_Uh, best_l2rel, best_label, n_show=4,
+    plot_reconstruction(best_U, best_Uh, best_l2rel, best_label, n_show=3,
                         out_path=OUT_DIR / 'surrogate_reconstruction.png')
     print('\nDone.')

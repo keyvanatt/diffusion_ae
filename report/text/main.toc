@@ -16,29 +16,29 @@
 \contentsline {paragraph}{Latent space structure.}{6}{paragraph*.11}%
 \contentsline {paragraph}{Indirect decoder evaluation.}{6}{paragraph*.13}%
 \contentsline {subsection}{\numberline {2.4}Discussion}{8}{subsection.2.4}%
-\contentsline {section}{\numberline {3}Transient CH4 Concentration Fields}{11}{section.3}%
-\contentsline {subsection}{\numberline {3.1}Dataset and Temporal Representation}{11}{subsection.3.1}%
-\contentsline {subsubsection}{\numberline {3.1.1}Dataset}{11}{subsubsection.3.1.1}%
-\contentsline {subsubsection}{\numberline {3.1.2}Laplace Transform}{11}{subsubsection.3.1.2}%
-\contentsline {subsection}{\numberline {3.2}Latent Space Representation}{12}{subsection.3.2}%
-\contentsline {subsubsection}{\numberline {3.2.1}Tucker POD Surrogate}{12}{subsubsection.3.2.1}%
-\contentsline {paragraph}{Algorithm.}{12}{paragraph*.18}%
-\contentsline {paragraph}{Application to the CH4 dataset.}{12}{paragraph*.19}%
-\contentsline {paragraph}{Surrogate training.}{12}{paragraph*.20}%
+\contentsline {section}{\numberline {3}Transient CH4 Concentration Fields}{10}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Dataset and Temporal Representation}{10}{subsection.3.1}%
+\contentsline {subsubsection}{\numberline {3.1.1}Dataset}{10}{subsubsection.3.1.1}%
+\contentsline {subsubsection}{\numberline {3.1.2}Laplace Transform}{10}{subsubsection.3.1.2}%
+\contentsline {subsection}{\numberline {3.2}Latent Space Representation}{11}{subsection.3.2}%
+\contentsline {subsubsection}{\numberline {3.2.1}Tucker POD Surrogate}{11}{subsubsection.3.2.1}%
+\contentsline {paragraph}{Algorithm.}{11}{paragraph*.18}%
+\contentsline {paragraph}{Application to the CH4 dataset.}{11}{paragraph*.19}%
+\contentsline {paragraph}{Surrogate training.}{11}{paragraph*.20}%
 \contentsline {paragraph}{Limitations.}{12}{paragraph*.22}%
-\contentsline {subsubsection}{\numberline {3.2.2}SVD Surrogate in the Laplace Domain}{13}{subsubsection.3.2.2}%
-\contentsline {subsubsection}{\numberline {3.2.3}Autoencoder-Based Latent Space}{14}{subsubsection.3.2.3}%
-\contentsline {paragraph}{Sinusoidal frequency encoding.}{14}{paragraph*.24}%
-\contentsline {paragraph}{FiLM conditioning.}{14}{paragraph*.25}%
-\contentsline {paragraph}{Architecture and training.}{14}{paragraph*.26}%
-\contentsline {paragraph}{Autoencoder performance evaluation.}{15}{paragraph*.27}%
-\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{16}{paragraph*.31}%
-\contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{17}{subsection.3.3}%
+\contentsline {subsubsection}{\numberline {3.2.2}SVD Surrogate in the Laplace Domain}{12}{subsubsection.3.2.2}%
+\contentsline {subsubsection}{\numberline {3.2.3}Autoencoder-Based Latent Space}{13}{subsubsection.3.2.3}%
+\contentsline {paragraph}{Sinusoidal frequency encoding.}{13}{paragraph*.24}%
+\contentsline {paragraph}{FiLM conditioning.}{13}{paragraph*.25}%
+\contentsline {paragraph}{Architecture and training.}{13}{paragraph*.26}%
+\contentsline {paragraph}{Autoencoder performance evaluation.}{14}{paragraph*.27}%
+\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{15}{paragraph*.31}%
+\contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{15}{subsection.3.3}%
 \contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm {\theta }\to z$}{17}{subsubsection.3.3.1}%
 \contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{17}{subsubsection.3.3.2}%
 \contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{17}{paragraph*.34}%
 \contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{18}{subsection.3.4}%
 \contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{18}{subsubsection.3.4.1}%
-\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{19}{subsubsection.3.4.2}%
+\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{18}{subsubsection.3.4.2}%
 \contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{19}{subsubsection.3.4.3}%
 \contentsline {section}{\numberline {4}Conclusion}{21}{section.4}%

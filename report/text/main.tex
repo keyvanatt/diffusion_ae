@@ -136,7 +136,7 @@ Figure~\ref{fig:vae_recon} displays ground-truth fields alongside VAE reconstruc
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth, height=0.82\textheight, keepaspectratio]{vae_reconstruction.png}
+    \includegraphics[width=0.82\textwidth, height=0.82\textheight, keepaspectratio]{vae_reconstruction.png}
     \caption{VAE reconstruction on three randomly selected test samples. Left: ground truth. Centre: reconstruction. Right: pointwise absolute error. Residuals concentrate along steep gradient fronts.}
     \label{fig:vae_recon}
 \end{figure}
@@ -184,7 +184,7 @@ Two findings stand out. First, keeping the decoder frozen yields poor surrogate 
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth, height=0.82\textheight, keepaspectratio]{surrogate_reconstruction.png}
+    \includegraphics[width=0.82\textwidth, height=0.82\textheight, keepaspectratio]{surrogate_reconstruction.png}
     \caption{Surrogate reconstruction ($d_z=32$, end-to-end) on three randomly selected test samples. Residuals concentrate along steep gradient fronts, consistent with the VAE reconstruction errors.}
     \label{fig:surrogate_recon}
 \end{figure}
@@ -205,7 +205,9 @@ The two-stage pipeline performs well on the stationary problem: the end-to-end s
 
 \subsubsection{Dataset}
 
-The transient experiments use a dataset of 8\,100 simulations of atmospheric methane (CH\textsubscript{4}) concentration fields. Each simulation yields a time series of 150 snapshots on a $200 \times 200$ spatial grid, forming a tensor of shape $(8100, 150, 200, 200)$. The physical parameter vector is $\vtheta = (k, A, C)$, representing the reaction rate, source amplitude, and initial concentration respectively. To accommodate the $\sim 17$ GB total dataset size, all data are loaded and processed using memory-mapped arrays, avoiding materialisation of the full tensor in RAM at any point.
+The transient experiments use a dataset of 8\,100 simulations of atmospheric methane (CH\textsubscript{4}) concentration fields. Each simulation yields a time series of 150 snapshots on a $200 \times 200$ spatial grid, forming a tensor of shape $(8100, 150, 200, 200)$. The physical parameter vector is $\vtheta = (k, A, C)$, where $k$ is the reaction rate, $A$ the rotation angle of the source plume, and $C$ the initial concentration. To accommodate the $\sim 17$ GB total dataset size, all data are loaded and processed using memory-mapped arrays, avoiding materialisation of the full tensor in RAM at any point.
+
+The 8\,100 samples were obtained by data augmentation from 225 base simulations. In the original dataset, the source amplitude parameter was fixed at $A = 0$ for all simulations, leaving only $(k, C)$ as free parameters. To introduce directional variability and increase dataset size, each base simulation was replicated under 36 uniform rotations of the spatial field, with angles $\theta \in \{0^\circ, 10^\circ, \ldots, 350^\circ\}$, giving $225 \times 36 = 8\,100$ samples. The rotation angle $\theta$ is stored as the parameter $A$ in the dataset, so the effective parameter space explored is $(k, \theta, C)$. Rotations were applied frame-by-frame using bilinear interpolation, with border replication to avoid introducing artificial zero-padding artefacts.
 
 Figure~\ref{fig:ch4_dataset} shows a representative example of the transient field evolution over time. The dataset captures an exothermic combustion reaction: methane released from a point source undergoes rapid oxidation, releasing energy. This chemical reaction drives sharp concentration gradients and fast transient dynamics early in the evolution. A critical challenge for the surrogate is the presence of an \emph{explosion-like} phenomenon: the initial reaction creates localised high-intensity regions with steep spatial gradients that evolve rapidly. Capturing this violent early-time behaviour requires both fine spatial resolution (high-frequency modes to represent the sharp concentration fronts) and accurate temporal dynamics (to predict the reaction-driven evolution). Surrogates that fail to resolve the combustion transient will accumulate error early in the simulation, which then propagates through subsequent diffusion and dilution phases, compounding the overall prediction error.
 
@@ -366,19 +368,20 @@ Detailed reconstructions at selected frequencies (k = 0, 10, 20) illustrate the 
 
 \begin{figure}[htbp]
     \centering
-    \begin{subfigure}[b]{0.32\textwidth}
+    \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{ae_study_freq_00.png}
         \caption{k=0 (DC)}
     \end{subfigure}
     \hfill
-    \begin{subfigure}[b]{0.32\textwidth}
+    \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{ae_study_freq_10.png}
         \caption{k=10 (mid)}
     \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.32\textwidth}
+
+    \vspace{0.5em}
+    \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{ae_study_freq_20.png}
         \caption{k=20 (high)}
