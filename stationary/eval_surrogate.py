@@ -115,9 +115,9 @@ def plot_comparison_hist(results, vae_l2rel, out_path):
 
 
 # ── Figure 2 : grille reconstruction (meilleur modèle) ───────────────────────
-def plot_reconstruction(U_all, Uh_all, l2rel, label, n_show, out_path):
-    order = np.argsort(l2rel)
-    idx   = order[np.linspace(0, len(order) - 1, n_show, dtype=int)]
+def plot_reconstruction(U_all, Uh_all, l2rel, label, n_show, out_path, seed=7):
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(l2rel), size=n_show, replace=False)
 
     fig, axes = plt.subplots(n_show, 3, figsize=(9, 3 * n_show))
     for row, i in enumerate(idx):

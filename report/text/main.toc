@@ -4,41 +4,41 @@
 \contentsline {subsection}{\numberline {2.1}Problem Statement and Dataset}{4}{subsection.2.1}%
 \contentsline {subsection}{\numberline {2.2}Model}{4}{subsection.2.2}%
 \contentsline {subsubsection}{\numberline {2.2.1}Variational Autoencoder}{4}{subsubsection.2.2.1}%
-\contentsline {paragraph}{Encoder.}{5}{paragraph*.2}%
+\contentsline {paragraph}{Encoder.}{4}{paragraph*.2}%
 \contentsline {paragraph}{Decoder.}{5}{paragraph*.3}%
 \contentsline {paragraph}{Training objective.}{5}{paragraph*.4}%
-\contentsline {paragraph}{Optimisation.}{5}{paragraph*.5}%
 \contentsline {subsubsection}{\numberline {2.2.2}Indirect Decoder $\bm {\theta }\to z \to U$}{5}{subsubsection.2.2.2}%
-\contentsline {paragraph}{Architecture.}{5}{paragraph*.6}%
-\contentsline {paragraph}{Training objective.}{5}{paragraph*.7}%
-\contentsline {subsection}{\numberline {2.3}Results}{6}{subsection.2.3}%
-\contentsline {paragraph}{Quantitative performance.}{6}{paragraph*.8}%
-\contentsline {paragraph}{Qualitative reconstruction.}{6}{paragraph*.10}%
-\contentsline {paragraph}{Latent space structure.}{6}{paragraph*.12}%
-\contentsline {paragraph}{Indirect decoder — surrogate evaluation.}{8}{paragraph*.14}%
+\contentsline {paragraph}{Architecture.}{5}{paragraph*.5}%
+\contentsline {paragraph}{Training objective.}{5}{paragraph*.6}%
+\contentsline {subsection}{\numberline {2.3}Results}{5}{subsection.2.3}%
+\contentsline {paragraph}{Quantitative performance.}{5}{paragraph*.7}%
+\contentsline {paragraph}{Qualitative reconstruction.}{6}{paragraph*.9}%
+\contentsline {paragraph}{Latent space structure.}{6}{paragraph*.11}%
+\contentsline {paragraph}{Indirect decoder evaluation.}{6}{paragraph*.13}%
+\contentsline {subsection}{\numberline {2.4}Discussion}{8}{subsection.2.4}%
 \contentsline {section}{\numberline {3}Transient CH4 Concentration Fields}{11}{section.3}%
 \contentsline {subsection}{\numberline {3.1}Dataset and Temporal Representation}{11}{subsection.3.1}%
 \contentsline {subsubsection}{\numberline {3.1.1}Dataset}{11}{subsubsection.3.1.1}%
 \contentsline {subsubsection}{\numberline {3.1.2}Laplace Transform}{11}{subsubsection.3.1.2}%
 \contentsline {subsection}{\numberline {3.2}Latent Space Representation}{12}{subsection.3.2}%
 \contentsline {subsubsection}{\numberline {3.2.1}Tucker POD Surrogate}{12}{subsubsection.3.2.1}%
-\contentsline {paragraph}{Algorithm.}{12}{paragraph*.19}%
-\contentsline {paragraph}{Application to the CH4 dataset.}{12}{paragraph*.20}%
-\contentsline {paragraph}{Surrogate training.}{12}{paragraph*.21}%
-\contentsline {paragraph}{Limitations.}{13}{paragraph*.23}%
+\contentsline {paragraph}{Algorithm.}{12}{paragraph*.18}%
+\contentsline {paragraph}{Application to the CH4 dataset.}{12}{paragraph*.19}%
+\contentsline {paragraph}{Surrogate training.}{12}{paragraph*.20}%
+\contentsline {paragraph}{Limitations.}{12}{paragraph*.22}%
 \contentsline {subsubsection}{\numberline {3.2.2}SVD Surrogate in the Laplace Domain}{13}{subsubsection.3.2.2}%
 \contentsline {subsubsection}{\numberline {3.2.3}Autoencoder-Based Latent Space}{14}{subsubsection.3.2.3}%
-\contentsline {paragraph}{Sinusoidal frequency encoding.}{14}{paragraph*.25}%
-\contentsline {paragraph}{FiLM conditioning.}{14}{paragraph*.26}%
-\contentsline {paragraph}{Architecture and training.}{14}{paragraph*.27}%
-\contentsline {paragraph}{Autoencoder performance evaluation.}{15}{paragraph*.28}%
-\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{16}{paragraph*.32}%
+\contentsline {paragraph}{Sinusoidal frequency encoding.}{14}{paragraph*.24}%
+\contentsline {paragraph}{FiLM conditioning.}{14}{paragraph*.25}%
+\contentsline {paragraph}{Architecture and training.}{14}{paragraph*.26}%
+\contentsline {paragraph}{Autoencoder performance evaluation.}{15}{paragraph*.27}%
+\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{16}{paragraph*.31}%
 \contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{17}{subsection.3.3}%
 \contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm {\theta }\to z$}{17}{subsubsection.3.3.1}%
-\contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{18}{subsubsection.3.3.2}%
-\contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{18}{paragraph*.35}%
+\contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{17}{subsubsection.3.3.2}%
+\contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{17}{paragraph*.34}%
 \contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{18}{subsection.3.4}%
 \contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{18}{subsubsection.3.4.1}%
 \contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{19}{subsubsection.3.4.2}%
 \contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{19}{subsubsection.3.4.3}%
-\contentsline {section}{\numberline {4}Conclusion}{22}{section.4}%
+\contentsline {section}{\numberline {4}Conclusion}{21}{section.4}%

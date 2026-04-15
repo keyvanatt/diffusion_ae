@@ -1,0 +1,74 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\babel@aux[2]{}
+\@nameuse{bbl@beforestart}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldcontentsline\contentsline
+\gdef\contentsline#1#2#3#4{\oldcontentsline{#1}{#2}{#3}}
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\contentsline\oldcontentsline
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\babel@aux{english}{}
+\citation{ammar2024hybrid}
+\citation{quarteroni2025}
+\citation{karniadakis2021}
+\citation{quarteroni2025}
+\citation{karniadakis2021}
+\citation{meng2021survey}
+\citation{fan2024}
+\citation{guo2022}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{3}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Preliminary Study: Stationary Dataset}{4}{section.2}\protected@file@percent }
+\newlabel{sec:stationary}{{2}{4}{Preliminary Study: Stationary Dataset}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Problem Statement and Dataset}{4}{subsection.2.1}\protected@file@percent }
+\newlabel{eq:convdiff}{{1}{4}{Problem Statement and Dataset}{equation.2.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Representative sample of the generated dataset.\relax }}{4}{figure.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:dataset}{{1}{4}{Representative sample of the generated dataset.\relax }{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Model}{5}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.2.1}Variational Autoencoder}{5}{subsubsection.2.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Encoder.}{5}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Decoder.}{5}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Training objective.}{5}{section*.5}\protected@file@percent }
+\newlabel{eq:elbo}{{2}{5}{Training objective}{equation.2.2}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.2.2}Indirect Decoder $\bm  {\theta }\to z \to U$}{5}{subsubsection.2.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Architecture.}{5}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Training objective.}{6}{section*.7}\protected@file@percent }
+\newlabel{eq:dec_loss}{{3}{6}{Training objective}{equation.2.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Results}{6}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Quantitative performance.}{6}{section*.8}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Distribution of relative $L^2$ reconstruction error on the 1\,000-sample test set (median 8.1\%, mean 11.5\%).\relax }}{6}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:vae_hist}{{2}{6}{Distribution of relative $L^2$ reconstruction error on the 1\,000-sample test set (median 8.1\%, mean 11.5\%).\relax }{figure.caption.9}{}}
+\@writefile{toc}{\contentsline {paragraph}{Qualitative reconstruction.}{7}{section*.10}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces VAE reconstruction on three randomly selected test samples. Left: ground truth. Centre: reconstruction. Right: pointwise absolute error. Residuals concentrate along steep gradient fronts.\relax }}{7}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:vae_recon}{{3}{7}{VAE reconstruction on three randomly selected test samples. Left: ground truth. Centre: reconstruction. Right: pointwise absolute error. Residuals concentrate along steep gradient fronts.\relax }{figure.caption.11}{}}
+\@writefile{toc}{\contentsline {paragraph}{Latent space structure.}{7}{section*.12}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces PCA projection of the VAE latent space coloured by the four physical parameters $D$, $b_x$, $b_y$, $f$. Each point is one test sample. Smooth colour gradients indicate that the encoder maps the parameter space continuously into the latent space.\relax }}{8}{figure.caption.13}\protected@file@percent }
+\newlabel{fig:vae_pca}{{4}{8}{PCA projection of the VAE latent space coloured by the four physical parameters $D$, $b_x$, $b_y$, $f$. Each point is one test sample. Smooth colour gradients indicate that the encoder maps the parameter space continuously into the latent space.\relax }{figure.caption.13}{}}
+\@writefile{toc}{\contentsline {paragraph}{Indirect decoder evaluation.}{8}{section*.14}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Test-set error distributions for the four surrogate variants. The orange vertical line marks the VAE reconstruction floor (median 8.1\%). End-to-end fine-tuning brings the $d_z=32$ surrogate close to this floor.\relax }}{9}{figure.caption.16}\protected@file@percent }
+\newlabel{fig:surrogate_hist}{{5}{9}{Test-set error distributions for the four surrogate variants. The orange vertical line marks the VAE reconstruction floor (median 8.1\%). End-to-end fine-tuning brings the $d_z=32$ surrogate close to this floor.\relax }{figure.caption.16}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Relative $L^2$ error on the 1\,000-sample test set for all surrogate variants. The VAE reconstruction floor is included as reference.\relax }}{10}{table.caption.15}\protected@file@percent }
+\newlabel{tab:surrogate}{{1}{10}{Relative $L^2$ error on the 1\,000-sample test set for all surrogate variants. The VAE reconstruction floor is included as reference.\relax }{table.caption.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Discussion}{10}{subsection.2.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Surrogate reconstruction ($d_z=32$, end-to-end) on three randomly selected test samples. Residuals concentrate along steep gradient fronts, consistent with the VAE reconstruction errors.\relax }}{11}{figure.caption.17}\protected@file@percent }
+\newlabel{fig:surrogate_recon}{{6}{11}{Surrogate reconstruction ($d_z=32$, end-to-end) on three randomly selected test samples. Residuals concentrate along steep gradient fronts, consistent with the VAE reconstruction errors.\relax }{figure.caption.17}{}}
+\citation{ammar2024hybrid}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Transient CH4 Concentration Fields}{12}{section.3}\protected@file@percent }
+\newlabel{sec:transient}{{3}{12}{Transient CH4 Concentration Fields}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Dataset and Temporal Representation}{12}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.1}Dataset}{12}{subsubsection.3.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.2}Laplace Transform}{12}{subsubsection.3.1.2}\protected@file@percent }
+\newlabel{eq:laplace}{{4}{12}{Laplace Transform}{equation.3.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Transient CH\textsubscript  {4} concentration field at three snapshots: initial (t=0), mid-time (t=75), and final (t=149). The field evolves from a concentrated plume to a dispersed distribution, illustrating the combined effect of atmospheric diffusion and chemical reactions.\relax }}{13}{figure.caption.18}\protected@file@percent }
+\newlabel{fig:ch4_dataset}{{7}{13}{Transient CH\textsubscript {4} concentration field at three snapshots: initial (t=0), mid-time (t=75), and final (t=149). The field evolves from a concentrated plume to a dispersed distribution, illustrating the

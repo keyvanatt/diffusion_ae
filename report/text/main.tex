@@ -1,7 +1,7 @@
 % Technical report — Neural surrogates for PDE emulation
 \documentclass[a4paper]{article}
 
-\usepackage[a4paper, fancysections, titlepage]{polytechnique}
+\usepackage[a4paper, titlepage]{polytechnique}
 \usepackage[english]{babel}
 \usepackage[T1]{fontenc}
 \usepackage[hidelinks]{hyperref}
@@ -95,9 +95,6 @@ The model is trained by maximising the evidence lower bound (ELBO):
 \end{equation}
 where the reconstruction term penalises pixel-wise squared errors. The gradient consistency term $\mathcal{L}_{\mathrm{grad}}$ applies a spatially weighted penalty on finite-difference approximations of $\partial_x$ and $\partial_y$, with per-location weights proportional to the ground-truth gradient magnitude; this focuses the penalty on sharp fronts characteristic of convection-dominated regimes. The KL divergence is computed with a \emph{free-bits} threshold $\lambda_{\mathrm{fb}} = 0.1$ per latent dimension: dimensions whose per-dimension KL falls below this threshold are not penalised, preventing posterior collapse. To stabilise training, $\beta$ is linearly annealed from $0$ to its target value over the first 80 epochs.
 
-\paragraph{Optimisation.}
-The VAE is trained with AdamW (lr $= 10^{-3}$, weight decay $= 10^{-5}$) and gradient clipping at norm 1. A ReduceLROnPlateau scheduler (factor 0.5, patience 7) adapts the learning rate. The dataset is split 80/10/10 (train/val/test); the best checkpoint is selected on validation reconstruction loss, with early stopping after 150 epochs without improvement (up to 500 epochs total).
-
 \subsubsection{Indirect Decoder \texorpdfstring{$\vtheta \to z \to U$}{theta to z to U}}
 
 The second stage decouples surrogate training from representation learning. Once the VAE is trained, its decoder $p_\psi$ is frozen and only a lightweight projection network is optimised.
@@ -135,12 +132,12 @@ Figure~\ref{fig:vae_hist} shows the distribution of $\varepsilon_{\mathrm{rel}}$
 \end{figure}
 
 \paragraph{Qualitative reconstruction.}
-Figure~\ref{fig:vae_recon} displays ground-truth fields alongside VAE reconstructions and pointwise absolute errors at four representative error quantiles. At low-to-median error levels the autoencoder recovers the global field structure faithfully, including the asymmetric concentration plume driven by the convection velocity. Residual errors concentrate around steep gradient regions and near the downstream boundary, where the latent code has insufficient resolution to capture fine spatial detail. At higher error quantiles the reconstruction smooths out the sharpest gradients, consistent with the lossy nature of the $32$-dimensional bottleneck.
+Figure~\ref{fig:vae_recon} displays ground-truth fields alongside VAE reconstructions and pointwise absolute errors on three randomly selected test samples. The autoencoder recovers the global field structure faithfully, including the asymmetric concentration plume driven by the convection velocity. A recurring failure mode is the appearance of faint spurious \emph{rays} in the reconstructed field — traces of convection directions present in other training configurations that bleed into the reconstruction through the shared latent space. This is a manifestation of regression to the mean: the decoder, having seen many plumes oriented in different directions, produces a weighted average of nearby configurations rather than committing to the sharp, direction-specific gradient of the target. The effect is most visible when the convection vector $\bm{b}$ places the solution near the boundary of a high-density region of the training distribution, where the latent code is pulled towards the centroid of a cluster of neighbouring configurations.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.95\textwidth, height=0.82\textheight, keepaspectratio]{vae_reconstruction.png}
-    \caption{VAE reconstruction at four error quantiles (rows). Left: ground truth. Centre: reconstruction. Right: pointwise absolute error. Residuals concentrate along steep gradient fronts.}
+    \caption{VAE reconstruction on three randomly selected test samples. Left: ground truth. Centre: reconstruction. Right: pointwise absolute error. Residuals concentrate along steep gradient fronts.}
     \label{fig:vae_recon}
 \end{figure}
 
@@ -154,7 +151,7 @@ Figure~\ref{fig:vae_pca} shows a PCA projection of the 32-dimensional latent cod
     \label{fig:vae_pca}
 \end{figure}
 
-\paragraph{Indirect decoder — surrogate evaluation.}
+\paragraph{Indirect decoder evaluation.}
 Four variants of the indirect decoder are evaluated on the same 1\,000-sample test set, varying the latent dimension ($d_z \in \{3, 32\}$) and whether the VAE decoder is kept frozen or jointly fine-tuned end-to-end during surrogate training.
 Table~\ref{tab:surrogate} summarises the results; Figure~\ref{fig:surrogate_hist} shows the corresponding error distributions alongside the VAE reconstruction floor.
 
@@ -183,16 +180,20 @@ Table~\ref{tab:surrogate} summarises the results; Figure~\ref{fig:surrogate_hist
     \label{fig:surrogate_hist}
 \end{figure}
 
-Two findings stand out. First, keeping the decoder frozen yields poor surrogate performance (median 27--33\%): the MLP must predict a latent code that lies precisely in the region of $\R^{d_z}$ that the frozen decoder can decode accurately, which is a highly constrained and non-trivial regression problem. Second, unlocking the decoder for end-to-end fine-tuning dramatically reduces the error: the $d_z=32$ variant reaches a median of \textbf{9.9\%}, only 1.8 percentage points above the VAE reconstruction floor. The residual gap reflects the irreducible difficulty of regressing $\vtheta \mapsto z$ — the surrogate cannot recover information that the encoder did not compress into the latent code. The $d_z=3$ variant, while substantially better than its frozen counterpart, remains at 14.0\% median: the three-dimensional bottle\-neck retains too little information about the field structure for the surrogate to recover fine spatial detail.
+Two findings stand out. First, keeping the decoder frozen yields poor surrogate performance (median 27--33\%): the MLP must map $\vtheta$ to a latent code that lies precisely in the region of $\R^{d_z}$ that the frozen decoder can process accurately, which is a highly constrained and non-trivial regression target. Second, unlocking the decoder for end-to-end fine-tuning dramatically reduces the error: the $d_z=32$ variant reaches a median of \textbf{9.9\%}, only 1.8 percentage points above the VAE reconstruction floor of 8.1\%. This near-coincidence is the central result: the MLP regression $\vtheta \mapsto z$ contributes only marginally to the total error. The dominant source of error is the VAE bottleneck itself — the same spurious rays and gradient smoothing already identified in the VAE qualitative analysis above. In other words, the surrogate does not introduce significant new errors; it essentially inherits the imperfections of the latent representation. The $d_z=3$ variant, while substantially better than its frozen counterpart, remains at 14.0\% because the three-dimensional bottleneck discards too much spatial information for any surrogate to recover, regardless of how accurate the $\vtheta \mapsto z$ regression is.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.95\textwidth, height=0.82\textheight, keepaspectratio]{surrogate_reconstruction.png}
-    \caption{Surrogate reconstruction ($d_z=32$, end-to-end) at four error quantiles. Residuals concentrate along steep gradient fronts, mirroring the VAE reconstruction errors.}
+    \caption{Surrogate reconstruction ($d_z=32$, end-to-end) on three randomly selected test samples. Residuals concentrate along steep gradient fronts, consistent with the VAE reconstruction errors.}
     \label{fig:surrogate_recon}
 \end{figure}
 
-Figure~\ref{fig:surrogate_recon} confirms qualitatively that the best surrogate ($d_z=32$, end-to-end) reproduces the field structure faithfully across the test range, with errors concentrated in the same high-gradient regions as the VAE. This suggests that the dominant error source in the full pipeline is the representation bottleneck of the autoencoder rather than the surrogate regression step — a useful diagnostic for future architecture improvements.
+Figure~\ref{fig:surrogate_recon} confirms this qualitatively: the spatial structure of the surrogate errors is indistinguishable from that of the VAE errors in Figure~\ref{fig:vae_recon} — the same spurious directional rays, the same gradient smoothing at sharp fronts. The surrogate does not introduce new artefacts; it faithfully propagates the limitations of the latent representation. Improving the surrogate accuracy therefore requires improving the autoencoder, not the MLP.
+
+\subsection{Discussion}
+
+The two-stage pipeline performs well on the stationary problem: the end-to-end surrogate reaches 9.9\% median error, close to the 8.1\% VAE floor. Further architectural improvements are possible but not the primary focus of this work. The key takeaway is that a convolutional autoencoder can reliably organise a compact, physically structured latent space from PDE solution fields — giving us confidence that the same strategy, extended to the spectral structure of transient data, will provide a solid foundation for the more demanding surrogate developed in the following sections.
 
 % ============================================================
 \newpage
