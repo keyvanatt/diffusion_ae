@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.3.21)  20 APR 2026 11:43
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.3.21)  20 APR 2026 12:06
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -905,7 +905,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 248.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 247.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [11 <../../plots//ch4_dataset_timeseries.png>]
 <../../plots//gamma_opti_energy.png, id=292, 715.473pt x 354.6048pt>
@@ -975,7 +975,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 303.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 301.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [13 <../../plots//gamma_opti.png>]
 <../../plots//svd_convergence.png, id=321, 578.16pt x 289.08pt>
@@ -1000,7 +1000,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 348.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 344.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [14 <../../plots//svd_convergence.png> <../../plots//SVDSurrogate_l2rel_hist.png>]
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -1009,7 +1009,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 372.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 367.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [15 <../../plots//LaplaceSVDModel_svd_error_ksvd100.png>]
 <../../plots//LaplaceAE_l2rel.png, id=354, 2537.48pt x 1332.98pt>
@@ -1029,7 +1029,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 395.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 394.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [16 <../../plots//LaplaceAE_l2rel.png> <../../plots//ae_study_frequency_error.png>]
 <../../plots//ae_study_temporal_error.png, id=369, 715.9548pt x 353.1594pt>
@@ -1071,27 +1071,27 @@ File: polytechnique-logohori.pdf Graphic file (type pdf)
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 430.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [18 <../../plots//ae_study_freq_00.png> <../../plots//ae_study_freq_10.png> <../../plots//ae_study_freq_20.png>]
-<../../plots//LaplaceLatentSurrogate_Nt150_loss.png, id=391, 2537.48pt x 1332.98pt>
+<../../plots//LaplaceLatentSurrogate_Nt150_loss.png, id=392, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceLatentSurrogate_Nt150_loss.png Graphic file (type png)
 <use ../../plots//LaplaceLatentSurrogate_Nt150_loss.png>
 Package pdftex.def Info: ../../plots//LaplaceLatentSurrogate_Nt150_loss.png  used on input line 445.
 (pdftex.def)             Requested size: 232.17242pt x 121.9563pt.
-<../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png, id=392, 2537.48pt x 1332.98pt>
+<../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png, id=393, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png Graphic file (type png)
 <use ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png>
 Package pdftex.def Info: ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png  used on input line 452.
 (pdftex.def)             Requested size: 232.17242pt x 121.9563pt.
-<../../plots//laplacelatentmodel_l2rel_hist.png, id=394, 624.4128pt x 351.2322pt>
+<../../plots//laplacelatentmodel_l2rel_hist.png, id=395, 624.4128pt x 351.2322pt>
 File: ../../plots//laplacelatentmodel_l2rel_hist.png Graphic file (type png)
 <use ../../plots//laplacelatentmodel_l2rel_hist.png>
 Package pdftex.def Info: ../../plots//laplacelatentmodel_l2rel_hist.png  used on input line 464.
 (pdftex.def)             Requested size: 338.58632pt x 190.45575pt.
-<../../plots//LaplaceLatentModel_finetune_e2e.png, id=397, 2537.48pt x 1332.98pt>
+<../../plots//LaplaceLatentModel_finetune_e2e.png, id=398, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceLatentModel_finetune_e2e.png Graphic file (type png)
 <use ../../plots//LaplaceLatentModel_finetune_e2e.png>
 Package pdftex.def Info: ../../plots//LaplaceLatentModel_finetune_e2e.png  used on input line 477.
 (pdftex.def)             Requested size: 232.17242pt x 121.9563pt.
-<../../plots//laplacelatentmodel_finetuned_l2rel_hist.png, id=398, 624.4128pt x 351.2322pt>
+<../../plots//laplacelatentmodel_finetuned_l2rel_hist.png, id=399, 624.4128pt x 351.2322pt>
 File: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png Graphic file (type png)
 <use ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>
 Package pdftex.def Info: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png  used on input line 484.
@@ -1115,12 +1115,12 @@ File: polytechnique-logohori.pdf Graphic file (type pdf)
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 494.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [20 <../../plots//laplacelatentmodel_l2rel_hist.png> <../../plots//LaplaceLatentModel_finetune_e2e.png> <../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>]
-<../../plots//CorrectionAE_l2rel.png, id=421, 2537.48pt x 1332.98pt>
+<../../plots//CorrectionAE_l2rel.png, id=423, 2537.48pt x 1332.98pt>
 File: ../../plots//CorrectionAE_l2rel.png Graphic file (type png)
 <use ../../plots//CorrectionAE_l2rel.png>
 Package pdftex.def Info: ../../plots//CorrectionAE_l2rel.png  used on input line 526.
 (pdftex.def)             Requested size: 232.17242pt x 121.9563pt.
-<../../plots//correctionae_unet_l2rel_hist.png, id=422, 618.1494pt x 351.2322pt>
+<../../plots//correctionae_unet_l2rel_hist.png, id=424, 618.1494pt x 351.2322pt>
 File: ../../plots//correctionae_unet_l2rel_hist.png Graphic file (type png)
 <use ../../plots//correctionae_unet_l2rel_hist.png>
 Package pdftex.def Info: ../../plots//correctionae_unet_l2rel_hist.png  used on input line 533.
@@ -1148,7 +1148,7 @@ File: polytechnique-logohori.pdf Graphic file (type pdf)
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 673.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [22 <../../plots//CorrectionAE_l2rel.png> <../../plots//correctionae_unet_l2rel_hist.png>]
-<../../plots//benchmark_l2rel.png, id=454, 860.4948pt x 426.393pt>
+<../../plots//benchmark_l2rel.png, id=456, 860.4948pt x 426.393pt>
 File: ../../plots//benchmark_l2rel.png Graphic file (type png)
 <use ../../plots//benchmark_l2rel.png>
 Package pdftex.def Info: ../../plots//benchmark_l2rel.png  used on input line 676.
@@ -1187,16 +1187,16 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 Here is how much of TeX's memory you used:
  23809 strings out of 481008
  429791 string characters out of 5909439
- 754910 words of memory out of 5000000
+ 754996 words of memory out of 5000000
  40374 multiletter control sequences out of 15000+600000
  530467 words of font info for 109 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 87i,14n,88p,1464b,988s stack positions out of 5000i,500n,10000p,200000b,80000s
+ 87i,14n,88p,1465b,988s stack positions out of 5000i,500n,10000p,200000b,80000s
 {/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}</usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmri10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmssbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsso8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msam10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm5.pfb>
-Output written on main.pdf (25 pages, 5085180 bytes).
+Output written on main.pdf (25 pages, 5086491 bytes).
 PDF statistics:
- 623 PDF objects out of 1000 (max. 8388607)
- 493 compressed objects within 5 object streams
+ 625 PDF objects out of 1000 (max. 8388607)
+ 495 compressed objects within 5 object streams
  121 named destinations out of 1000 (max. 500000)
  363 words of extra memory for PDF output out of 10000 (max. 10000000)
 
