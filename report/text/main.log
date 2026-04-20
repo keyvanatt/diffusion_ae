@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.3.21)  20 APR 2026 10:52
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.3.21)  20 APR 2026 11:34
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -827,6 +827,11 @@ File: ../../plots//vae_latent_pca.png Graphic file (type png)
 <use ../../plots//vae_latent_pca.png>
 Package pdftex.def Info: ../../plots//vae_latent_pca.png  used on input line 161.
 (pdftex.def)             Requested size: 459.51054pt x 100.50491pt.
+<../../plots//surrogate_l2rel_hist.png, id=227, 1292.6694pt x 284.7438pt>
+File: ../../plots//surrogate_l2rel_hist.png Graphic file (type png)
+<use ../../plots//surrogate_l2rel_hist.png>
+Package pdftex.def Info: ../../plots//surrogate_l2rel_hist.png  used on input line 190.
+(pdftex.def)             Requested size: 459.51054pt x 101.21727pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
 [][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
@@ -834,14 +839,9 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 169.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 196.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [5]
-<../../plots//surrogate_l2rel_hist.png, id=246, 1292.6694pt x 284.7438pt>
-File: ../../plots//surrogate_l2rel_hist.png Graphic file (type png)
-<use ../../plots//surrogate_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//surrogate_l2rel_hist.png  used on input line 190.
-(pdftex.def)             Requested size: 459.51054pt x 101.21727pt.
 <../../plots//surrogate_reconstruction.png, id=247, 643.6848pt x 646.0938pt>
 File: ../../plots//surrogate_reconstruction.png Graphic file (type png)
 <use ../../plots//surrogate_reconstruction.png>
@@ -854,7 +854,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 211.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 209.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [6 <../../plots//vae_l2rel_hist.png>]
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -863,7 +863,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 211.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 209.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [7 <../../plots//vae_reconstruction.png>]
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -872,7 +872,7 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 217.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 213.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [8 <../../plots//vae_latent_pca.png> <../../plots//surrogate_l2rel_hist.png>]
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -881,13 +881,13 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 217.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 213.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [9 <../../plots//surrogate_reconstruction.png>]
-<../../plots//ch4_dataset_timeseries.png, id=279, 1026.7158pt x 286.1892pt>
+<../../plots//ch4_dataset_timeseries.png, id=278, 1026.7158pt x 286.1892pt>
 File: ../../plots//ch4_dataset_timeseries.png Graphic file (type png)
 <use ../../plots//ch4_dataset_timeseries.png>
-Package pdftex.def Info: ../../plots//ch4_dataset_timeseries.png  used on input line 234.
+Package pdftex.def Info: ../../plots//ch4_dataset_timeseries.png  used on input line 230.
 (pdftex.def)             Requested size: 459.51054pt x 128.08524pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -896,59 +896,59 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 252.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 248.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [10 <../../plots//ch4_dataset_timeseries.png>]
-<../../plots//gamma_opti_energy.png, id=291, 715.473pt x 354.6048pt>
+<../../plots//gamma_opti_energy.png, id=288, 715.473pt x 354.6048pt>
 File: ../../plots//gamma_opti_energy.png Graphic file (type png)
 <use ../../plots//gamma_opti_energy.png>
-Package pdftex.def Info: ../../plots//gamma_opti_energy.png  used on input line 263.
+Package pdftex.def Info: ../../plots//gamma_opti_energy.png  used on input line 256.
 (pdftex.def)             Requested size: 338.58632pt x 167.81136pt.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 268.
+(hyperref)                removing `math shift' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\gamma' on input line 268.
+(hyperref)                removing `\gamma' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 268.
+(hyperref)                removing `math shift' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 268.
+(hyperref)                removing `math shift' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 268.
+(hyperref)                removing `subscript' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\mathop' on input line 268.
+(hyperref)                removing `\mathop' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\mathgroup' on input line 268.
+(hyperref)                removing `\mathgroup' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\symoperators' on input line 268.
+(hyperref)                removing `\symoperators' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\nmlimits@' on input line 268.
+(hyperref)                removing `\nmlimits@' on input line 261.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 268.
+(hyperref)                removing `math shift' on input line 261.
 
-<../../plots//gamma_opti.png, id=293, 1149.5748pt x 426.393pt>
+<../../plots//gamma_opti.png, id=290, 1149.5748pt x 426.393pt>
 File: ../../plots//gamma_opti.png Graphic file (type png)
 <use ../../plots//gamma_opti.png>
-Package pdftex.def Info: ../../plots//gamma_opti.png  used on input line 274.
+Package pdftex.def Info: ../../plots//gamma_opti.png  used on input line 267.
 (pdftex.def)             Requested size: 483.69687pt x 179.40915pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -966,33 +966,23 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 294.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 303.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [12 <../../plots//gamma_opti.png>]
-<../../plots//svd_convergence.png, id=319, 578.16pt x 289.08pt>
+<../../plots//svd_convergence.png, id=316, 578.16pt x 289.08pt>
 File: ../../plots//svd_convergence.png Graphic file (type png)
 <use ../../plots//svd_convergence.png>
-Package pdftex.def Info: ../../plots//svd_convergence.png  used on input line 319.
+Package pdftex.def Info: ../../plots//svd_convergence.png  used on input line 311.
 (pdftex.def)             Requested size: 232.17242pt x 116.08427pt.
-<../../plots//SVDSurrogate_l2rel_hist.png, id=320, 618.1494pt x 351.2322pt>
+<../../plots//SVDSurrogate_l2rel_hist.png, id=317, 618.1494pt x 351.2322pt>
 File: ../../plots//SVDSurrogate_l2rel_hist.png Graphic file (type png)
 <use ../../plots//SVDSurrogate_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//SVDSurrogate_l2rel_hist.png  used on input line 325.
+Package pdftex.def Info: ../../plots//SVDSurrogate_l2rel_hist.png  used on input line 317.
 (pdftex.def)             Requested size: 232.17242pt x 131.92076pt.
-
-Underfull \hbox (badness 2310) has occurred while \output is active
-[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
- []
-
-File: polytechnique-logohori.pdf Graphic file (type pdf)
-<use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 334.
-(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[13 <../../plots//svd_convergence.png> <../../plots//SVDSurrogate_l2rel_hist.png>]
-<../../plots//LaplaceSVDModel_svd_error_ksvd100.png, id=339, 722.7pt x 289.08pt>
+<../../plots//LaplaceSVDModel_svd_error_ksvd100.png, id=319, 722.7pt x 289.08pt>
 File: ../../plots//LaplaceSVDModel_svd_error_ksvd100.png Graphic file (type png)
 <use ../../plots//LaplaceSVDModel_svd_error_ksvd100.png>
-Package pdftex.def Info: ../../plots//LaplaceSVDModel_svd_error_ksvd100.png  used on input line 348.
+Package pdftex.def Info: ../../plots//LaplaceSVDModel_svd_error_ksvd100.png  used on input line 338.
 (pdftex.def)             Requested size: 338.58632pt x 135.43533pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -1001,18 +991,27 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 358.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 348.
+(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
+[13 <../../plots//svd_convergence.png> <../../plots//SVDSurrogate_l2rel_hist.png>]
+Underfull \hbox (badness 2310) has occurred while \output is active
+[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
+ []
+
+File: polytechnique-logohori.pdf Graphic file (type pdf)
+<use polytechnique-logohori.pdf>
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 372.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [14 <../../plots//LaplaceSVDModel_svd_error_ksvd100.png>]
-<../../plots//LaplaceAE_l2rel.png, id=352, 2537.48pt x 1332.98pt>
+<../../plots//LaplaceAE_l2rel.png, id=350, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceAE_l2rel.png Graphic file (type png)
 <use ../../plots//LaplaceAE_l2rel.png>
-Package pdftex.def Info: ../../plots//LaplaceAE_l2rel.png  used on input line 387.
+Package pdftex.def Info: ../../plots//LaplaceAE_l2rel.png  used on input line 377.
 (pdftex.def)             Requested size: 338.58632pt x 177.84955pt.
-<../../plots//ae_study_frequency_error.png, id=354, 860.4948pt x 353.6412pt>
+<../../plots//ae_study_frequency_error.png, id=352, 860.4948pt x 353.6412pt>
 File: ../../plots//ae_study_frequency_error.png Graphic file (type png)
 <use ../../plots//ae_study_frequency_error.png>
-Package pdftex.def Info: ../../plots//ae_study_frequency_error.png  used on input line 397.
+Package pdftex.def Info: ../../plots//ae_study_frequency_error.png  used on input line 387.
 (pdftex.def)             Requested size: 338.58632pt x 139.14981pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -1021,53 +1020,43 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 400.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 395.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[15]
-<../../plots//ae_study_temporal_error.png, id=370, 715.9548pt x 353.1594pt>
+[15 <../../plots//LaplaceAE_l2rel.png> <../../plots//ae_study_frequency_error.png>]
+<../../plots//ae_study_temporal_error.png, id=365, 715.9548pt x 353.1594pt>
 File: ../../plots//ae_study_temporal_error.png Graphic file (type png)
 <use ../../plots//ae_study_temporal_error.png>
-Package pdftex.def Info: ../../plots//ae_study_temporal_error.png  used on input line 408.
+Package pdftex.def Info: ../../plots//ae_study_temporal_error.png  used on input line 398.
 (pdftex.def)             Requested size: 338.58632pt x 167.01418pt.
-
-Underfull \hbox (badness 2310) has occurred while \output is active
-[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
- []
-
-File: polytechnique-logohori.pdf Graphic file (type pdf)
-<use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 415.
-(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[16 <../../plots//LaplaceAE_l2rel.png> <../../plots//ae_study_frequency_error.png>]
-<../../plots//ae_study_freq_00.png, id=382, 1067.6688pt x 711.1368pt>
+<../../plots//ae_study_freq_00.png, id=367, 1067.6688pt x 711.1368pt>
 File: ../../plots//ae_study_freq_00.png Graphic file (type png)
 <use ../../plots//ae_study_freq_00.png>
-Package pdftex.def Info: ../../plots//ae_study_freq_00.png  used on input line 422.
+Package pdftex.def Info: ../../plots//ae_study_freq_00.png  used on input line 409.
 (pdftex.def)             Requested size: 232.17242pt x 154.63844pt.
-<../../plots//ae_study_freq_10.png, id=383, 1065.7416pt x 711.6186pt>
+<../../plots//ae_study_freq_10.png, id=368, 1065.7416pt x 711.6186pt>
 File: ../../plots//ae_study_freq_10.png Graphic file (type png)
 <use ../../plots//ae_study_freq_10.png>
-Package pdftex.def Info: ../../plots//ae_study_freq_10.png  used on input line 428.
+Package pdftex.def Info: ../../plots//ae_study_freq_10.png  used on input line 415.
 (pdftex.def)             Requested size: 232.17242pt x 155.02554pt.
-<../../plots//ae_study_freq_20.png, id=384, 1065.7416pt x 711.6186pt>
+<../../plots//ae_study_freq_20.png, id=369, 1065.7416pt x 711.6186pt>
 File: ../../plots//ae_study_freq_20.png Graphic file (type png)
 <use ../../plots//ae_study_freq_20.png>
-Package pdftex.def Info: ../../plots//ae_study_freq_20.png  used on input line 435.
+Package pdftex.def Info: ../../plots//ae_study_freq_20.png  used on input line 422.
 (pdftex.def)             Requested size: 232.17242pt x 155.02554pt.
-<../../plots//LaplaceLatentSurrogate_Nt150_loss.png, id=389, 2537.48pt x 1332.98pt>
+<../../plots//LaplaceLatentSurrogate_Nt150_loss.png, id=373, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceLatentSurrogate_Nt150_loss.png Graphic file (type png)
 <use ../../plots//LaplaceLatentSurrogate_Nt150_loss.png>
-Package pdftex.def Info: ../../plots//LaplaceLatentSurrogate_Nt150_loss.png  used on input line 459.
+Package pdftex.def Info: ../../plots//LaplaceLatentSurrogate_Nt150_loss.png  used on input line 444.
 (pdftex.def)             Requested size: 232.17242pt x 121.9563pt.
-<../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png, id=390, 2537.48pt x 1332.98pt>
+<../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png, id=374, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png Graphic file (type png)
 <use ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png>
-Package pdftex.def Info: ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png  used on input line 466.
+Package pdftex.def Info: ../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png  used on input line 451.
 (pdftex.def)             Requested size: 232.17242pt x 121.9563pt.
-<../../plots//laplacelatentmodel_l2rel_hist.png, id=392, 624.4128pt x 351.2322pt>
+<../../plots//laplacelatentmodel_l2rel_hist.png, id=376, 624.4128pt x 351.2322pt>
 File: ../../plots//laplacelatentmodel_l2rel_hist.png Graphic file (type png)
 <use ../../plots//laplacelatentmodel_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//laplacelatentmodel_l2rel_hist.png  used on input line 478.
+Package pdftex.def Info: ../../plots//laplacelatentmodel_l2rel_hist.png  used on input line 463.
 (pdftex.def)             Requested size: 338.58632pt x 190.45575pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -1076,27 +1065,27 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 486.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 471.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[17 <../../plots//ae_study_temporal_error.png>]
+[16 <../../plots//ae_study_temporal_error.png>]
 Underfull \hbox (badness 2310) has occurred while \output is active
 [][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
  []
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 486.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 471.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[18 <../../plots//ae_study_freq_00.png> <../../plots//ae_study_freq_10.png> <../../plots//ae_study_freq_20.png> <../../plots//LaplaceLatentSurrogate_Nt150_loss.png> <../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png>]
-<../../plots//LaplaceLatentModel_finetune_e2e.png, id=414, 2537.48pt x 1332.98pt>
+[17 <../../plots//ae_study_freq_00.png> <../../plots//ae_study_freq_10.png> <../../plots//ae_study_freq_20.png> <../../plots//LaplaceLatentSurrogate_Nt150_loss.png> <../../plots//LaplaceLatentSurrogate_Nt150_l2rel_U.png>]
+<../../plots//LaplaceLatentModel_finetune_e2e.png, id=398, 2537.48pt x 1332.98pt>
 File: ../../plots//LaplaceLatentModel_finetune_e2e.png Graphic file (type png)
 <use ../../plots//LaplaceLatentModel_finetune_e2e.png>
-Package pdftex.def Info: ../../plots//LaplaceLatentModel_finetune_e2e.png  used on input line 489.
+Package pdftex.def Info: ../../plots//LaplaceLatentModel_finetune_e2e.png  used on input line 474.
 (pdftex.def)             Requested size: 338.58632pt x 177.84955pt.
-<../../plots//laplacelatentmodel_finetuned_l2rel_hist.png, id=416, 624.4128pt x 351.2322pt>
+<../../plots//laplacelatentmodel_finetuned_l2rel_hist.png, id=400, 624.4128pt x 351.2322pt>
 File: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png Graphic file (type png)
 <use ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png  used on input line 498.
+Package pdftex.def Info: ../../plots//laplacelatentmodel_finetuned_l2rel_hist.png  used on input line 483.
 (pdftex.def)             Requested size: 338.58632pt x 190.45575pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -1105,36 +1094,36 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 508.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 490.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[19 <../../plots//laplacelatentmodel_l2rel_hist.png> <../../plots//LaplaceLatentModel_finetune_e2e.png>]
+[18 <../../plots//laplacelatentmodel_l2rel_hist.png> <../../plots//LaplaceLatentModel_finetune_e2e.png>]
 Underfull \hbox (badness 2310) has occurred while \output is active
 [][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
  []
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 527.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 512.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[20 <../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>]
-<../../plots//CorrectionAE_l2rel.png, id=437, 2537.48pt x 1332.98pt>
+[19 <../../plots//laplacelatentmodel_finetuned_l2rel_hist.png>]
+<../../plots//CorrectionAE_l2rel.png, id=421, 2537.48pt x 1332.98pt>
 File: ../../plots//CorrectionAE_l2rel.png Graphic file (type png)
 <use ../../plots//CorrectionAE_l2rel.png>
-Package pdftex.def Info: ../../plots//CorrectionAE_l2rel.png  used on input line 534.
+Package pdftex.def Info: ../../plots//CorrectionAE_l2rel.png  used on input line 519.
 (pdftex.def)             Requested size: 338.58632pt x 177.84955pt.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <8> on input line 664.
+(Font)              <8> on input line 649.
 LaTeX Font Info:    Font shape `T1/lmss/m/it' in size <7> not available
-(Font)              Font shape `T1/lmss/m/sl' tried instead on input line 664.
-<../../plots//correctionae_unet_l2rel_hist.png, id=442, 618.1494pt x 351.2322pt>
+(Font)              Font shape `T1/lmss/m/sl' tried instead on input line 649.
+<../../plots//correctionae_unet_l2rel_hist.png, id=426, 618.1494pt x 351.2322pt>
 File: ../../plots//correctionae_unet_l2rel_hist.png Graphic file (type png)
 <use ../../plots//correctionae_unet_l2rel_hist.png>
-Package pdftex.def Info: ../../plots//correctionae_unet_l2rel_hist.png  used on input line 674.
+Package pdftex.def Info: ../../plots//correctionae_unet_l2rel_hist.png  used on input line 659.
 (pdftex.def)             Requested size: 338.58632pt x 192.39047pt.
-<../../plots//benchmark_l2rel.png, id=443, 860.4948pt x 426.393pt>
+<../../plots//benchmark_l2rel.png, id=427, 860.4948pt x 426.393pt>
 File: ../../plots//benchmark_l2rel.png Graphic file (type png)
 <use ../../plots//benchmark_l2rel.png>
-Package pdftex.def Info: ../../plots//benchmark_l2rel.png  used on input line 681.
+Package pdftex.def Info: ../../plots//benchmark_l2rel.png  used on input line 666.
 (pdftex.def)             Requested size: 338.58632pt x 167.77602pt.
 
 Underfull \hbox (badness 2310) has occurred while \output is active
@@ -1143,9 +1132,36 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 702.
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 687.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[21 <../../plots//CorrectionAE_l2rel.png>]
+[20 <../../plots//CorrectionAE_l2rel.png>]
+Underfull \hbox (badness 2310) has occurred while \output is active
+[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
+ []
+
+File: polytechnique-logohori.pdf Graphic file (type pdf)
+<use polytechnique-logohori.pdf>
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 687.
+(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
+[21 <../../plots//correctionae_unet_l2rel_hist.png>]
+Underfull \hbox (badness 2310) has occurred while \output is active
+[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
+ []
+
+File: polytechnique-logohori.pdf Graphic file (type pdf)
+<use polytechnique-logohori.pdf>
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 697.
+(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
+[22 <../../plots//benchmark_l2rel.png>]
+Underfull \hbox (badness 2310) has occurred while \output is active
+[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
+ []
+
+File: polytechnique-logohori.pdf Graphic file (type pdf)
+<use polytechnique-logohori.pdf>
+Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 698.
+(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
+[23] (./main.bbl)
 Underfull \hbox (badness 2310) has occurred while \output is active
 [][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
  []
@@ -1153,42 +1169,24 @@ Underfull \hbox (badness 2310) has occurred while \output is active
 File: polytechnique-logohori.pdf Graphic file (type pdf)
 <use polytechnique-logohori.pdf>
 Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 702.
-(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[22 <../../plots//correctionae_unet_l2rel_hist.png>]
-Underfull \hbox (badness 2310) has occurred while \output is active
-[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
- []
-
-File: polytechnique-logohori.pdf Graphic file (type pdf)
-<use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 711.
-(pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
-[23 <../../plots//benchmark_l2rel.png>] (./main.bbl)
-Underfull \hbox (badness 2310) has occurred while \output is active
-[][]\T1/lmr/m/sc/10 Learning La-tent Rep-re-sen-ta-tions for Neu-ral
- []
-
-File: polytechnique-logohori.pdf Graphic file (type pdf)
-<use polytechnique-logohori.pdf>
-Package pdftex.def Info: polytechnique-logohori.pdf  used on input line 715.
 (pdftex.def)             Requested size: 156.35799pt x 56.90453pt.
 [24] (./main.aux)
 Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: 760EE7D1DF9A541A92512BC9F52F8A69;4542.
  ) 
 Here is how much of TeX's memory you used:
- 23806 strings out of 481008
- 429684 string characters out of 5909439
- 746848 words of memory out of 5000000
+ 23804 strings out of 481008
+ 429658 string characters out of 5909439
+ 746618 words of memory out of 5000000
  40368 multiletter control sequences out of 15000+600000
  530467 words of font info for 109 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 87i,14n,88p,1782b,988s stack positions out of 5000i,500n,10000p,200000b,80000s
+ 87i,14n,88p,1464b,988s stack positions out of 5000i,500n,10000p,200000b,80000s
 {/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/lm/lm-mathex.enc}</usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmbx9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmcsc10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmi9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmmib7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmr9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmri10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmss8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmssbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsso8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msam10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm5.pfb>
-Output written on main.pdf (24 pages, 5092379 bytes).
+Output written on main.pdf (24 pages, 5084824 bytes).
 PDF statistics:
- 633 PDF objects out of 1000 (max. 8388607)
- 503 compressed objects within 6 object streams
- 124 named destinations out of 1000 (max. 500000)
+ 620 PDF objects out of 1000 (max. 8388607)
+ 491 compressed objects within 5 object streams
+ 122 named destinations out of 1000 (max. 500000)
  363 words of extra memory for PDF output out of 10000 (max. 10000000)
 
