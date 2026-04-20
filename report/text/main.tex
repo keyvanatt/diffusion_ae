@@ -167,7 +167,7 @@ Figure~\ref{fig:vae_pca} shows a PCA projection of the latent codes coloured by 
 Four variants of the indirect decoder are evaluated on the same 1\,000-sample test set, varying the latent dimension ($d_z \in \{3, 32\}$) and whether the VAE decoder is kept frozen or jointly fine-tuned end-to-end during surrogate training.
 Table~\ref{tab:surrogate} summarises the results; Figure~\ref{fig:surrogate_hist} shows the corresponding error distributions alongside the VAE reconstruction floor.
 
-\begin{table}[ht]
+\begin{table}[htbp]
     \centering
     \begin{tabular}{lcccc}
         \toprule
@@ -427,6 +427,7 @@ Detailed reconstructions at selected frequencies ($k = 0, 10, 20$) illustrate th
 \end{figure}
 
 
+\FloatBarrier
 \subsection{Surrogate and Fine-Tuning}
 \label{sec:finetune}
 
@@ -471,18 +472,21 @@ To further improve accuracy, the frozen decoder is unfrozen and the entire model
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.70\textwidth]{LaplaceLatentModel_finetune_e2e.png}
-    \caption{End-to-end fine-tuning: real-space $L^2$ relative error (train and validation) over 50 epochs.}
-    \label{fig:finetune_training}
-\end{figure}
-
-The results of end-to-end fine-tuning are displayed in Figure~\ref{fig:laplacelatent_finetuned}.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.70\textwidth]{laplacelatentmodel_finetuned_l2rel_hist.png}
-    \caption{Relative $L^2$ error distribution after end-to-end fine-tuning (mean: 10.19\%, median: 9.30\%). Fine-tuning reduces error by approximately 48\% compared to the frozen baseline. Note that the 9.17\% median AE floor was measured with the frozen decoder; once the decoder is jointly optimised, it adapts to the downstream task and this floor is no longer a hard lower bound.}
-    \label{fig:laplacelatent_finetuned}
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{LaplaceLatentModel_finetune_e2e.png}
+        \caption{Training and validation $L^2$ relative error over 50 epochs.}
+        \label{fig:finetune_training}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{laplacelatentmodel_finetuned_l2rel_hist.png}
+        \caption{Error distribution on the test set (mean: 10.19\%, median: 9.30\%).}
+        \label{fig:laplacelatent_finetuned}
+    \end{subfigure}
+    \caption{End-to-end fine-tuning results. (a) Both curves decrease from $\sim$16\% to 10.50\% over 50 epochs. (b) Test-set error distribution; fine-tuning reduces median error by 48\% vs.\ the frozen baseline (18.50\%). Note that the 9.17\% median AE floor was measured with a frozen decoder; once jointly optimised, it is no longer a hard lower bound.}
+    \label{fig:finetune_results}
 \end{figure}
 
 \paragraph{Limitations: Laplace truncation and Gibbs effects.}
@@ -490,6 +494,7 @@ Despite the substantial gains from fine-tuning, a fundamental limitation arises 
 
 
 
+\FloatBarrier
 \subsection{Post-Processing and Results}
 
 \subsubsection{Residual Correction}
@@ -512,13 +517,25 @@ The corrector loss combines reconstruction accuracy with spatial smoothness. Den
 \end{equation}
 where $\sigma_r = \sigma(r_{\mathrm{true}})$ normalises for the scale of the target residual, and $\lambda_{\nabla} = 10$.
 
-The training and validation $L^2$ relative errors over 100 epochs are shown in Figure~\ref{fig:correction_training}: both decrease from $\sim$9\% to 4.46\%, with a small train--val gap appearing from epoch 60 onward due to the sparse temporal sampling ($k_t = 20$ frames per simulation) used during training.
+The training and validation $L^2$ relative errors over 100 epochs are shown in Figure~\ref{fig:correction_training}: both decrease from $\sim$9\% to 4.46\%, with a small train--val gap appearing from epoch 60 onward due to the sparse temporal sampling ($k_t = 20$ frames per simulation) used during training. The final test-set error distribution is shown in Figure~\ref{fig:correction_unet}.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.70\textwidth]{CorrectionAE_l2rel.png}
-    \caption{CorrectionAE training: real-space $L^2$ relative error (train and validation) over 100 epochs.}
-    \label{fig:correction_training}
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{CorrectionAE_l2rel.png}
+        \caption{Training and validation $L^2$ relative error over 100 epochs.}
+        \label{fig:correction_training}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{correctionae_unet_l2rel_hist.png}
+        \caption{Error distribution on the test set (mean: 4.80\%, median: 4.46\%).}
+        \label{fig:correction_unet}
+    \end{subfigure}
+    \caption{CorrectionAE results. (a) Both curves decrease from $\sim$9\% to 4.46\% over 100 epochs; the small train--val gap from epoch 60 is due to the sparse temporal sampling ($k_t=20$). (b) Test-set error distribution: median 4.46\%, a 76\% reduction vs.\ the unfinetuned baseline.}
+    \label{fig:correction_results}
 \end{figure}
 
 \subsubsection{Results and Comparison}
@@ -652,23 +669,16 @@ The three refinement stages compose a single end-to-end inference pipeline summa
 \end{figure}
 
 \paragraph{Quantitative results and comparison.}
-The residual correction stage applies the UNet post-processor to the finetuned surrogate output, frame by frame. Error distributions are shown in Figures~\ref{fig:correction_unet} and~\ref{fig:violin_benchmark}; numerical results are summarised in Table~\ref{tab:comparison}. End-to-end fine-tuning reduces median error from 18.50\% to 9.30\% ($-$50\%) and standard deviation from 5.35\% to 2.93\%, improving both accuracy and consistency. The UNet residual corrector further reduces median error to 4.46\% ($-$52\% vs.\ finetuned), tightening the error range from [6.75\%, 23.18\%] to [2.37\%, 13.28\%], at a cost of only 481\,k additional parameters over the 35.36\,M surrogate. Standard deviation decreases monotonically across the three stages (5.35\% $\to$ 2.93\% $\to$ 1.56\%), with no corrected sample exceeding 13.28\% compared to 48.80\% for the unfinetuned baseline.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.70\textwidth]{correctionae_unet_l2rel_hist.png}
-    \caption{Relative $L^2$ error distribution after residual UNet correction (mean: 4.80\%, median: 4.46\%). The correction reduces error by approximately 76\% compared to the baseline latent surrogate.}
-    \label{fig:correction_unet}
-\end{figure}
+The residual correction stage applies the UNet post-processor to the finetuned surrogate output, frame by frame. The error distribution after correction is shown in Figure~\ref{fig:correction_unet}; the full comparison across all stages in Figure~\ref{fig:violin_benchmark}; numerical results are summarised in Table~\ref{tab:comparison}. End-to-end fine-tuning reduces median error from 18.50\% to 9.30\% ($-$50\%) and standard deviation from 5.35\% to 2.93\%, improving both accuracy and consistency. The UNet residual corrector further reduces median error to 4.46\% ($-$52\% vs.\ finetuned), tightening the error range from [6.75\%, 23.18\%] to [2.37\%, 13.28\%], at a cost of only 481\,k additional parameters over the 35.36\,M surrogate. Standard deviation decreases monotonically across the three stages (5.35\% $\to$ 2.93\% $\to$ 1.56\%), with no corrected sample exceeding 13.28\% compared to 48.80\% for the unfinetuned baseline.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.70\textwidth]{benchmark_l2rel.png}
-    \caption{Violin plot comparison of prediction error distributions across all three models. The plot shows the median (horizontal line), quartiles (box), and full distribution (violin shape) for each method.}
+    \caption{Violin plot comparison of prediction error distributions across all three pipeline stages: baseline (18.50\%), finetuned (9.30\%), corrected (4.46\%).}
     \label{fig:violin_benchmark}
 \end{figure}
 
-\begin{table}[ht]
+\begin{table}[htbp]
     \centering
     \begin{tabular}{lcccccc}
         \toprule
