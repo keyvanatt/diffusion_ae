@@ -1,5 +1,11 @@
 \begin{thebibliography}{10}
 
+\bibitem{abate1992fourier}
+J.~Abate and W.~Whitt.
+\newblock The {Fourier}-series method for inverting transforms of probability
+  distributions.
+\newblock {\em Queueing Systems}, 10(1--2):5--87, 1992.
+
 \bibitem{ammar2024hybrid}
 A.~Ammar, M.~Ben~Saada, E.~Cueto, and F.~Chinesta.
 \newblock Casting hybrid twin: physics-based reduced order models enriched with

@@ -1,4 +1,4 @@
-\babel@toc {english}{}\relax 
+\babel@toc {english}{}
 \contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
 \contentsline {section}{\numberline {2}Preliminary Study: Stationary Dataset}{4}{section.2}%
 \contentsline {subsection}{\numberline {2.1}Problem Statement and Dataset}{4}{subsection.2.1}%
@@ -20,27 +20,33 @@
 \contentsline {subsection}{\numberline {3.1}Dataset and Temporal Representation}{10}{subsection.3.1}%
 \contentsline {subsubsection}{\numberline {3.1.1}Dataset}{10}{subsubsection.3.1.1}%
 \contentsline {subsubsection}{\numberline {3.1.2}Laplace Transform}{10}{subsubsection.3.1.2}%
-\contentsline {subsection}{\numberline {3.2}Latent Space Representation}{11}{subsection.3.2}%
-\contentsline {subsubsection}{\numberline {3.2.1}Tucker POD Surrogate}{11}{subsubsection.3.2.1}%
-\contentsline {paragraph}{Algorithm.}{11}{paragraph*.18}%
-\contentsline {paragraph}{Application to the CH4 dataset.}{11}{paragraph*.19}%
-\contentsline {paragraph}{Surrogate training.}{11}{paragraph*.20}%
-\contentsline {paragraph}{Limitations.}{11}{paragraph*.22}%
-\contentsline {subsubsection}{\numberline {3.2.2}SVD Surrogate in the Laplace Domain}{12}{subsubsection.3.2.2}%
-\contentsline {subsubsection}{\numberline {3.2.3}Autoencoder-Based Latent Space}{13}{subsubsection.3.2.3}%
-\contentsline {paragraph}{Sinusoidal frequency encoding.}{13}{paragraph*.24}%
-\contentsline {paragraph}{FiLM conditioning.}{13}{paragraph*.25}%
-\contentsline {paragraph}{Architecture and training.}{13}{paragraph*.26}%
-\contentsline {paragraph}{Autoencoder performance evaluation.}{15}{paragraph*.28}%
-\contentsline {paragraph}{Limitations of the frequency-conditioned autoencoder.}{15}{paragraph*.32}%
+\contentsline {paragraph}{Bromwich contour and discretisation.}{11}{paragraph*.18}%
+\contentsline {paragraph}{Differentiability.}{11}{paragraph*.19}%
+\contentsline {paragraph}{Spectral truncation.}{11}{paragraph*.20}%
+\contentsline {subsubsection}{\numberline {3.1.3}Hyperparameter Selection: $\gamma $ and $k_{\qopname \relax m{max}}$}{11}{subsubsection.3.1.3}%
+\contentsline {paragraph}{Sensitivity to $\gamma $.}{12}{paragraph*.23}%
+\contentsline {paragraph}{Choice of $k_{\qopname \relax m{max}}$.}{12}{paragraph*.24}%
+\contentsline {subsection}{\numberline {3.2}Latent Space Representation}{12}{subsection.3.2}%
+\contentsline {subsubsection}{\numberline {3.2.1}Tucker POD Surrogate}{12}{subsubsection.3.2.1}%
+\contentsline {paragraph}{Algorithm.}{12}{paragraph*.25}%
+\contentsline {paragraph}{Application to the CH4 dataset.}{13}{paragraph*.26}%
+\contentsline {paragraph}{Surrogate training.}{13}{paragraph*.27}%
+\contentsline {paragraph}{Limitations.}{14}{paragraph*.29}%
+\contentsline {subsubsection}{\numberline {3.2.2}SVD Surrogate in the Laplace Domain}{14}{subsubsection.3.2.2}%
+\contentsline {subsubsection}{\numberline {3.2.3}Autoencoder-Based Latent Space}{15}{subsubsection.3.2.3}%
+\contentsline {paragraph}{Sinusoidal frequency encoding.}{15}{paragraph*.31}%
+\contentsline {paragraph}{FiLM conditioning.}{15}{paragraph*.32}%
+\contentsline {paragraph}{Architecture and training.}{15}{paragraph*.33}%
+\contentsline {paragraph}{Autoencoder performance evaluation.}{16}{paragraph*.35}%
 \contentsline {subsection}{\numberline {3.3}Surrogate and Fine-Tuning}{17}{subsection.3.3}%
 \contentsline {subsubsection}{\numberline {3.3.1}Per-Frequency Surrogate $\bm {\theta }\to z$}{17}{subsubsection.3.3.1}%
-\contentsline {paragraph}{Training dynamics.}{17}{paragraph*.33}%
+\contentsline {paragraph}{Training dynamics.}{17}{paragraph*.39}%
 \contentsline {subsubsection}{\numberline {3.3.2}End-to-End Fine-Tuning}{17}{subsubsection.3.3.2}%
-\contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{19}{paragraph*.38}%
-\contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{19}{subsection.3.4}%
-\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{19}{subsubsection.3.4.1}%
-\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{20}{subsubsection.3.4.2}%
-\contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{20}{subsubsection.3.4.3}%
-\contentsline {paragraph}{Complete inference pipeline.}{20}{paragraph*.40}%
+\contentsline {paragraph}{Limitations: Laplace truncation and Gibbs effects.}{19}{paragraph*.44}%
+\contentsline {subsection}{\numberline {3.4}Post-Processing and Results}{20}{subsection.3.4}%
+\contentsline {subsubsection}{\numberline {3.4.1}Residual Correction}{20}{subsubsection.3.4.1}%
+\contentsline {subsubsection}{\numberline {3.4.2}Training the Corrector}{21}{subsubsection.3.4.2}%
+\contentsline {subsubsection}{\numberline {3.4.3}Results and Comparison}{21}{subsubsection.3.4.3}%
+\contentsline {paragraph}{Complete inference pipeline.}{21}{paragraph*.46}%
+\contentsline {paragraph}{Quantitative results and comparison.}{21}{paragraph*.48}%
 \contentsline {section}{\numberline {4}Conclusion}{23}{section.4}%
