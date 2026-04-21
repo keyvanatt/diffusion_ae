@@ -235,6 +235,7 @@ Figure~\ref{fig:ch4_dataset} shows a representative example of the transient fie
 
 
 \subsubsection{Laplace Transform}
+\label{sec:laplace_transform}
 
 Rather than operating in physical time, the surrogate works in the Laplace frequency domain. The Laplace transform of a time-dependent field is approximated via a discretised Bromwich contour integral, computed efficiently using the discrete Fourier transform with exponential damping:
 \begin{equation}
@@ -245,8 +246,11 @@ Rather than operating in physical time, the surrogate works in the Laplace frequ
 \end{equation}
 where $U_n = U(t_n)$, $t_n = n\Delta t$, $\omega_k = 2\pi k/(N_t \Delta t)$, $\gamma \geq 0$ is a damping parameter, and $w_n$ are trapezoidal integration weights: $w_0 = w_{N_t-1} = \tfrac{1}{2}$, $w_n = 1$ otherwise. The spatial field $U$ is transformed at each frequency $s_k$ into a complex-valued field $\hat{U}(s_k) \in \C^{N \times N}$. For real-valued physical fields, Hermitian symmetry provides $\hat{U}(s_{N_t-k}) = \overline{\hat{U}(s_k)}$, so only $N_{\mathrm{half}} = N_t/2 + 1$ frequencies need be stored. In practice, each frequency $s_k$ is represented as the pair of real fields $(\Re(\hat{U}_k), \Im(\hat{U}_k)) \in \R^{2 \times N \times N}$.
 
-\paragraph{Bromwich contour and discretisation.}\label{par:differentiability}
-The Bromwich inversion formula integrates $\hat{U}(s)\,e^{st}$ along a vertical contour $\{s = \gamma + i\omega\}$ located to the right of all singularities of $\hat{U}$ \cite{abate1992fourier}. For well-posed PDEs, all poles lie in the left half-plane, so any $\gamma \geq 0$ places the contour to their right and yields a valid inversion. The weight $e^{-\gamma t}$ acts as a regularising window suppressing aliasing; the damping is compensated during inversion by multiplying by $e^{\gamma t}$. Since both the forward and inverse transforms are linear operations with fixed weights, they are fully differentiable, allowing a loss on $U(t)$ to be backpropagated through the Laplace inversion all the way to the predicted coefficients $\hat{U}_k$.
+\emph{Notation.} In this section, $\hat{U}_k \equiv \hat{U}(s_k)$ always denotes the \emph{true} numerical Laplace transform of $U$; model reconstructions of Laplace-domain fields are written $\tilde{U}_k$.
+
+\paragraph{Bromwich contour and discretisation.}
+The Bromwich inversion formula integrates $\hat{U}(s)\,e^{st}$ along a vertical contour $\{s = \gamma + i\omega\}$ located to the right of all singularities of $\hat{U}$ \cite{abate1992fourier}. For well-posed PDEs, all poles lie in the left half-plane, so any $\gamma \geq 0$ places the contour to their right and yields a valid inversion. The weight $e^{-\gamma t}$ acts as a regularising window suppressing aliasing; the damping is compensated during inversion by multiplying by $e^{\gamma t}$. Since both the forward and inverse transforms are linear operations with fixed weights, they are fully differentiable, allowing a loss on $U(t)$ to be backpropagated through the Laplace inversion all the way to the predicted Laplace coefficients $\tilde{U}_k$.
+\label{par:differentiability}
 
 \paragraph{Spectral truncation.}
 The Laplace spectrum decays rapidly with frequency: Figure~\ref{fig:spectral_energy} shows the mean spectral energy $\mathbb{E}_s\bigl[\sum_{x}\lvert\hat{U}_k(x)\rvert^2\bigr]$ per frequency $k$, decreasing by several orders of magnitude between $k=0$ and $k=N_{\mathrm{half}}$. The bulk of the signal energy is concentrated in the first $\sim$20 frequencies. Modelling all $N_{\mathrm{half}}$ frequencies would be computationally prohibitive and the high-frequency fields contribute little to the physical reconstruction. The surrogate therefore models only the first $k_{\max}$ frequencies; higher frequencies ($k > k_{\max}$) are replaced by their per-pixel training mean in normalised space, corresponding to the mean value after denormalisation. Inversion to physical time is then performed by discrete Fourier inversion with exponential compensation on the full reconstructed spectrum.
@@ -287,7 +291,7 @@ The Tucker POD method, used by Ammar \emph{et al.}~\cite{ammar2024hybrid}, compu
     H_{r,s,t} \approx \sum_{j=1}^{n_f} \alpha_j\, F_{r,j}\, G_{s,j}\, P_{t,j},
     \label{eq:tucker}
 \end{equation}
-where $\bm{F}$, $\bm{P}$, $\bm{G}$ collect spatial, temporal, and simulation-dependent modes respectively, and $\bm{\alpha}$ the singular values. Each mode is extracted from the current residual by a rank-1 ALS problem; starting from random vectors $R, S, T$, the updates are:
+where $\bm{F}$, $\bm{P}$, $\bm{G}$ collect spatial, temporal, and simulation-dependent modes respectively, and $\bm{\alpha}$ the singular values. Each mode is extracted from the current residual by a rank-1 ALS subproblem; starting from random vectors $R, S, T$, the alternating least squares (ALS) updates are:
 \begin{equation}
     R \leftarrow \frac{\bm{R}^{(j)}_{(1)}\,(T \otimes S)}{\|S\|^2\,\|T\|^2},
     \qquad
@@ -302,7 +306,7 @@ where $\bm{R}^{(j)}_{(k)}$ is the mode-$k$ unfolding. After convergence, the nor
 The decomposition is applied to the full training set of $n_s = 8\,100$ simulations. Because the algorithm requires the entire tensor to reside in memory simultaneously, the spatial grid is subsampled with stride $\delta = 5$, reducing each $200 \times 200$ frame to a $40 \times 40$ grid ($n_r = 1\,600$ nodes). $n_f = 300$ modes are extracted; the convergence of the relative residual as a function of mode index is shown in Figure~\ref{fig:svd}(a).
 
 \paragraph{Surrogate training.}
-The factors $\bm{F}$, $\bm{P}$, $\bm{\alpha}$ are fixed after decomposition. A four-layer MLP learns $\vtheta_{\mathrm{norm}} \mapsto \hat{\bm{g}} \in \R^{n_f}$; the field is reconstructed as $\hat{H}_{r,t} = \sum_{j} \alpha_j F_{r,j} \hat{g}_j P_{t,j}$.
+The factors $\bm{F}$, $\bm{P}$, $\bm{\alpha}$ are fixed after decomposition. A four-layer MLP learns $\vtheta_{\mathrm{norm}} \mapsto \hat{\bm{g}} \in \R^{n_f}$; the field is reconstructed as $\tilde{H}_{r,t} = \sum_{j} \alpha_j F_{r,j} \hat{g}_j P_{t,j}$.
 
 \begin{figure}[htbp]
     \centering
@@ -340,7 +344,7 @@ The spatial basis $\bm{V}$ is fixed during training. For each frequency $k$, a d
     \label{fig:lapsvd}
 \end{figure}
 
-While the per-frequency SVD factorisation operates on the full $200 \times 200$ spatial resolution (circumventing the memory bottleneck of Tucker POD), it faces its own irreducible limitation: the linear basis truncation error is already substantial at the lowest frequencies (5--10\%) and grows monotonically with frequency. Consequently, the MLP surrogates are trained on noisy targets that are only approximate representations of the true Laplace fields. The combination of fixed linear bases with inherent reconstruction error and complex non-linear prediction tasks yields poor generalisation on the test set, motivating the transition to a learned, non-linear autoencoder.
+While the per-frequency SVD factorisation operates on the full $200 \times 200$ spatial resolution (circumventing the memory bottleneck of Tucker POD), it faces its own irreducible limitation: as shown in Figure~\ref{fig:lapsvd}, the linear basis truncation error is already substantial at the lowest frequencies (5--10\%) and grows monotonically with frequency. Consequently, the MLP surrogates are trained on noisy targets that are only approximate representations of the true Laplace fields. The combination of fixed linear bases with inherent reconstruction error and complex non-linear prediction tasks yields poor generalisation on the test set, motivating the transition to a learned, non-linear autoencoder.
 
 \subsubsection{Autoencoder-Based Latent Space}
 
@@ -363,11 +367,11 @@ To share encoder/decoder weights across all frequencies while adapting to each o
 The residual formulation $(1 + \alpha_\ell)$ initialises the modulation close to the identity, which stabilises early training. All frequencies share the same convolutional weights, and the FiLM parameters act as a lightweight per-frequency adapter at each layer, enabling a single autoencoder to process the full spectrum without per-frequency model copies.
 
 \paragraph{Architecture and training.}
-The autoencoder encoder takes a two-channel input $(\Re(\hat{U}_k), \Im(\hat{U}_k)) \in \R^{2 \times N \times N}$ representing the real and imaginary parts of a Laplace field at frequency $k$, and progressively downsamples it through strided convolutions to produce a latent code $z \in \R^{d_z}$. Each convolutional block is followed by FiLM modulation using the frequency embedding $\bm{e}(f)$. The decoder reverses this process, starting from $z$ and upsampling through transposed convolutions, also FiLM-conditioned at each layer. The decoder outputs two separate branches, one predicting $\Re(\hat{U}_k)$ and the other $\Im(\hat{U}_k)$.
+The autoencoder encoder takes a two-channel input $(\Re(\hat{U}_k), \Im(\hat{U}_k)) \in \R^{2 \times N \times N}$ representing the real and imaginary parts of a Laplace field at frequency $k$, and progressively downsamples it through strided convolutions to produce a latent code $z \in \R^{d_z}$. Each convolutional block is followed by FiLM modulation using the frequency embedding $\bm{e}(f)$. The decoder reverses this process, starting from $z$ and upsampling through transposed convolutions, also FiLM-conditioned at each layer. The decoder outputs two separate branches approximating $\Re(\hat{U}_k)$ and $\Im(\hat{U}_k)$ respectively; the combined complex-valued reconstruction is denoted $\tilde{U}_k \in \C^{N \times N}$.
 
 Training operates on the Cartesian product of all (simulation, frequency) pairs in the dataset, minimising the reconstruction MSE:
 \begin{equation}
-    \mathcal{L}_{\mathrm{AE}} = \|\hat{U} - U\|^2.
+    \mathcal{L}_{\mathrm{AE}} = \|\tilde{U}_k - \hat{U}_k\|^2.
     \label{eq:aeloss}
 \end{equation}
 To ensure diverse frequency coverage within each mini-batch, (simulation, frequency) pairs are reshuffled at the start of each epoch. Training and validation $L^2$ relative errors (Figure~\ref{fig:ae_training}) converge in lockstep to approximately 10.50\% over 100 epochs, with no measurable overfitting.
@@ -389,7 +393,7 @@ The trained autoencoder achieves varying reconstruction accuracy across frequenc
     \label{fig:ae_freq_error}
 \end{figure}
 
-The reconstruction error increases monotonically with frequency, from $\sim$7\% at low frequencies to $\sim$17\% at $k=20$, with an overall mean of 10.05\% (median 9.54\%), setting the irreducible floor that downstream surrogates will inherit. This monotone trend justifies the choice $k_{\max} = 20$: one can naturally conjecture it continues beyond, making higher frequencies increasingly costly to model accurately.
+The reconstruction error increases monotonically with frequency, from $\sim$5\% at low frequencies to $\sim$20\% at $k=20$, with an overall mean of 10.05\% (median 9.54\%), setting the irreducible floor that downstream surrogates will inherit. This monotone trend justifies the choice $k_{\max} = 20$: one can naturally conjecture it continues beyond, making higher frequencies increasingly costly to model accurately.
 
 To assess the full pipeline quality, the AE is evaluated end-to-end in the temporal domain. For each test sample, frequencies $k \le k_{\max}$ are reconstructed via the AE; frequencies $k > k_{\max}$ are replaced by their per-pixel training mean $\bar{U}^{(k)}$, precisely what the surrogate will output for those frequencies. Both the predicted and reference spectra are then inverted to the time domain via~\eqref{eq:laplace}. Over 64 test samples, this yields a mean temporal $L^2$ relative error of \textbf{9.94\%} (median: 9.17\%, std: 2.73\%, range: [6.68\%, 18.61\%]), shown in Figure~\ref{fig:ae_temporal_error}. This figure constitutes the irreducible AE floor: no surrogate trained on this latent space can achieve better temporal reconstruction accuracy without also improving the decoder.
 
@@ -436,7 +440,7 @@ Detailed reconstructions at selected frequencies ($k = 0, 10, 20$) illustrate th
 Once the autoencoder is trained, the encoder is used to pre-compute latent codes $z_k = \mathrm{enc}(\hat{U}_k, f_k)$ for every (simulation, frequency) pair in the training set. For each frequency $k \leq k_{\max}$, an independent four-layer MLP with layer normalisation is then trained to regress these pre-computed codes directly: $\vtheta_{\mathrm{norm}} \mapsto z_k \in \R^{d_z}$, supervised by MSE in latent space. Training directly on pre-computed latent targets avoids any forward or backward pass through the decoder, considerably accelerating training compared to supervising on the reconstructed field. At inference time, each predicted code is decoded by the shared frozen decoder conditioned on $f_k$; unmodelled frequencies ($k > k_{\max}$) are set to their training mean, and the full spectrum is inverted to physical time via~\eqref{eq:laplace}.
 
 \paragraph{Training dynamics.}
-Surrogates are trained sequentially one frequency at a time on a MSE loss in latent space $z$, producing the sawtooth pattern in Figures~\ref{fig:surrogate_training_loss}--\ref{fig:surrogate_training_l2rel}. The upward drift of the loss envelope in Figure~\ref{fig:surrogate_training_loss} directly reflects the increasing regression difficulty with frequency (more oscillatory, more non-linear latent targets), independently of the decoder. The upward drift in the validation $L^2$ error on the decoded field $\hat{U}$ (Figure~\ref{fig:surrogate_training_l2rel}) compounds this with the growing AE reconstruction floor, from $\sim$5\% at $k=0$ to $\sim$14\% at $k=20$ (see Figure~\ref{fig:ae_freq_error}).
+Surrogates are trained sequentially one frequency at a time on a MSE loss in latent space $z$, producing the sawtooth pattern in Figures~\ref{fig:surrogate_training_loss}--\ref{fig:surrogate_training_l2rel}. The upward drift of the loss envelope in Figure~\ref{fig:surrogate_training_loss} directly reflects the increasing regression difficulty with frequency (more oscillatory, more non-linear latent targets), independently of the decoder. The upward drift in the validation $L^2$ error on the decoded Laplace field $\tilde{U}_k$ (Figure~\ref{fig:surrogate_training_l2rel}) compounds this with the growing AE reconstruction floor, from $\sim$5\% at $k=0$ to $\sim$20\% at $k=20$ (see Figure~\ref{fig:ae_freq_error}).
 
 \begin{figure}[htbp]
     \centering
@@ -450,10 +454,10 @@ Surrogates are trained sequentially one frequency at a time on a MSE loss in lat
     \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{LaplaceLatentSurrogate_Nt150_l2rel_U.png}
-        \caption{Validation $L^2$ relative error in Laplace field space $\hat{U}$ (log scale).}
+        \caption{Validation $L^2$ relative error on the decoded Laplace field $\tilde{U}_k$ (log scale).}
         \label{fig:surrogate_training_l2rel}
     \end{subfigure}
-    \caption{Per-frequency surrogate training curves (21 surrogates concatenated). Each sawtooth hump = one surrogate trained from scratch. The upward drift in the loss envelope and in the val $L^2$ error reflects the compounding of two effects: (i) harder prediction in $z$ at high frequencies; (ii) a rising AE reconstruction floor inherited from the frozen decoder.}
+    \caption{Per-frequency surrogate training curves (21 surrogates concatenated). Each sawtooth hump = one surrogate trained from scratch.}
     \label{fig:surrogate_training}
 \end{figure}
 
@@ -468,7 +472,7 @@ The baseline surrogate (with frozen AE decoder) achieves a median $L^2$ relative
 
 \subsubsection{End-to-End Fine-Tuning}
 
-To further improve accuracy, the frozen decoder is unfrozen and the entire model (both the per-frequency MLPs and the shared decoder) is fine-tuned jointly end-to-end on the training set. The loss is computed directly on the physical-time field $U(t)$: since the inverse Laplace transform is differentiable (Section~\ref{par:differentiability}), the full chain $\vtheta \to z_k \to \hat{U}_k \to U(t)$ can be optimised end-to-end, naturally prioritising the frequencies that matter most for prediction quality. Differential learning rates are employed: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. Training and validation curves are shown in Figure~\ref{fig:finetune_training}: both decrease steadily from $\sim$16\% to 10.50\% over 50 epochs. Training has not fully converged, suggesting further gains with additional epochs.
+To further improve accuracy, the frozen decoder is unfrozen and the entire model (both the per-frequency MLPs and the shared decoder) is fine-tuned jointly end-to-end on the training set. The loss is computed directly on the physical-time field $U(t)$: since the inverse Laplace transform is differentiable (see \S\ref{sec:laplace_transform}), the full chain $\vtheta \to z_k \to \tilde{U}_k \to U(t)$ can be optimised end-to-end, naturally prioritising the frequencies that matter most for prediction quality. Differential learning rates are employed: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. Training and validation curves are shown in Figure~\ref{fig:finetune_training}: both decrease steadily from $\sim$16\% to 10.50\% over 50 epochs. End-to-end fine-tuning requires a full forward and backward pass through all 21 surrogates and the shared decoder for every batch, making it significantly more expensive per epoch than the frozen-decoder stage; training was therefore stopped at 50 epochs due to computational budget constraints, and further gains could be expected with additional epochs.
 
 \begin{figure}[htbp]
     \centering
@@ -485,7 +489,7 @@ To further improve accuracy, the frozen decoder is unfrozen and the entire model
         \caption{Error distribution on the test set (mean: 10.19\%, median: 9.30\%).}
         \label{fig:laplacelatent_finetuned}
     \end{subfigure}
-    \caption{End-to-end fine-tuning results. (a) Both curves decrease from $\sim$16\% to 10.50\% over 50 epochs. (b) Test-set error distribution; fine-tuning reduces median error by 48\% vs.\ the frozen baseline (18.50\%). Note that the 9.17\% median AE floor was measured with a frozen decoder; once jointly optimised, it is no longer a hard lower bound.}
+    \caption{End-to-end fine-tuning results. (a) Both curves decrease from $\sim$16\% to 10.50\% over 50 epochs. (b) Test-set error distribution; fine-tuning reduces median error by $\approx 50\%$ vs.\ the frozen baseline (18.50\%). Note that the 9.17\% median AE floor was measured with a frozen decoder; once jointly optimised, it is no longer a hard lower bound.}
     \label{fig:finetune_results}
 \end{figure}
 
@@ -541,7 +545,7 @@ The training and validation $L^2$ relative errors over 100 epochs are shown in F
 \subsubsection{Results and Comparison}
 
 \paragraph{Complete inference pipeline.}
-The three refinement stages compose a single end-to-end inference pipeline summarised in Figure~\ref{fig:pipeline}. Given a parameter vector $\vtheta \in \mathbb{R}^3$, the model first normalises the input and maps it through 21 independent latent projections (one per modelled Laplace frequency) to produce latent codes $z_0, \ldots, z_{20}$. A single batched call to the shared, FiLM-conditioned decoder then reconstructs the normalised Laplace fields for all frequencies simultaneously. After denormalisation, the full spectrum is completed by Hermitian symmetry and inverted to the time domain via the discrete Laplace transform. The resulting surrogate field $U_{\mathrm{surr}}(t)$ is finally passed frame by frame through the residual UNet corrector, which suppresses Gibbs oscillations and sharpens spatial gradients, producing the corrected output $\hat{U}_{\mathrm{corr}}(t)$.
+The three refinement stages compose a single end-to-end inference pipeline summarised in Figure~\ref{fig:pipeline}. Given a parameter vector $\vtheta \in \mathbb{R}^3$, the model first normalises the input and maps it through 21 independent latent projections (one per modelled Laplace frequency) to produce latent codes $z_0, \ldots, z_{20}$. A single batched call to the shared, FiLM-conditioned decoder then reconstructs the normalised Laplace fields for all frequencies simultaneously. After denormalisation, the full spectrum is completed by Hermitian symmetry and inverted to the time domain via the discrete Laplace transform. The resulting surrogate field $U_{\mathrm{surr}}(t)$ is finally passed frame by frame through the residual UNet corrector, which suppresses Gibbs oscillations and sharpens spatial gradients, producing the corrected output $U_{\mathrm{corr}}(t)$.
 
 \begin{figure}[htbp]
 \centering
@@ -621,13 +625,13 @@ The three refinement stages compose a single end-to-end inference pipeline summa
 %% ── ROW 2: right → left ──────────────────────────────────────
 \node[rbox, draw=bdrD, fill=clrD] (denorm) at (15.2, -3.2) {
   \textbf{Denorm + spectrum}\\[2pt]
-  $k>k_{\max}$: $\hat{U}_k\leftarrow\bar{U}^{(k)}$\\
-  $\hat{U}_{N_t-k}=\overline{\hat{U}_k}$\\[2pt]
+  $k>k_{\max}$: $\tilde{U}_k\leftarrow\bar{U}^{(k)}$\\
+  $\tilde{U}_{N_t-k}:=\overline{\tilde{U}_k}$\\[2pt]
   {\sffamily\scriptsize\itshape\color{black!35} $(B,\,N^2,\,150)_{\mathbb{C}}$}
 };
 \node[rbox, draw=bdrD, fill=clrD] (ifft) at (10.5, -3.2) {
   \textbf{Inverse Laplace}\\[2pt]
-  $U_{\mathrm{surr}}=\mathrm{Re}[\mathrm{IFFT}(\hat{U})]$\\
+  $U_{\mathrm{surr}}=\mathrm{Re}[\mathrm{IFFT}(\tilde{U})]$\\
   $/\,(dt\!\cdot\!w_t\!\cdot\!e^{-\gamma t})$\\[2pt]
   {\sffamily\scriptsize\itshape\color{black!35} $(B,\,150,\,N,\!N)$}
 };
@@ -639,7 +643,7 @@ The three refinement stages compose a single end-to-end inference pipeline summa
 };
 \node[rbox, draw=bdrF, fill=clrF] (output) at (0, -3.2) {
   \textbf{Output}\\[3pt]
-  $\hat{U}_{\mathrm{corr}}(t)$\\[2pt]
+  $U_{\mathrm{corr}}(t)$\\[2pt]
   {\sffamily\scriptsize CH$_4$ conc.\ field}\\[3pt]
   {\sffamily\scriptsize\itshape\color{black!35} $(B,\,150,\,128,\!128)$}
 };
@@ -689,7 +693,7 @@ The residual correction stage applies the UNet post-processor to the finetuned s
         CorrectionAE (+ UNet)             & 35.84\,M & 4.80  & 4.46  & 1.56 & [2.37, 13.28] \\
         \bottomrule
     \end{tabular}
-    \caption{Quantitative comparison of transient surrogates on the test set.}
+    \caption{Quantitative comparison of transient surrogates on the test set ($128\times128$ spatial resolution). Tucker POD (evaluated at $40\times40$, a factor-25 coarser grid due to memory constraints) and the per-frequency SVD surrogate (limited by high linear representation error) are excluded as not directly comparable.}
     \label{tab:comparison}
 \end{table}
 
