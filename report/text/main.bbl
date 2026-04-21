@@ -12,11 +12,16 @@ A.~Ammar, M.~Ben~Saada, E.~Cueto, and F.~Chinesta.
   data-driven models enabling the highest accuracy in real-time.
 \newblock {\em International Journal of Material Forming}, 17(2):16, 2024.
 
-\bibitem{fan2024}
+\bibitem{baratta2023dolfinx}
+I.~A. Baratta, J.~P. Dean, J.~S. Dokken, M.~Habera, J.~S. Hale, C.~N.
+  Richardson, M.~E. Rognes, M.~W. Scroggs, N.~Sime, and G.~N. Wells.
+\newblock {DOLFINx}: The next generation {FEniCS} problem solving environment.
+\newblock Zenodo, 2023.
+
+\bibitem{fan2025}
 X.~Fan, Y.~Lin, B.~Gong, and H.~Li.
 \newblock Offline meteorology-pollution coupling global air pollution
-  forecasting model with bilinear pooling, 2024.
-\newblock arXiv preprint.
+  forecasting model with bilinear pooling, 2025.
 
 \bibitem{guo2022}
 Q.~Guo, M.~Ren, S.~Wu, et~al.
@@ -37,11 +42,25 @@ D.~P. Kingma and M.~Welling.
   2014.
 \newblock arXiv:1312.6114.
 
-\bibitem{meng2021survey}
-C.~Meng, S.~Seo, D.~Cao, S.~Griesemer, and Y.~Liu.
-\newblock When physics meets machine learning: a survey of physics-informed
-  machine learning, 2022.
-\newblock arXiv:2203.16797.
+\bibitem{kolda2009tensor}
+T.~G. Kolda and B.~W. Bader.
+\newblock Tensor decompositions and applications.
+\newblock {\em SIAM Review}, 51(3):455--500, 2009.
+
+\bibitem{li2021fno}
+Z.~Li, N.~Kovachki, K.~Azizzadenesheli, B.~Liu, K.~Bhattacharya, A.~Stuart, and
+  A.~Anandkumar.
+\newblock Fourier neural operator for parametric partial differential
+  equations.
+\newblock In {\em International Conference on Learning Representations (ICLR)},
+  2021.
+\newblock arXiv:2010.08895.
+
+\bibitem{lu2021deeponet}
+L.~Lu, P.~Jin, G.~Pang, Z.~Zhang, and G.~E. Karniadakis.
+\newblock Learning nonlinear operators via {DeepONet} based on the universal
+  approximation theorem of operators.
+\newblock {\em Nature Machine Intelligence}, 3:218--229, 2021.
 
 \bibitem{mildenhall2020nerf}
 B.~Mildenhall, P.~P. Srinivasan, M.~Tancik, J.~T. Barron, R.~Ramamoorthi, and

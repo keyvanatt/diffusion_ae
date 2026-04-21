@@ -26,8 +26,8 @@
 
 \author{Keyvan Attarian}
 \date{\today}
-\title{Learning Latent Representations for Neural PDE Surrogates}
-\subtitle{From POD to Frequency-Conditioned Autoencoders}
+\title{Learning Latent Representations for Neural Surrogate Models of Partial Differential Equations}
+\subtitle{From Proper Orthogonal Decomposition to Frequency-Conditioned Autoencoders}
 \logo{logodescartes}
 
 
@@ -35,7 +35,7 @@
 \maketitle
 
 \begin{abstract}
-We investigate neural surrogate models for PDE emulation, centred on learning a compact latent representation of solution fields before regressing physical parameters into that space. On a stationary 2-D convection-diffusion problem, a variational autoencoder (VAE) combined with end-to-end fine-tuning achieves a median relative $L^2$ error of 9.9\%, close to the 8.1\% reconstruction floor. On a transient atmospheric methane (CH\textsubscript{4}) dispersion dataset ($8\,100$ simulations, $150$ time steps, $200\!\times\!200$ spatial grid), the high output dimensionality is managed by working in the Laplace frequency domain, which decomposes each simulation into independent 2-D fields amenable to a shared convolutional autoencoder. Linear baselines (Tucker POD, per-frequency SVD) are evaluated and their representational limitations identified. A three-stage hierarchy is then proposed: (i) per-frequency MLP surrogates mapping physical parameters to latent codes (median error 18.5\%); (ii) end-to-end fine-tuning on the physical-time loss, reducing median error to 9.30\%; and (iii) a lightweight UNet residual corrector suppressing Gibbs oscillations, reaching \textbf{4.46\%} median error at a marginal overhead of 481k parameters. A consistent finding is that the autoencoder is the performance bottleneck and that end-to-end fine-tuning is indispensable.
+We investigate neural surrogate models for PDE emulation, centred on learning a compact latent representation of solution fields before regressing physical parameters into that space. On a stationary 2-D convection-diffusion problem, a variational autoencoder (VAE) combined with end-to-end fine-tuning achieves a median relative $L^2$ error of 9.9\%. On a transient atmospheric methane (CH\textsubscript{4}) dispersion dataset, the high output dimensionality is managed by working in the Laplace frequency domain, which decomposes each simulation into independent 2-D fields amenable to a shared convolutional autoencoder. Linear baselines (Tucker POD, per-frequency SVD) are evaluated and their representational limitations identified. A three-stage hierarchy is then proposed: (i) per-frequency MLP surrogates mapping physical parameters to latent codes (median error 18.5\%); (ii) end-to-end fine-tuning on the physical-time loss, reducing median error to 9.30\%; and (iii) a lightweight UNet residual corrector suppressing Gibbs oscillations, reaching \textbf{4.46\%} median error at a marginal overhead of 481k parameters. A consistent finding is that the autoencoder is the performance bottleneck and that end-to-end fine-tuning is indispensable.
 \end{abstract}
 
 \tableofcontents
@@ -47,12 +47,12 @@ We investigate neural surrogate models for PDE emulation, centred on learning a 
 
 The numerical simulation of physical systems governed by partial differential equations (PDEs) is central to a wide range of scientific and engineering disciplines, from atmospheric transport modelling and chemical process engineering to structural mechanics and geophysics. High-fidelity solvers—based on finite elements, finite volumes, or spectral methods—can faithfully capture complex multi-scale phenomena, but at a computational cost that renders repeated evaluations impractical. Real-time monitoring, Bayesian inverse problems, optimal experimental design, and digital twin frameworks all demand thousands to millions of forward evaluations; each solver query may take minutes to hours, making exhaustive parameter exploration computationally intractable \cite{ammar2024hybrid,quarteroni2025}.
 
-This tension between fidelity and cost motivates \emph{surrogate modelling}: replacing the solver by a cheap, approximate emulator trained on a dataset of precomputed solutions. Classical methods such as Gaussian processes or polynomial chaos expansions offer principled uncertainty quantification but scale poorly with the dimension of both the input parameter space and the spatial field output. Deep learning surrogates can in principle learn highly non-linear parameter-to-field maps at full resolution, but naive regression onto $N_t \times N^2$ output values per simulation remains intractable for realistic grids and time horizons \cite{karniadakis2021,quarteroni2025}.
+This tension between fidelity and cost motivates \emph{surrogate modelling}: replacing the solver by an approximate emulator trained on a dataset of precomputed solutions. Deep learning surrogates can in principle learn highly non-linear parameter-to-field maps at full resolution—recent architectures such as Fourier Neural Operators \cite{li2021fno} and DeepONets \cite{lu2021deeponet} demonstrate the potential of this approach—but naive regression onto $N_t \times N^2$ output values per simulation remains intractable for realistic grids and time horizons \cite{karniadakis2021,quarteroni2025}.
 
 The central difficulty is therefore one of \emph{representation}: the surrogate must first find a compact encoding of the solution manifold before it can learn to navigate it. A natural strategy is to decouple these two problems—learn a latent representation of the solution fields, then train a lightweight map from physical parameters into this latent space. This two-stage paradigm forms the backbone of every architecture explored in this work.
 
 \textbf{Application context.}
-The motivating application is the emulation of atmospheric methane (CH\textsubscript{4}) dispersion models for real-time pollutant monitoring and inverse source identification \cite{fan2024,guo2022}. Each simulation produces a time series of 150 snapshots on a $200 \times 200$ grid; the parameter space spans complex non-linear variations including sharp early-time transients that standard low-rank methods struggle to capture.
+The motivating application is the emulation of atmospheric methane (CH\textsubscript{4}) dispersion models for real-time pollutant monitoring and inverse source identification \cite{fan2025,guo2022}. Each simulation produces a time series of 150 snapshots on a $200 \times 200$ grid; the parameter space spans complex non-linear variations including sharp early-time transients that standard low-rank methods struggle to capture.
 
 \textbf{Approach and contributions.}
 We investigate a hierarchy of latent-space strategies of increasing expressiveness. Starting with a stationary 2-D convection-diffusion problem as a controlled testbed, we validate a variational autoencoder (VAE) two-stage pipeline in which a frozen decoder is subsequently adapted by end-to-end fine-tuning. The key lesson—that the autoencoder is the bottleneck, and that joint fine-tuning is indispensable—directly informs every design decision on the transient problem.
@@ -78,7 +78,7 @@ The stationary test case is a convection-diffusion problem on the unit square $\
 \end{equation}
 where $D > 0$ is the diffusivity, $\bm{b} = (b_x, b_y)$ is the convection velocity, and $f$ is a point-source intensity. The parameter vector $\vtheta = (D, b_x, b_y, f) \in \R^4$ fully specifies a solution instance, and the surrogate task is to learn the forward map $\vtheta \mapsto U \in \R^{N \times N}$.
 
-The dataset is generated by uniformly sampling $\vtheta$ over the parameter domain and solving~\eqref{eq:convdiff} using P1 finite elements with SUPG/GLS stabilisation (FEniCS/DOLFINx). Solutions are interpolated onto a uniform $N \times N$ grid. For machine learning, each field $U$ is centred and rescaled to $[-1,1]$ using per-pixel statistics computed on the training set; the parameters $\vtheta$ are standardised using pre-computed mean and standard deviation. Representative examples are shown in Figure~\ref{fig:dataset}.
+The dataset is generated by uniformly sampling $\vtheta$ over the parameter domain and solving~\eqref{eq:convdiff} using P1 finite elements with SUPG/GLS stabilisation (FEniCS/DOLFINx \cite{baratta2023dolfinx}). Solutions are interpolated onto a uniform $N \times N$ grid. For machine learning, each field $U$ is centred and rescaled to $[-1,1]$ using per-pixel statistics computed on the training set; the parameters $\vtheta$ are standardised using pre-computed mean and standard deviation. Representative examples are shown in Figure~\ref{fig:dataset}.
 
 \begin{figure}[htbp]
     \centering
@@ -192,7 +192,7 @@ Table~\ref{tab:surrogate} summarises the results; Figure~\ref{fig:surrogate_hist
     \label{fig:surrogate_hist}
 \end{figure}
 
-Two findings stand out. First, keeping the decoder frozen yields poor surrogate performance (median 27--33\%): the MLP must hit a precise target in a fixed latent geometry, a highly constrained regression problem. Second, end-to-end fine-tuning reduces the error dramatically: the $d_z=32$ variant reaches \textbf{9.9\%} median, only 1.8 pp above the VAE floor. The surrogate does not introduce new errors; it inherits the imperfections of the latent representation. The $d_z=3$ variant remains at 14.0\% because the three-dimensional bottleneck discards too much spatial information to recover.
+Two findings stand out. First, keeping the decoder frozen yields poor surrogate performance (median 27--33\%): the MLP must hit a precise target in a fixed latent geometry. Second, end-to-end fine-tuning reduces the error dramatically: the $d_z=32$ variant reaches \textbf{9.9\%} median, only 1.8 pp above the VAE floor, confirming that the surrogate inherits rather than adds error. The $d_z=3$ variant remains at 14.0\% due to the three-dimensional bottleneck discarding too much spatial information.
 
 \begin{figure}[htbp]
     \centering
@@ -201,7 +201,7 @@ Two findings stand out. First, keeping the decoder frozen yields poor surrogate 
     \label{fig:surrogate_recon}
 \end{figure}
 
-Figure~\ref{fig:surrogate_recon} confirms this qualitatively: the spatial error structure is indistinguishable from that of the VAE (Figure~\ref{fig:vae_recon}). Improving surrogate accuracy requires improving the autoencoder, not the MLP.
+Figure~\ref{fig:surrogate_recon} confirms this qualitatively: the error structure matches that of the VAE (Figure~\ref{fig:vae_recon}), confirming that improving surrogate accuracy requires improving the autoencoder, not the MLP.
 
 \subsection{Discussion}
 
@@ -282,7 +282,7 @@ Increasing $k_{\max}$ reduces the truncation error but raises the prediction dif
 Unlike the approaches that follow, Tucker POD operates directly in the physical time domain without any Laplace transformation.
 
 \paragraph{Algorithm.}
-The Tucker POD method, introduced by Ammar \emph{et al.}~\cite{ammar2024hybrid}, computes a greedy rank-$(1,1,1)$ Tucker decomposition of the full training tensor by sequentially extracting separable modes. Given the three-dimensional tensor $\bm{H} \in \R^{n_r \times n_s \times N_t}$, the decomposition seeks an approximation:
+The Tucker POD method, used by Ammar \emph{et al.}~\cite{ammar2024hybrid}, computes a greedy rank-$(1,1,1)$ Tucker decomposition \cite{kolda2009tensor} of the full training tensor by sequentially extracting separable modes. Given the three-dimensional tensor $\bm{H} \in \R^{n_r \times n_s \times N_t}$, the decomposition seeks an approximation:
 \begin{equation}
     H_{r,s,t} \approx \sum_{j=1}^{n_f} \alpha_j\, F_{r,j}\, G_{s,j}\, P_{t,j},
     \label{eq:tucker}
@@ -296,7 +296,7 @@ where $\bm{F}$, $\bm{P}$, $\bm{G}$ collect spatial, temporal, and simulation-dep
     T \leftarrow \frac{\bm{R}^{(j)}_{(3)}\,(S \otimes R)}{\|R\|^2\,\|S\|^2},
     \label{eq:als}
 \end{equation}
-where $\bm{R}^{(j)}_{(k)}$ is the mode-$k$ unfolding. The denominators $\|S\|^2\|T\|^2$, etc., appear because $R$, $S$, $T$ are \emph{not} renormalised between updates (unlike the standard ALS formulation where unit-norm vectors cause these factors to vanish); this unnormalised variant is used here to avoid the discontinuities in singular values that normalisation introduces in the context of Bromwich-based deflation. After convergence, the normalised vectors are stored, the residual is deflated, and the process repeats until the relative residual $\|\bm{R}^{(j)}\|_F / \|\bm{H}\|_F$ falls below tolerance or $n_f$ modes are extracted.
+where $\bm{R}^{(j)}_{(k)}$ is the mode-$k$ unfolding. After convergence, the normalised vectors are stored, the residual is deflated, and the process repeats until the relative residual $\|\bm{R}^{(j)}\|_F / \|\bm{H}\|_F$ falls below tolerance or $n_f$ modes are extracted.
 
 \paragraph{Application to the CH4 dataset.}
 The decomposition is applied to the full training set of $n_s = 8\,100$ simulations. Because the algorithm requires the entire tensor to reside in memory simultaneously, the spatial grid is subsampled with stride $\delta = 5$, reducing each $200 \times 200$ frame to a $40 \times 40$ grid ($n_r = 1\,600$ nodes). $n_f = 300$ modes are extracted; the convergence of the relative residual as a function of mode index is shown in Figure~\ref{fig:svd}(a).
@@ -436,7 +436,7 @@ Detailed reconstructions at selected frequencies ($k = 0, 10, 20$) illustrate th
 Once the autoencoder is trained, the encoder is used to pre-compute latent codes $z_k = \mathrm{enc}(\hat{U}_k, f_k)$ for every (simulation, frequency) pair in the training set. For each frequency $k \leq k_{\max}$, an independent four-layer MLP with layer normalisation is then trained to regress these pre-computed codes directly: $\vtheta_{\mathrm{norm}} \mapsto z_k \in \R^{d_z}$, supervised by MSE in latent space. Training directly on pre-computed latent targets avoids any forward or backward pass through the decoder, considerably accelerating training compared to supervising on the reconstructed field. At inference time, each predicted code is decoded by the shared frozen decoder conditioned on $f_k$; unmodelled frequencies ($k > k_{\max}$) are set to their training mean, and the full spectrum is inverted to physical time via~\eqref{eq:laplace}.
 
 \paragraph{Training dynamics.}
-Surrogates are trained sequentially one frequency at a time, producing the sawtooth pattern in Figures~\ref{fig:surrogate_training_loss}--\ref{fig:surrogate_training_l2rel}. The upward drift in the loss envelope reflects two compounding effects: regression difficulty increases with frequency (more oscillatory, more non-linear fields), and the AE reconstruction floor itself grows from $\sim$5\% at $k=0$ to $\sim$14\% at $k=20$ (see Figure~\ref{fig:ae_freq_error}).
+Surrogates are trained sequentially one frequency at a time on a MSE loss in latent space $z$, producing the sawtooth pattern in Figures~\ref{fig:surrogate_training_loss}--\ref{fig:surrogate_training_l2rel}. The upward drift of the loss envelope in Figure~\ref{fig:surrogate_training_loss} directly reflects the increasing regression difficulty with frequency (more oscillatory, more non-linear latent targets), independently of the decoder. The upward drift in the validation $L^2$ error on the decoded field $\hat{U}$ (Figure~\ref{fig:surrogate_training_l2rel}) compounds this with the growing AE reconstruction floor, from $\sim$5\% at $k=0$ to $\sim$14\% at $k=20$ (see Figure~\ref{fig:ae_freq_error}).
 
 \begin{figure}[htbp]
     \centering
@@ -468,7 +468,7 @@ The baseline surrogate (with frozen AE decoder) achieves a median $L^2$ relative
 
 \subsubsection{End-to-End Fine-Tuning}
 
-To further improve accuracy, the frozen decoder is unfrozen and the entire model (both the per-frequency MLPs and the shared decoder) is fine-tuned jointly end-to-end on the training set. The loss is computed directly on the physical-time field $U(t)$: since the inverse Laplace transform is differentiable (Section~\ref{sec:transient}, \emph{Differentiability} paragraph), the full chain $\vtheta \to z_k \to \hat{U}_k \to U(t)$ can be optimised end-to-end, naturally prioritising the frequencies that matter most for prediction quality. Differential learning rates are employed: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. Training and validation curves are shown in Figure~\ref{fig:finetune_training}: both decrease steadily from $\sim$16\% to 10.50\% over 50 epochs. Training has not fully converged, suggesting further gains with additional epochs.
+To further improve accuracy, the frozen decoder is unfrozen and the entire model (both the per-frequency MLPs and the shared decoder) is fine-tuned jointly end-to-end on the training set. The loss is computed directly on the physical-time field $U(t)$: since the inverse Laplace transform is differentiable (Section~\ref{par:differentiability}), the full chain $\vtheta \to z_k \to \hat{U}_k \to U(t)$ can be optimised end-to-end, naturally prioritising the frequencies that matter most for prediction quality. Differential learning rates are employed: $\eta_{\mathrm{surr}} = 5 \times 10^{-5}$ for the per-frequency MLPs and $\eta_{\mathrm{dec}} = 10^{-5}$ for the decoder. Training and validation curves are shown in Figure~\ref{fig:finetune_training}: both decrease steadily from $\sim$16\% to 10.50\% over 50 epochs. Training has not fully converged, suggesting further gains with additional epochs.
 
 \begin{figure}[htbp]
     \centering
@@ -503,14 +503,14 @@ A UNet \cite{ronneberger2015unet} residual corrector is applied post hoc, frame 
 
 Given the surrogate prediction $U_{\mathrm{pred}}(t) \in \R^{N \times N}$, the residual correction operates as follows. The predicted field is first normalised per-frame using its own spatial statistics (mean $\mu$ and standard deviation $\sigma$), then passed through a UNet that predicts a residual correction in the normalised space. The residual is rescaled back to physical space and added to the original prediction:
 \begin{equation}
-    U_{\mathrm{corr}} = U_{\mathrm{pred}} + \sigma(U_{\mathrm{pred}}) \cdot r\!\left(\frac{U_{\mathrm{pred}} - \mu(U_{\mathrm{pred}})}{\sigma(U_{\mathrm{pred}})}\right),
+    U_{\mathrm{corr}}(\cdot,t) = U_{\mathrm{pred}}(\cdot,t) + \sigma(U_{\mathrm{pred}}(\cdot,t)) \cdot r\!\left(\frac{U_{\mathrm{pred}}(\cdot,t) - \mu(U_{\mathrm{pred}}(\cdot,t))}{\sigma(U_{\mathrm{pred}}(\cdot,t))}\right),
     \label{eq:correction}
 \end{equation}
 Here, $r(\cdot)$ is a three-level UNet with $c = 16$ base channels ($\approx$481k parameters). The final output layer is zero-initialised so that $r \equiv 0$ at the start of training, ensuring a stable initialisation from the surrogate prediction.
 
 \subsubsection{Training the Corrector}
 
-The corrector loss combines reconstruction accuracy with spatial smoothness. Denoting $r_{\mathrm{pred}} = U_{\mathrm{corr}} - U_{\mathrm{pred}}$ as the predicted residual and $r_{\mathrm{true}} = U_{\mathrm{true}} - U_{\mathrm{pred}}$ as the target residual, the loss function is:
+The corrector loss combines reconstruction accuracy with spatial smoothness. Denoting $r_{\mathrm{pred}}(\cdot,t) = U_{\mathrm{corr}}(\cdot,t) - U_{\mathrm{pred}}(\cdot,t)$ as the predicted residual and $r_{\mathrm{true}}(\cdot,t) = U_{\mathrm{true}}(\cdot,t) - U_{\mathrm{pred}}(\cdot,t)$ as the target residual, the loss function is:
 \begin{equation}
     \mathcal{L}_{\mathrm{corr}} = \left\|\frac{r_{\mathrm{pred}} - r_{\mathrm{true}}}{\sigma_{\mathrm{res}}}\right\|^2 + \lambda_{\nabla}\left\|\frac{\nabla r_{\mathrm{pred}} - \nabla r_{\mathrm{true}}}{\sigma_{\mathrm{res}}}\right\|^2,
     \label{eq:corrloss}
@@ -699,11 +699,13 @@ The residual correction stage applies the UNet post-processor to the finetuned s
 \section{Conclusion}
 % ============================================================
 
-This work has explored a hierarchy of latent-space strategies for neural PDE surrogates, moving from a stationary testbed to a high-dimensional transient emulation task. On the stationary convection-diffusion problem, a VAE two-stage pipeline achieves a median relative $L^2$ error of 9.9\% after end-to-end fine-tuning, only 1.8 pp above the 8.1\% autoencoder reconstruction floor. On the transient CH\textsubscript{4} dataset, the three-stage pipeline—frequency-conditioned latent surrogate, end-to-end fine-tuning, and UNet residual correction—reduces median error from 18.5\% (unfinetuned baseline) to 9.3\% after fine-tuning and to \textbf{4.46\%} after residual correction, a factor-of-four reduction at a marginal parameter overhead of only 481k weights.
+This work has explored a hierarchy of latent-space strategies for neural PDE surrogates, moving from a stationary testbed to a high-dimensional transient emulation task. On the stationary convection-diffusion problem, a VAE two-stage pipeline achieves a median relative $L^2$ error of 9.9\% after end-to-end fine-tuning. On the transient CH\textsubscript{4} dataset, the three-stage pipeline—frequency-conditioned latent surrogate, end-to-end fine-tuning, and UNet residual correction—reduces median error from 18.5\% (unfinetuned baseline) to 9.3\% after fine-tuning and to \textbf{4.46\%} after residual correction, a factor-of-four reduction at a marginal parameter overhead of only 481k weights.
 
 Several design principles emerged consistently across both problems. First, \emph{the autoencoder is the bottleneck}: the surrogate MLP, once freed to jointly adapt the decoder, closely tracks the reconstruction floor, confirming that improving the latent representation is the highest-leverage lever. Second, \emph{end-to-end fine-tuning is indispensable}: keeping the decoder frozen yields errors two to three times higher than joint fine-tuning, regardless of the MLP capacity. Third, \emph{a physically motivated temporal decomposition enables tractable high-dimensional emulation}: working in the Laplace frequency domain reduces the transient surrogate to a collection of stationary-like problems, each amenable to a shared convolutional architecture. Finally, the \emph{residual corrector is both simple and highly effective}: by pre-computing surrogate predictions offline and training a lightweight UNet purely on correction residuals, spectral truncation artefacts (Gibbs oscillations) are largely suppressed without modifying the upstream pipeline.
 
-The Gibbs oscillations introduced by spectral truncation are currently mitigated only by the post-hoc UNet corrector. Exploring alternative regularisation strategies applied upstream, directly in the Laplace domain, could suppress these artefacts more fundamentally and reduce the reliance on the corrector stage.The hyperparameter choices made in this work---notably $\gamma$ and $k_{\max}$---were guided by empirical grid searches and energy-based heuristics, but a more systematic exploration could improve results further. In particular, the choice of $k_{\max}$ directly controls the trade-off between spectral completeness and per-frequency prediction difficulty, and a finer sweep jointly optimising $(\gamma, k_{\max})$ against end-to-end temporal reconstruction error (rather than against the oracle Laplace inversion alone) may reveal better operating points. More broadly, deriving explicit error bounds as a function of $\gamma$, $k_{\max}$, and per-frequency surrogate error would put these empirical choices on a rigorous footing and reduce the need for costly grid searches on new applications.
+The Gibbs oscillations introduced by spectral truncation are currently mitigated only by the post-hoc UNet corrector. More principled alternatives could act earlier in the pipeline: regularisation strategies applied directly at the inversion step—such as windowing functions, Tikhonov-regularised inversion, or learned spectral filters applied to $\hat{U}_k$ before the inverse Laplace transform—could suppress these artefacts more fundamentally and reduce reliance on the downstream corrector.
+
+A deeper open question concerns the theoretical understanding of the Laplace surrogate. The behaviour of the per-frequency reconstruction error as a function of $k$ and $\gamma$ is currently explained only empirically. A more careful study of the Laplace fields $\hat{U}_k$ as a function of $(k, \gamma)$, characterising how their spatial regularity, amplitude decay, and sensitivity to surrogate error propagate through the inversion formula to the final temporal reconstruction error could yield explicit error bounds and provide principled, \textit{a priori} justifications for the heuristic choices made here. Such a theory would not only put the hyperparameter selection on a rigorous footing, but also provide guidance for transferring the method to new physical systems without resorting to costly grid searches.
 
 \newpage
 \bibliographystyle{plain}
