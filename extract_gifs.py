@@ -21,7 +21,8 @@ gifs = [
     "SVDSurrogate_anim_1.gif",
     "LaplaceLatentModel_anim_1.gif",
     "LaplaceSVDModel_anim_1.gif",
-    "ae_study_anim_0.gif"
+    "ae_study_anim_0.gif",
+    "ch4_demo.gif"
 ]
 
 for g in gifs:
