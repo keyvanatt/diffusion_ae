@@ -8,6 +8,8 @@
 \usepackage{xcolor}
 \usepackage{bm}
 \usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit}
+\usepackage{animate}
 
 \graphicspath{{../../plots/}{../text/}}
 
@@ -33,7 +35,7 @@
 \title[Neural Surrogates for PDE Emulation]{Learning Latent Representations for Neural Surrogate Models of PDEs}
 \subtitle{From Proper Orthogonal Decomposition to Frequency-Conditioned Autoencoders}
 \author[Keyvan Attarian]{Keyvan Attarian}
-\institute[Ecole polytechnique]{Ecole polytechnique \\ CSC\_52002\_EP - Multimodal generative AI}
+\institute[Ecole polytechnique]{Ecole polytechnique \\ CNRS@CREATE - DesCartes Program}
 \date{\today}
 
 \titlegraphic{%
@@ -63,22 +65,46 @@
 
 \section{Introduction}
 
-\begin{frame}{Introduction: Preliminary Stationary Case}
-  \textbf{Goal:} Emulate parameter-to-field map $\vtheta \mapsto U$ via a compact latent representation. \\
-  \textbf{Method:} Train a VAE ($U \to z$) followed by a latent MLP surrogate ($\vtheta \to z$).
+\begin{frame}{Preliminary Study: 2D Convection-Diffusion Dataset}
+  \textbf{Physical Problem:} Stationary convection-diffusion on $\Omega = [0,1]^2$
+  \begin{equation*}
+      -D\,\Delta U + \bm{b} \cdot \nabla U = f \qquad \text{with } U=0 \text{ on } \partial\Omega
+  \end{equation*}
+  
+  \begin{itemize}
+      \item \textbf{Parameters:} $\vtheta = (D, b_x, b_y, f) \in \mathbb{R}^4$ (diffusivity, velocity, source).
+      \item \textbf{Dataset Generation:} 10,000 simulations solved via P1 finite elements.
+      \item \textbf{Format:} Solutions interpolated to a uniform $N \times N$ grid.
+  \end{itemize}
+  
+  \vspace{0.2em}
+  \centering
+  \includegraphics[width=0.95\textwidth, height=4.2cm, keepaspectratio]{dataset_preview.png}
+\end{frame}
+
+\begin{frame}{Preliminary Study: Latent Surrogate Strategy}
+  \textbf{Method:} Two-stage Variational Autoencoder (VAE) backbone.
+  \begin{enumerate}
+      \item \textbf{Representation:} VAE ($U \to z \to \hat{U}$)
+      \item \textbf{Regression:} MLP surrogate ($\vtheta \to z$)
+  \end{enumerate}
+  
+  \vspace{0.3em}
+  \textbf{Bottleneck: The frozen spatial representation}
+  \begin{columns}[T]
+      \column{0.48\textwidth}
+      \begin{itemize}
+          \item \textbf{Frozen Decoder:} Rigid latent space yields poor accuracy (\textbf{27.7\%} error).
+      \end{itemize}
+      \column{0.48\textwidth}
+      \begin{itemize}
+          \item \textbf{End-to-End Fine-Tuning:} Unlocking decoder drops error to \textbf{9.9\%} (VAE floor: 8.1\%).
+      \end{itemize}
+  \end{columns}
   
   \vspace{0.5em}
-  \begin{columns}
-      \column{0.45\textwidth}
-      \textbf{Key findings:}
-      \begin{itemize}
-          \item A frozen decoder yields very poor performance (27.7\% error).
-          \item \textbf{End-to-End Fine-tuning} is indispensable (reduces error to 9.9\%, almost reaching the VAE reconstruction floor of 8.1\%).
-      \end{itemize}
-      \column{0.55\textwidth}
-      \centering
-      \includegraphics[width=0.9\linewidth]{surrogate_l2rel_hist.png}
-  \end{columns}
+  \centering
+  \includegraphics[width=0.8\textwidth]{surrogate_l2rel_hist.png}
 \end{frame}
 
 \section{The Transient Challenge}
@@ -100,7 +126,8 @@
   \begin{columns}
       \column{0.5\textwidth}
       \begin{itemize}
-          \item \textbf{Method:} Tucker decomposition into separable $(F, P, G)$ modes.
+          \item \textbf{Method:} Tucker decomposition into separable $(F, P, G)$ modes:
+          \[ H(x, t; \vtheta) \approx \sum_{j=1}^{n_f} \alpha_j\, F_j(x)\, P_j(t)\, G_j(\vtheta) \]
           \item \textbf{Memory Bottleneck:} Requires holding the full tensor in RAM. Forces severe spatial downsampling from $200 \times 200$ to $40 \times 40$.
           \item \textbf{Performance:} Reaches an irreducible $\sim$10\% reconstruction floor.
       \end{itemize}
@@ -117,14 +144,14 @@
 \begin{frame}{Temporal Decoupling: The Laplace Domain}
   Transform temporal fields via \textbf{discrete Bromwich integral}:
   \[
-    \hat{U}(s_k) = \int_0^T U(t)\,e^{-s_k t}\,\mathrm{d}t \quad \text{(differentiable)}
+    \hat{U}(s_k) = \int_0^T U(t)\,e^{-s_k t}\,\mathrm{d}t \;\approx\; \Delta t \sum_{n=0}^{N_t-1} w_n\, U_n\, e^{-\gamma t_n} e^{-i\omega_k t_n}
   \]
   \begin{columns}
       \column{0.5\textwidth}
       \begin{itemize}
           \item Converts 3D transient fields into 2D independent stationary-like complex fields.
           \item Spectrum drops rapidly: truncated at $k_{\max} = 20$.
-          \item Allows processing the problem at the \textbf{full original spatial resolution}.
+          \item Differentiable transform: allows processing at \textbf{full spatial resolution}.
       \end{itemize}
       \column{0.5\textwidth}
       \centering
@@ -132,7 +159,43 @@
   \end{columns}
 \end{frame}
 
+\begin{frame}{Linear Baseline 2: SVD in Laplace Domain}
+  What if we apply SVD on independent complex 2D frequency slices?
+  \vspace{0.5em}
+  \begin{columns}[T]
+      \column{0.48\textwidth}
+      \begin{itemize}
+          \item \textbf{Method:} Truncated SVD per frequency. MLPs regress parameters into spatial bases:
+          \[ \hat{U}_k(x; \vtheta) \approx \sum_{j=1}^{k_{\mathrm{svd}}} c_j^{(k)}(\vtheta)\, V_j^{(k)}(x) \]
+      \end{itemize}
+      
+      \column{0.48\textwidth}
+      \begin{itemize}
+          \item \textbf{Limitation:} High truncation error growing monotonically.
+          \item \textbf{Conclusion:} Fixed linear bases yield noisy targets, motivating non-linear autoencoders.
+      \end{itemize}
+  \end{columns}
+  
+  \vspace{0.2em}
+  \centering
+  \includegraphics[height=3.0cm]{LaplaceSVDModel_svd_error_ksvd100.png}
+\end{frame}
+
 \section{Latent Space Pipeline}
+
+\begin{frame}{Latent Space Structure: Autoencoder Architecture}
+  To handle multiple complex frequencies continuously, we employ a conditional convolutional architecture:
+  \vspace{0.5em}
+  \begin{itemize}
+      \item \textbf{Frequency Conditioning:} The target frequency ratio $f_k = k/(N_{\mathrm{half}}-1) \in [0,1]$ is embedded via a multi-scale sinusoidal basis:
+      \[ \bm{e}(f_k) = \mathrm{MLP}\Bigl(\bigl[\sin(2^i\pi f_k),\; \cos(2^i\pi f_k)\bigr]_{i=0}^{L-1}\Bigr) \]
+      \item \textbf{FiLM Modulation:} The embedded feature $\bm{e}(f_k)$ is projected to channel-wise gains $\alpha_\ell$ and biases $\delta_\ell$, modulating the activation maps $\bm{x}_\ell$ at each layer $\ell$:
+      \[ \bm{x}_\ell \;\leftarrow\; \bigl(\bm{x}_\ell \odot (1 + \alpha_\ell(\bm{e}(f_k)))\bigr) \;+\; \delta_\ell(\bm{e}(f_k)) \]
+      The residual gain formulation $(1 + \alpha_\ell)$ stabilises early training.
+      \item \textbf{Architecture:} A shared CNN processes all frequency slices, defining a mapped latent space:
+      \[ z = \mathrm{Enc}_\phi(\hat{U}_k, f_k), \quad \tilde{U}_k = \mathrm{Dec}_\psi(z, f_k) \]
+  \end{itemize}
+\end{frame}
 
 \begin{frame}{Latent Space: Shared Architecture and Temporal Error}
   We train a \textbf{single shared autoencoder} using \textbf{FiLM modulation} and \textbf{Sinusoidal Encodings}.
@@ -151,6 +214,14 @@
   \end{columns}
 \end{frame}
 
+\begin{frame}{Latent Space: Performance Evaluation per Frequency Index}
+  Reconstruction error naturally degrades as we evaluate higher conditioning indices $k$. The model efficiently reconstructs the highly energetic low frequencies, while struggling with the noise-like high-frequency tail.
+  \vspace{0.5em}
+  \begin{center}
+      \includegraphics[height=5.5cm]{ae_study_frequency_error.png}
+  \end{center}
+\end{frame}
+
 \begin{frame}{Latent Space: Spatial Truncation Error per Frequency}
   Loss increases monotonically with frequency (up to 17\% at $k=20$). Low frequencies ($k=0$) feature smooth gradients; high frequencies ($k=20$) show widely distributed, highly oscillatory patterns.\\
   \vspace{1em}
@@ -165,6 +236,16 @@
       \includegraphics[height=4.5cm]{ae_study_freq_20.png}
   \end{columns}
 \end{frame}
+
+\begin{frame}{Demonstration: Latent Space Autoencoder}
+  \textbf{Autoencoder Reconstruction over time}\\
+  \vspace{0.5em}
+  \centering
+  \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_ae_study_anim_0/frame_}{0}{149}\\
+  \vspace{1em}
+  \textit{The AE cleanly decodes the temporal trajectory when provided with true frequencies.}
+\end{frame}
+
 
 \begin{frame}{Phase 1: Frozen Latent Surrogates ($\vtheta \to z_k$)}
   21 Independent MLPs (one per frequency) directly regress parameter $\vtheta$ into precomputed $z_k$.\\
@@ -195,6 +276,15 @@
   \end{columns}
 \end{frame}
 
+\begin{frame}{Demonstration: Fine-Tuned Physical Map}
+  \textbf{End-to-End Surrogate Emulation}\\
+  \vspace{0.5em}
+  \centering
+  \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_LaplaceLatentModel_anim_1/frame_}{0}{149}\\
+  \vspace{1em}
+  \textit{After fine-tuning, the surrogate successfully bridges the parameters to the non-linear transport dynamics.}
+\end{frame}
+
 \begin{frame}{Phase 3: Residual Corrector (Gibbs Phenomenon)}
   Spectral truncation at $k_{\max}=20$ creates inherent ripples. A 3D UNet (+481k params) suppresses ripples frame-by-frame on frozen surrogate predictions, reducing error to \textbf{4.46\%}.
   
@@ -209,29 +299,159 @@
   \end{columns}
 \end{frame}
 
+\begin{frame}{Demonstration: Residual Corrector}
+  \textbf{Post-Hoc Gibbs Artifact Suppression}\\
+  \vspace{0.5em}
+  \centering
+  \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_CorrectionAE_anim_1/frame_}{0}{149}\\
+  \vspace{1em}
+  \textit{The 3D UNet effectively suppresses spatial ripples dynamically over time.}
+\end{frame}
+
+\begin{frame}{Inference Pipeline Architecture}
+\definecolor{clrA}{RGB}{224,233,245}
+\definecolor{clrB}{RGB}{200,218,240}
+\definecolor{clrC}{RGB}{208,226,234}
+\definecolor{clrD}{RGB}{246,228,202}
+\definecolor{clrE}{RGB}{232,220,242}
+\definecolor{clrF}{RGB}{210,235,215}
+\definecolor{bdrA}{RGB}{95,135,185}
+\definecolor{bdrB}{RGB}{65,115,170}
+\definecolor{bdrC}{RGB}{55,125,155}
+\definecolor{bdrD}{RGB}{185,135,55}
+\definecolor{bdrE}{RGB}{125,85,165}
+\definecolor{bdrF}{RGB}{65,140,85}
+\begin{center}
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[
+  >=Stealth,
+  rbox/.style={rectangle, rounded corners=2pt,
+    text width=3.1cm, minimum height=1.7cm,
+    align=center, inner sep=6pt, font=\sffamily\footnotesize},
+  sbox/.style={rectangle, rounded corners=2pt,
+    text width=2.1cm, minimum height=0.85cm,
+    align=center, inner sep=3pt, font=\sffamily\scriptsize},
+  arr/.style={-Stealth, line width=0.65pt, black!40},
+]
+
+%% ── INPUT (includes normalisation) ──────────────────────────
+\node[rbox, draw=bdrA, fill=clrA] (input) at (0, 0) {
+  \textbf{Input}\\[2pt]
+  $\vtheta_{\mathrm{raw}}=(k,\,A,\,C)$\\
+  {\sffamily\scriptsize $\vtheta_{\mathrm{norm}}=(\vtheta_{\mathrm{raw}}-\mu_{\vtheta})/\sigma_{\vtheta}$}\\[3pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(B,\,3)$}
+};
+
+%% ── PARALLEL MLPs ────────────────────────────────────────────
+\node[sbox, draw=bdrB, fill=clrB] (mlp0)  at (5.2,  1.5) {
+  $\mathrm{proj}_0:\vtheta_{\mathrm{norm}}\!\to\!z_0$\\[2pt]
+  {\sffamily\tiny\color{black!35} $z_0:(B,\,64)$}
+};
+\node[sbox, draw=bdrB, fill=clrB] (mlpk)  at (5.2,  0.3) {
+  $\mathrm{proj}_k:\vtheta_{\mathrm{norm}}\!\to\!z_k$\\[2pt]
+  {\sffamily\tiny\color{black!35} $z_k:(B,\,64)$}
+};
+\node[font=\normalsize\sffamily, text=black!45] (vdots) at (5.2, -0.5) {$\vdots$};
+\node[sbox, draw=bdrB, fill=clrB] (mlp20) at (5.2, -1.2) {
+  $\mathrm{proj}_{20}:\vtheta_{\mathrm{norm}}\!\to\!z_{20}$\\[2pt]
+  {\sffamily\tiny\color{black!35} $z_{20}:(B,\,64)$}
+};
+% architecture note shared across all
+\node[font=\sffamily\tiny, text=black!40, align=center] at (5.2, -1.9)
+  {$3\!\to\!128\!\to\!256^2\!\to\!64$, LN+ReLU};
+
+% dashed enclosure
+\node[draw=bdrB, dashed, rounded corners=3pt, line width=0.5pt,
+      fit=(mlp0)(mlp20)(vdots),
+      inner sep=8pt,
+      label={[font=\sffamily\scriptsize, text=bdrB, inner sep=2pt]above:
+             \textit{21 independent surrogates (one per frequency)}}] (mlpgroup) {};
+
+%% ── CONCAT + FREQ RATIOS ─────────────────────────────────────
+\node[rbox, draw=bdrB, fill=clrB] (concat) at (10.5, 0) {
+  \textbf{Concat + freq.\ ratios}\\[2pt]
+  $[z_0,\ldots,z_{20}]$\\
+  $f_k = k/(N_{\mathrm{half}}-1)$\\[3pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(21B,\,64)$}
+};
+
+%% ── SHARED DECODER ───────────────────────────────────────────
+\node[rbox, draw=bdrC, fill=clrC] (decoder) at (15.2, 0) {
+  \textbf{Shared Decoder}\\
+  {\sffamily\scriptsize FiLM on $f_k$}\\[2pt]
+  {\sffamily\scriptsize FC\;$\to$\;3$\times$ConvT\;$\to$\;Re/Im}\\[2pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(B,\,21,\,2,\,N,\!N)$}
+};
+
+%% ── ROW 2: right → left ──────────────────────────────────────
+\node[rbox, draw=bdrD, fill=clrD] (denorm) at (15.2, -4.0) {
+  \textbf{Denorm + spectrum}\\[2pt]
+  $k>k_{\max}$: $\tilde{U}_k\leftarrow\bar{U}^{(k)}$\\
+  $\tilde{U}_{N_t-k}:=\overline{\tilde{U}_k}$\\[2pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(B,\,N^2,\,150)_{\mathbb{C}}$}
+};
+\node[rbox, draw=bdrD, fill=clrD] (ifft) at (10.5, -4.0) {
+  \textbf{Inverse Laplace}\\[2pt]
+  $U_{\mathrm{surr}}=\mathrm{Re}[\mathrm{IFFT}(\tilde{U})]$\\
+  $/\,(dt\!\cdot\!w_t\!\cdot\!e^{-\gamma t})$\\[2pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(B,\,150,\,N,\!N)$}
+};
+\node[rbox, draw=bdrE, fill=clrE] (unet) at (5.2, -4.0) {
+  \textbf{Residual UNet}\\[2pt]
+  $U_{\mathrm{corr}}=U_{\mathrm{surr}}+\sigma r\!\bigl(\tfrac{U_{\mathrm{surr}}-\mu}{\sigma}\bigr)$\\
+  {\sffamily\scriptsize 3-level enc./dec.\ + skip}\\[2pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(B,\,150,\,N,\!N)$}
+};
+\node[rbox, draw=bdrF, fill=clrF] (output) at (0, -4.0) {
+  \textbf{Output}\\[3pt]
+  $U_{\mathrm{corr}}(t)$\\[2pt]
+  {\sffamily\scriptsize CH$_4$ conc.\ field}\\[3pt]
+  {\sffamily\scriptsize\itshape\color{black!35} $(B,\,150,\,128,\!128)$}
+};
+
+%% ── ARROWS ───────────────────────────────────────────────────
+% Input → MLPs (fan out)
+\draw[arr] (input.east) to[out=20,  in=180] (mlp0.west);
+\draw[arr] (input.east) to[out=5,   in=180] (mlpk.west);
+\draw[arr] (input.east) to[out=-15, in=180] (mlp20.west);
+
+% MLPs → Concat (fan in)
+\draw[arr] (mlp0.east)  to[out=0, in=150] (concat.west);
+\draw[arr] (mlpk.east)  to[out=0, in=175] (concat.west);
+\draw[arr] (mlp20.east) to[out=0, in=210] (concat.west);
+
+% Main pipeline
+\draw[arr] (concat.east)  -- (decoder.west);
+\draw[arr] (decoder.south) -- (denorm.north);
+\draw[arr] (denorm.west)  -- (ifft.east);
+\draw[arr] (ifft.west)    -- (unet.east);
+\draw[arr] (unet.west)    -- (output.east);
+
+\end{tikzpicture}%
+}
+\end{center}
+\end{frame}
+
 \section{Summary}
 
 \begin{frame}{Complete Pipeline Benchmark Overview}
-  \begin{columns}
-      \column{0.5\textwidth}
-      \vspace{-1em}
-      \begin{table}
-          \centering
-          \scalebox{0.75}{
-          \begin{tabular}{l c c c}
-              \toprule
-              \textbf{Method} & \textbf{Median} & \textbf{Std} & \textbf{Range} \\
-              \midrule
-              Baseline & 18.50\% & 5.35\% & 12.92 -- 48.80\% \\
-              Finetuned E2E & \textbf{9.30\%} & 2.93\% & 6.75 -- 23.18\% \\
-              \textbf{+ UNet Corr.} & \textbf{4.46\%} & \textbf{1.56\%} & \textbf{2.37 -- 13.28\%} \\
-              \bottomrule
-          \end{tabular}}
-      \end{table}
-      \column{0.5\textwidth}
+  \begin{table}
       \centering
-      \includegraphics[height=4.5cm]{benchmark_l2rel.png}
-  \end{columns}
+      \scalebox{0.65}{
+      \begin{tabular}{l c c c}
+          \toprule
+          \textbf{Method} & \textbf{Median} & \textbf{Std} & \textbf{Range} \\
+          \midrule
+          Baseline & 18.50\% & 5.35\% & 12.92 -- 48.80\% \\
+          Finetuned E2E & \textbf{9.30\%} & 2.93\% & 6.75 -- 23.18\% \\
+          \textbf{+ UNet Corr.} & \textbf{4.46\%} & \textbf{1.56\%} & \textbf{2.37 -- 13.28\%} \\
+          \bottomrule
+      \end{tabular}}
+  \end{table}
+  
+  \vspace{0.5em}
+  \centering
+  \includegraphics[height=4.8cm]{benchmark_l2rel.png}
 \end{frame}
 
 \begin{frame}{Conclusion}
