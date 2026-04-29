@@ -1,0 +1,705 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{amsmath, amsthm, amssymb}
+\usepackage{mathtools}
+\usepackage{geometry}
+\usepackage{hyperref}
+
+\geometry{margin=2.5cm}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{assumption}{Assumption}[section]
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\norm}[1]{\left\|#1\right\|}
+\newcommand{\abs}[1]{\left|#1\right|}
+\newcommand{\inner}[2]{\left\langle #1,\, #2 \right\rangle}
+
+\title{%
+  Bias--Variance Decomposition for\\
+  Regularised Laplace Inversion Surrogates
+}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We derive rigorously the bias--variance decomposition of the total reconstruction
+error for a Laplace-domain neural surrogate model combined with a regularised
+inversion step. The main result is a bound of the form
+\[
+  \mathcal{E}_{\mathrm{tot}}
+  \;\leq\;
+  \frac{\E_\theta\!\left[\norm{(\alpha_t \mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I})\mathbf{v}}\right]}
+       {\sigma_{\min}(\mathbf{A})}
+  \;+\;
+  \frac{\norm{\mathbf{F}}}{\sigma_{\min}(\mathbf{A})}
+  \cdot
+  \E_\theta\!\left[\norm{\hat{\mathbf{u}} - \hat{\mathbf{u}}^{\mathrm{pred}}}\right],
+\]
+where $\sigma_{\min}(\mathbf{A})$ denotes the smallest singular value (or equivalently, the smallest eigenvalue) of the normal equation matrix $\mathbf{A}$. The first term is a \emph{regularisation bias} (representing the intrinsic transformation and regularisation error) and the second term is
+the \emph{variance} (the surrogate error propagated through the inversion operator).
+Both terms are rigorous consequences of the linear structure of the problem.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==========================================================================
+\section{Discrete Setting}
+%==========================================================================
+
+\subsection{Notation}
+
+Let $\Omega \subset \R^d$ be the spatial domain, discretised on $N_x$ nodes
+$\{x_j\}_{j=1}^{N_x}$.
+Time is discretised on a uniform grid $t_n = n\Delta t$, $n = 0,\ldots,N_t-1$,
+with time step $\Delta t > 0$ and final time $T = (N_t-1)\Delta t$.
+
+For each simulation parameter $\theta \in \Theta$, the spatio-temporal field
+is represented as a matrix
+\[
+  \mathbf{V}(\theta) \;\in\; \R^{N_x \times N_t},
+  \qquad
+  V_{j,n}(\theta) = U(x_j, t_n;\theta).
+\]
+Because the regularised inversion decouples over spatial nodes
+(when only temporal regularisation is used), we work with a single
+spatial node and drop the index $j$ throughout.
+The field at one node is a vector $\mathbf{v}(\theta) \in \R^{N_t}$.
+
+\subsection{Laplace transform matrix}
+
+\begin{assumption}[Coercivity]
+  \label{ass:coercivity}
+  The underlying spatial operator is strongly elliptic or coercive, meaning there exists a constant $\lambda_1 > 0$ such that the system's eigenvalues have real parts bounded above by $-\lambda_1$. This ensures the field decays exponentially and its Laplace transform is well-defined for $\mathrm{Re}(s) > -\lambda_1$.
+\end{assumption}
+
+Fix $N$ complex frequencies $s_1,\ldots,s_N \in \C$ with
+$\mathrm{Re}(s_k) > -\lambda_1$ for all $k$, where $\lambda_1 > 0$ is the
+coercivity constant of the spatial operator (see Assumption~\ref{ass:coercivity}).
+
+\begin{definition}[Laplace matrix]
+  The \emph{Laplace matrix} $\mathbf{F} \in \C^{N \times N_t}$ is defined by
+  \begin{equation}
+    \label{eq:F_def}
+    F_{k,n} \;=\; \Delta t \cdot w_n \cdot e^{-s_k t_n},
+    \qquad k = 1,\ldots,N,\quad n = 0,\ldots,N_t-1,
+  \end{equation}
+  where $w_n$ are quadrature weights
+  (trapezoidal: $w_0 = w_{N_t-1} = \tfrac{1}{2}$, $w_n = 1$ otherwise).
+\end{definition}
+
+The discrete Laplace transform of $\mathbf{v}$ is then
+\begin{equation}
+  \label{eq:forward}
+  \hat{\mathbf{u}} \;=\; \mathbf{F}\mathbf{v} \;\in\; \C^N.
+\end{equation}
+Each component $\hat{u}_k = (\mathbf{F}\mathbf{v})_k$ approximates
+$\hat{U}(s_k;\theta) = \int_0^T U(t;\theta) e^{-s_k t}\,\mathrm{d}t$.
+
+\subsection{Regularised inversion}
+
+The surrogate predicts $\hat{\mathbf{u}}^{\mathrm{pred}} \in \C^N$.
+Given these predictions, we reconstruct $\mathbf{v}^*$ by solving the
+regularised least-squares problem
+\begin{equation}
+  \label{eq:inv_problem}
+  \mathbf{v}^*(\theta)
+  \;=\;
+  \arg\min_{\mathbf{v} \in \R^{N_t}}
+  \;\norm{\mathbf{F}\mathbf{v} - \hat{\mathbf{u}}^{\mathrm{pred}}(\theta)}_{\C^N}^2
+  + \alpha_t \norm{\mathbf{D}_t \mathbf{v}}^2
+  + \lambda \norm{\mathbf{v}}^2,
+\end{equation}
+where:
+\begin{itemize}
+  \item $\alpha_t \geq 0$ is a temporal smoothing parameter,
+  \item $\lambda > 0$ is a Tikhonov regularisation parameter,
+  \item $\mathbf{D}_t \in \R^{(N_t-1)\times N_t}$ is the first-difference
+        operator:
+        \[
+          (\mathbf{D}_t \mathbf{v})_n = v_{n+1} - v_n,
+          \quad n = 0,\ldots,N_t-2.
+        \]
+\end{itemize}
+
+\begin{remark}
+  The constraint $\mathbf{v} \in \R^{N_t}$ (real-valued reconstruction) is
+  handled by splitting $\mathbf{F} = \mathrm{Re}(\mathbf{F}) + i\,\mathrm{Im}(\mathbf{F})$
+  and forming the real augmented system
+  \[
+    \begin{pmatrix} \mathrm{Re}(\mathbf{F}) \\ \mathrm{Im}(\mathbf{F}) \end{pmatrix}
+    \mathbf{v}
+    \;\approx\;
+    \begin{pmatrix} \mathrm{Re}(\hat{\mathbf{u}}^{\mathrm{pred}}) \\
+                    \mathrm{Im}(\hat{\mathbf{u}}^{\mathrm{pred}}) \end{pmatrix}.
+  \]
+  For clarity of exposition we write the analysis in complex form; the
+  real-valued case follows identically by replacing $\C^N$ with $\R^{2N}$.
+\end{remark}
+
+%==========================================================================
+\section{Normal Equations and Closed-Form Solution}
+%==========================================================================
+
+\subsection{The operator $\mathbf{A}$}
+
+The optimality condition (normal equations) for \eqref{eq:inv_problem} is:
+\begin{align}
+  0 &= \frac{\partial}{\partial \mathbf{v}}
+  \left[
+    \norm{\mathbf{F}\mathbf{v} - \hat{\mathbf{u}}^{\mathrm{pred}}}^2
+    + \alpha_t\norm{\mathbf{D}_t\mathbf{v}}^2
+    + \lambda\norm{\mathbf{v}}^2
+  \right] \notag \\
+  &= 2\,\mathbf{F}^*(\mathbf{F}\mathbf{v} - \hat{\mathbf{u}}^{\mathrm{pred}})
+     + 2\alpha_t \mathbf{D}_t^*\mathbf{D}_t\mathbf{v}
+     + 2\lambda\mathbf{v}. \notag
+\end{align}
+Rearranging:
+\begin{equation}
+  \label{eq:normal}
+  \underbrace{
+    \left(\mathbf{F}^*\mathbf{F}
+    + \alpha_t\mathbf{D}_t^*\mathbf{D}_t
+    + \lambda\mathbf{I}\right)
+  }_{=:\,\mathbf{A}}
+  \mathbf{v}^*
+  \;=\;
+  \mathbf{F}^* \hat{\mathbf{u}}^{\mathrm{pred}}.
+\end{equation}
+
+\begin{proposition}[Invertibility of $\mathbf{A}$]
+  \label{prop:invertible}
+  If $\lambda > 0$, then $\mathbf{A}$ is symmetric positive definite,
+  hence invertible.
+\end{proposition}
+
+\begin{proof}
+  Each of $\mathbf{F}^*\mathbf{F}$, $\mathbf{D}_t^*\mathbf{D}_t$, and
+  $\lambda\mathbf{I}$ is positive semi-definite.
+  Since $\lambda > 0$, for any $\mathbf{v} \neq \mathbf{0}$:
+  \[
+    \mathbf{v}^\top \mathbf{A} \mathbf{v}
+    \;\geq\; \lambda\norm{\mathbf{v}}^2 \;>\; 0.
+  \]
+  Hence $\mathbf{A} \succ 0$ and its smallest singular value (which coincides with its smallest eigenvalue) satisfies $\sigma_{\min}(\mathbf{A}) \geq \lambda > 0$.
+\end{proof}
+
+\begin{remark}
+  When $\lambda = 0$ and $\alpha_t > 0$, invertibility still holds provided
+  $s_k \neq 0$ for all $k$. Indeed, $\ker(\mathbf{A}) \subseteq
+  \ker(\mathbf{F}) \cap \ker(\mathbf{D}_t)$; the latter forces $\mathbf{v} = c\mathbf{1}$
+  (constant), and $\mathbf{F}(c\mathbf{1}) = 0$ would require
+  $\sum_n w_n e^{-s_k t_n} = 0$ for all $k$, which fails when $s_k \neq 0$.
+  We keep $\lambda > 0$ for simplicity.
+\end{remark}
+
+The unique solution of \eqref{eq:normal} is therefore:
+\begin{equation}
+  \label{eq:solution}
+  \boxed{
+    \mathbf{v}^*(\theta)
+    \;=\;
+    \mathbf{A}^{-1}\mathbf{F}^* \hat{\mathbf{u}}^{\mathrm{pred}}(\theta).
+  }
+\end{equation}
+
+%==========================================================================
+\section{Bias--Variance Decomposition}
+%==========================================================================
+
+\subsection{Splitting the error}
+
+We decompose the total error by adding and subtracting the intermediate
+quantity $\mathbf{A}^{-1}\mathbf{F}^*\hat{\mathbf{u}}(\theta)$,
+where $\hat{\mathbf{u}}(\theta) = \mathbf{F}\mathbf{v}(\theta)$ are the
+\emph{exact} Laplace coefficients:
+
+\begin{align}
+  \mathbf{v}(\theta) - \mathbf{v}^*(\theta)
+  &= \mathbf{v}(\theta)
+     - \mathbf{A}^{-1}\mathbf{F}^*\hat{\mathbf{u}}^{\mathrm{pred}}(\theta)
+     \notag \\
+  &= \underbrace{
+       \mathbf{v}(\theta) - \mathbf{A}^{-1}\mathbf{F}^*\mathbf{F}\mathbf{v}(\theta)
+     }_{\substack{\text{bias term} \\ \text{(transformation error)}}}
+   + \underbrace{
+       \mathbf{A}^{-1}\mathbf{F}^*
+       \bigl(\hat{\mathbf{u}}(\theta) - \hat{\mathbf{u}}^{\mathrm{pred}}(\theta)\bigr)
+     }_{\substack{\text{variance term} \\ \text{(surrogate error)}}}.
+  \label{eq:decomp}
+\end{align}
+
+\subsection{Simplifying the bias term}
+
+Using the definition $\mathbf{A} = \mathbf{F}^*\mathbf{F}
++ \alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I}$:
+
+\begin{align}
+  \mathbf{v} - \mathbf{A}^{-1}\mathbf{F}^*\mathbf{F}\mathbf{v}
+  &= \mathbf{A}^{-1}\mathbf{A}\mathbf{v}
+     - \mathbf{A}^{-1}\mathbf{F}^*\mathbf{F}\mathbf{v}
+     \notag \\
+  &= \mathbf{A}^{-1}
+     \bigl(\mathbf{A} - \mathbf{F}^*\mathbf{F}\bigr)\mathbf{v}
+     \notag \\
+  &= \mathbf{A}^{-1}
+     \bigl(\alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I}\bigr)
+     \mathbf{v}.
+  \label{eq:bias_simplified}
+\end{align}
+
+The bias depends only on the \emph{true} field $\mathbf{v}$ and the
+regularisation operators --- it is independent of the surrogate predictions.
+
+\subsection{Bounding each term}
+
+\begin{lemma}[Bound on the bias]
+  \label{lem:bias}
+  \begin{equation}
+    \label{eq:bias_bound}
+    \norm{\mathbf{v} - \mathbf{A}^{-1}\mathbf{F}^*\mathbf{F}\mathbf{v}}
+    \;\leq\;
+    \frac{\norm{(\alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I})\mathbf{v}}}
+         {\sigma_{\min}(\mathbf{A})}.
+  \end{equation}
+\end{lemma}
+
+\begin{proof}
+  From \eqref{eq:bias_simplified} and the sub-multiplicativity of the
+  operator norm:
+  \[
+    \norm{\mathbf{A}^{-1}
+          (\alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I})\mathbf{v}}
+    \;\leq\;
+    \norm{\mathbf{A}^{-1}}
+    \cdot
+    \norm{(\alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I})\mathbf{v}}.
+  \]
+  Since $\mathbf{A} \succ 0$,
+  $\norm{\mathbf{A}^{-1}} = 1/\sigma_{\min}(\mathbf{A})$,
+  which gives \eqref{eq:bias_bound}.
+\end{proof}
+
+\begin{lemma}[Bound on the variance]
+  \label{lem:variance}
+  \begin{equation}
+    \label{eq:variance_bound}
+    \norm{\mathbf{A}^{-1}\mathbf{F}^*
+          \bigl(\hat{\mathbf{u}} - \hat{\mathbf{u}}^{\mathrm{pred}}\bigr)}
+    \;\leq\;
+    \frac{\norm{\mathbf{F}}}
+         {\sigma_{\min}(\mathbf{A})}
+    \cdot
+    \norm{\hat{\mathbf{u}} - \hat{\mathbf{u}}^{\mathrm{pred}}}_{\C^N}.
+  \end{equation}
+\end{lemma}
+
+\begin{proof}
+  Again by sub-multiplicativity:
+  \[
+    \norm{\mathbf{A}^{-1}\mathbf{F}^*
+          (\hat{\mathbf{u}} - \hat{\mathbf{u}}^{\mathrm{pred}})}
+    \;\leq\;
+    \norm{\mathbf{A}^{-1}}
+    \cdot \norm{\mathbf{F}^*}
+    \cdot \norm{\hat{\mathbf{u}} - \hat{\mathbf{u}}^{\mathrm{pred}}}.
+  \]
+  Since $\norm{\mathbf{F}^*} = \norm{\mathbf{F}}$
+  (operator norm equals largest singular value, which is the same for
+  $\mathbf{F}$ and $\mathbf{F}^*$), we obtain \eqref{eq:variance_bound}.
+\end{proof}
+
+\subsection{Main result}
+
+Combining \eqref{eq:decomp}, Lemma~\ref{lem:bias}, and Lemma~\ref{lem:variance}
+via the triangle inequality:
+
+\begin{theorem}[Bias--variance bound]
+  \label{thm:bv}
+  For any $\theta \in \Theta$, the reconstruction error satisfies
+  \begin{equation}
+    \label{eq:bv_bound}
+    \norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}
+    \;\leq\;
+    \underbrace{
+      \frac{\norm{(\alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I})\,\mathbf{v}(\theta)}}
+           {\sigma_{\min}(\mathbf{A})}
+    }_{\text{regularisation bias}}
+    \;+\;
+    \underbrace{
+      \frac{\norm{\mathbf{F}}}{\sigma_{\min}(\mathbf{A})}
+      \cdot
+      \norm{\hat{\mathbf{u}}(\theta) - \hat{\mathbf{u}}^{\mathrm{pred}}(\theta)}_{\C^N}
+    }_{\text{propagated surrogate error}}.
+  \end{equation}
+\end{theorem}
+
+Taking expectations over $\theta$ and using Jensen's inequality
+($\E[\norm{\cdot}] \leq \sqrt{\E[\norm{\cdot}^2]}$ in the simpler
+$L^1$ form):
+
+\begin{corollary}[Expected error bound]
+  \label{cor:expected}
+  \begin{equation}
+    \label{eq:expected_bv}
+    \mathcal{E}_{\mathrm{tot}}
+    \;\leq\;
+    \frac{\E_\theta\!\left[\norm{(\alpha_t\mathbf{D}_t^*\mathbf{D}_t
+                                  + \lambda\mathbf{I})\,\mathbf{v}(\theta)}\right]}
+         {\sigma_{\min}(\mathbf{A})}
+    \;+\;
+    \frac{\norm{\mathbf{F}}}{\sigma_{\min}(\mathbf{A})}
+    \cdot
+    \E_\theta\!\left[\norm{\hat{\mathbf{u}}(\theta)
+                           - \hat{\mathbf{u}}^{\mathrm{pred}}(\theta)}_{\C^N}\right].
+  \end{equation}
+\end{corollary}
+
+%==========================================================================
+\section{Interpretation}
+%==========================================================================
+
+\subsection{Role of each term}
+
+Inequality \eqref{eq:expected_bv} separates the total error into two
+independent contributions.
+
+\paragraph{Regularisation bias.}
+The numerator $\norm{(\alpha_t\mathbf{D}_t^*\mathbf{D}_t + \lambda\mathbf{I})\mathbf{v}}$
+measures how much the true solution deviates from the prior encoded by the
+regularisation:
+\begin{itemize}
+  \item $\norm{\mathbf{D}_t\mathbf{v}}^2 = \sum_n (v_{n+1}-v_n)^2$ is large when
+        $\mathbf{v}$ varies rapidly in time --- e.g.\ during the explosive
+        early transient of the CH$_4$ dispersion.
+  \item $\lambda\norm{\mathbf{v}}$ penalises large amplitudes.
+\end{itemize}
+Increasing $\alpha_t$ or $\lambda$ reduces $\sigma_{\min}(\mathbf{A})^{-1}$
+(the denominator grows) but simultaneously increases the numerator.
+This is the standard \emph{bias--variance trade-off}.
+
+\paragraph{Propagated surrogate error.}
+The factor $\norm{\mathbf{F}}/\sigma_{\min}(\mathbf{A})$ is the
+\emph{condition number of the inversion} with respect to the surrogate error.
+It quantifies how errors in the predicted Laplace coefficients
+$\hat{\mathbf{u}}^{\mathrm{pred}}$ are amplified into errors on the
+reconstructed field $\mathbf{v}^*$.
+
+Two observations:
+\begin{enumerate}
+  \item $\norm{\mathbf{F}}$ depends on the choice of frequencies
+        $\{s_k\}$ --- it equals the largest singular value of the
+        Laplace matrix and is directly controlled by the contour geometry.
+  \item $\sigma_{\min}(\mathbf{A}) \geq \sigma_{\min}(\mathbf{F}^*\mathbf{F})
+        + \alpha_t\sigma_{\min}(\mathbf{D}_t^*\mathbf{D}_t) + \lambda$,
+        so regularisation improves the condition number.
+\end{enumerate}
+
+\subsection{What remains to be bounded}
+
+Theorem~\ref{thm:bv} is fully rigorous. The only term that is not yet
+characterised is $\E_\theta[\norm{\hat{\mathbf{u}}(\theta) -
+\hat{\mathbf{u}}^{\mathrm{pred}}(\theta)}]$ --- the mean surrogate error
+on the Laplace coefficients. Bounding this requires additional assumptions
+on the surrogate model (autoencoder + MLP), which are stated separately as
+working hypotheses and validated empirically.
+
+\begin{remark}
+  The bound \eqref{eq:bv_bound} holds for \emph{any} set of frequencies
+  $\{s_k\}$ and any regularisation parameters $(\alpha_t, \lambda)$,
+  provided $\lambda > 0$. Optimising over these choices is the subject of future work.
+\end{remark}
+
+
+%==========================================================================
+\section{Comparison with the Bromwich--FFT Pipeline}
+%==========================================================================
+ 
+We now apply the general framework to the pipeline used in the companion
+report~\cite{attarian2026}, which combines a truncated Bromwich contour
+with explicit FFT inversion. This allows us to (i)~compute the quantities
+$\norm{\mathbf{F}}$ and $\sigma_{\min}(\mathbf{A})$ in closed form, and
+(ii)~identify precisely what the truncated FFT does \emph{not} capture
+within the bias--variance framework.
+ 
+\subsection{Bromwich contour and FFT structure}
+ 
+The Bromwich contour with damping $\gamma \geq 0$ uses $N_t$ equally-spaced
+frequencies
+\[
+  s_k \;=\; \gamma + i\omega_k,
+  \qquad
+  \omega_k = \frac{2\pi k}{N_t \Delta t},
+  \quad k = 0,\ldots,N_t-1.
+\]
+The Laplace matrix $\mathbf{F} \in \mathbb{C}^{N_t \times N_t}$ factorises as
+\begin{equation}
+  \label{eq:F_bromwich}
+  \mathbf{F} \;=\; \mathbf{D}_{\mathrm{FFT}} \cdot \mathbf{W},
+\end{equation}
+where $\mathbf{D}_{\mathrm{FFT}}$ is the $N_t\times N_t$ DFT matrix with
+$(D_{\mathrm{FFT}})_{k,n} = e^{-i\omega_k t_n}$, and
+$\mathbf{W} = \mathrm{diag}(\Delta t\, w_n\, e^{-\gamma t_n})$ encodes the
+quadrature weights and the exponential damping.
+ 
+Since $\mathbf{D}_{\mathrm{FFT}}^*\mathbf{D}_{\mathrm{FFT}} = N_t\mathbf{I}$
+(Parseval), we obtain
+\begin{equation}
+  \label{eq:FstarF_bromwich}
+  \mathbf{F}^*\mathbf{F}
+  \;=\; \mathbf{W}^*\mathbf{D}_{\mathrm{FFT}}^*\mathbf{D}_{\mathrm{FFT}}\mathbf{W}
+  \;=\; N_t\,\mathbf{W}^*\mathbf{W}
+  \;=\; N_t\,\Delta t^2\,\mathrm{diag}\!\left(w_n^2\, e^{-2\gamma t_n}\right).
+\end{equation}
+This is \emph{diagonal} --- a key property of the Bromwich contour.
+It follows immediately that:
+ 
+\begin{proposition}[Spectral quantities on the full Bromwich contour]
+  \label{prop:bromwich_full}
+  On the full Bromwich contour with $N = N_t$ frequencies and damping
+  $\gamma \in \R$, $\gamma > -\lambda_1$:
+  \begin{align}
+    \norm{\mathbf{F}}^2
+    &= \sigma_{\max}(\mathbf{F}^*\mathbf{F})
+     = N_t\,\Delta t^2\,\max_n\!\left(w_n^2\,e^{-2\gamma t_n}\right)
+     = N_t\,\Delta t^2\cdot
+       \begin{cases}
+         1 & \gamma \geq 0, \\
+         e^{-2\gamma T} & \gamma < 0,
+       \end{cases}
+    \label{eq:F_norm_bromwich} \\[6pt]
+    \sigma_{\min}(\mathbf{F}^*\mathbf{F})
+    &= N_t\,\Delta t^2\,\min_n\!\left(w_n^2\,e^{-2\gamma t_n}\right)
+     = N_t\,\Delta t^2\cdot
+       \begin{cases}
+         e^{-2\gamma T} & \gamma \geq 0, \\
+         1 & \gamma < 0.
+       \end{cases}
+    \label{eq:sigmin_bromwich}
+  \end{align}
+  In both cases the conditioning is
+  \begin{equation}
+    \label{eq:cond_bromwich}
+    \kappa(\mathbf{F}^*\mathbf{F}) \;=\; e^{2|\gamma| T}.
+  \end{equation}
+\end{proposition}
+ 
+\begin{remark}[Role of $\gamma$ on the full contour]
+  \label{rem:gamma_full}
+  Equation~\eqref{eq:cond_bromwich} shows that $\kappa$ is minimised at
+  $\gamma = 0$, where $\kappa = 1$ (perfect conditioning). Any deviation
+  $\gamma \neq 0$ degrades conditioning exponentially in $T$.
+ 
+  The two signs of $\gamma$ have \emph{asymmetric} effects on the
+  variance term $\norm{\mathbf{F}}/\sigma_{\min}(\mathbf{A})$:
+  \begin{itemize}
+    \item $\gamma > 0$: $\norm{\mathbf{F}} = \sqrt{N_t}\,\Delta t$ is
+          unchanged (maximum at $t_0 = 0$), but $\sigma_{\min}$ decreases
+          as $e^{-2\gamma T}$, so the ratio grows as $e^{\gamma T}$.
+    \item $\gamma < 0$: $\norm{\mathbf{F}}$ grows as $e^{|\gamma|T}$
+          (maximum at $t_{N_t-1} = T$), while $\sigma_{\min}$ is unchanged,
+          so the ratio again grows as $e^{|\gamma|T}$.
+  \end{itemize}
+  Hence $\gamma = 0$ also minimises the variance amplification
+  $\norm{\mathbf{F}}/\sigma_{\min}$ on the full contour.
+  However, as discussed in Section~\ref{sec:trunc} below, the truncated
+  contour introduces an additional spectral decay effect of $\gamma$ that
+  modifies this conclusion.
+\end{remark}
+ 
+\subsection{Truncation to $k_{\max}$ frequencies}
+\label{sec:trunc}
+ 
+In practice, the surrogate only predicts the first $k_{\max} \ll N_t$
+Laplace modes. Let $\mathbf{F}_{k_{\max}} \in \mathbb{C}^{k_{\max}\times N_t}$
+denote the truncated Laplace matrix (first $k_{\max}$ rows of $\mathbf{F}$).
+The Gram matrix $\mathbf{F}_{k_{\max}}^*\mathbf{F}_{k_{\max}}$ is no longer
+diagonal; it is a weighted Toeplitz matrix:
+\begin{equation}
+  \label{eq:gram_truncated}
+  \left(\mathbf{F}_{k_{\max}}^*\mathbf{F}_{k_{\max}}\right)_{n,n'}
+  \;=\; N_t\,\Delta t^2\, e^{-\gamma(t_n+t_{n'})}\,w_n w_{n'}\,
+        D_{k_{\max}}(n - n'),
+\end{equation}
+where $D_{k_{\max}}(m) = \sin(\pi k_{\max} m/N_t)\,/\,\sin(\pi m/N_t)$
+is the Dirichlet kernel.
+ 
+\begin{proposition}[Spectral quantities after truncation]
+  \label{prop:bromwich_truncated}
+  For the truncated Bromwich contour with $k_{\max}$ frequencies and
+  damping $\gamma$:
+  \begin{align}
+    \norm{\mathbf{F}_{k_{\max}}}^2
+    &\;\approx\; k_{\max}\,\Delta t^2\,e^{-2\gamma t_{\min}}
+     \;=\; k_{\max}\,\Delta t^2 \cdot \begin{cases} 1 & \gamma \geq 0, \\
+     e^{-2\gamma T} & \gamma < 0, \end{cases}
+    \label{eq:F_norm_trunc} \\[6pt]
+    \sigma_{\min}(\mathbf{F}_{k_{\max}}^*\mathbf{F}_{k_{\max}})
+    &\;\approx\; k_{\max}\,\Delta t^2\,e^{-2\gamma T} \cdot
+      \begin{cases} 1 & \gamma \geq 0, \\ e^{2\gamma T} & \gamma < 0,
+      \end{cases}
+    \label{eq:sigmin_trunc}
+  \end{align}
+  so that the conditioning is $\kappa \approx e^{2|\gamma|T}$,
+  as on the full contour.
+\end{proposition}
+ 
+\begin{remark}[Trade-off induced by $\gamma$ on the truncated contour]
+  \label{rem:gamma_trunc}
+  The truncation introduces an effect of $\gamma$ that is absent on the
+  full contour: it controls the \emph{spectral decay} of the Laplace
+  coefficients. The energy of the $k$-th Laplace mode decays as
+  $\norm{\hat{u}_k}^2 \sim \norm{U_0}^2\,e^{-2\gamma T}\,\omega_k^{-2}$,
+  so:
+  \begin{itemize}
+    \item $\gamma > 0$ accelerates the decay of $\norm{\hat{u}_k}$ with
+          $k$, reducing the spectral truncation error \eqref{eq:trunc_error}
+          (fewer modes needed to represent the signal), at the cost of
+          worsening conditioning $\kappa = e^{2\gamma T}$.
+    \item $\gamma < 0$ slows spectral decay (more energy in high
+          frequencies), requiring larger $k_{\max}$ to achieve the same
+          truncation error, but improves conditioning.
+    \item $\gamma = 0$ provides no spectral acceleration but achieves
+          $\kappa = 1$, making the inversion perfectly conditioned.
+  \end{itemize}
+  The optimal $\gamma$ therefore depends on the relative magnitude of
+  the spectral truncation error and the propagated surrogate error,
+  and is problem-dependent. This is consistent with the empirical finding
+  in the companion report that $\gamma = 0$ is near-optimal for the
+  CH$_4$ dataset, where $k_{\max} = 20$ already captures the dominant
+  spectral energy.
+\end{remark}
+ 
+\begin{remark}[Effect of $k_{\max}$ at fixed $\gamma$]
+  Both $\norm{\mathbf{F}_{k_{\max}}}$ and $\sigma_{\min}$ scale as
+  $k_{\max}$ at fixed $\gamma$, so their ratio
+  \[
+    \frac{\norm{\mathbf{F}_{k_{\max}}}}{\sigma_{\min}(\mathbf{A})}
+    \;\approx\;
+    \frac{1}{\sqrt{k_{\max}}\,\Delta t\,e^{-\gamma T}}
+  \]
+  \emph{decreases} with $k_{\max}$ --- the variance amplification improves.
+  However, the surrogate error $\E_\theta[\norm{\hat{u} -
+  \hat{u}^{\mathrm{pred}}}]$ grows with $k_{\max}$, creating a
+  trade-off that depends on the surrogate model capacity.
+\end{remark}
+ 
+\subsection{The FFT inversion is not the regularised inverse}
+ 
+A critical observation is that the pipeline in the companion report does
+\emph{not} solve the regularised least-squares problem
+\eqref{eq:inv_problem}. Instead, it applies the explicit FFT inversion
+formula:
+\begin{equation}
+  \label{eq:fft_inv}
+  v^*_n \;=\;
+  \frac{e^{\gamma t_n}}{\Delta t}
+  \sum_{k=0}^{k_{\max}-1} \hat{u}_k^{\mathrm{pred}}\, e^{i\omega_k t_n}
+  \;+\;
+  \frac{e^{\gamma t_n}}{\Delta t}
+  \sum_{k=k_{\max}}^{N_t-1} \bar{U}_k\, e^{i\omega_k t_n},
+\end{equation}
+where $\bar{U}_k$ is the per-pixel training mean for $k > k_{\max}$.
+ 
+This operation corresponds to $\alpha_t = \lambda = 0$ in
+\eqref{eq:inv_problem} \emph{together with an explicit spectral
+truncation}. These are two distinct sources of error that do not appear
+in the bias--variance decomposition of Theorem~\ref{thm:bv}:
+ 
+\begin{enumerate}
+  \item \textbf{Spectral truncation error.}
+    Even with a perfect surrogate ($\hat{u}^{\mathrm{pred}} = \hat{u}$),
+    the FFT reconstruction omits the high-frequency content:
+    \begin{equation}
+      \label{eq:trunc_error}
+      \mathbf{v} - \mathbf{v}^*_{\mathrm{FFT}}
+      \;=\;
+      \frac{e^{\gamma t_n}}{\Delta t}
+      \sum_{k=k_{\max}}^{N_t-1}
+      \bigl(\hat{u}_k - \bar{U}_k\bigr)\, e^{i\omega_k t_n}.
+    \end{equation}
+    This is the source of the Gibbs oscillations reported in the companion
+    paper, which required a post-hoc UNet corrector to suppress.
+ 
+  \item \textbf{Absence of regularisation bias.}
+    Setting $\alpha_t = \lambda = 0$ gives zero regularisation bias in
+    \eqref{eq:bv_bound}. However, this comes at the cost of the spectral
+    truncation error \eqref{eq:trunc_error}, which is not controlled by
+    the framework.
+\end{enumerate}
+ 
+\subsection{Summary comparison}
+ 
+Table~\ref{tab:comparison} summarises the two pipelines within the
+bias--variance framework.
+ 
+\begin{table}[htbp]
+  \centering
+  \renewcommand{\arraystretch}{1.5}
+  \begin{tabular}{p{4.5cm} p{5.5cm} p{5.5cm}}
+    \hline
+    & \textbf{FFT truncation} & \textbf{Regularised inverse} \\
+    & \textbf{(companion report)} & \textbf{(this work)} \\
+    \hline
+    Inversion formula
+      & Explicit: $e^{\gamma t}/\Delta t \cdot \mathrm{FFT}^{-1}$
+      & $\mathbf{A}^{-1}\mathbf{F}^*\hat{\mathbf{u}}^{\mathrm{pred}}$ \\
+    $\alpha_t,\,\lambda$
+      & $0$
+      & $> 0$ \\
+    Regularisation bias
+      & $0$ (within framework)
+      & $\alpha_t\norm{\mathbf{D}_t\mathbf{v}}/\sigma_{\min}(\mathbf{A})$ \\
+    Spectral truncation error
+      & \textbf{Yes} --- source of Gibbs oscillations
+      & \textbf{No} \\
+    Requires UNet corrector
+      & Yes (481k parameters)
+      & No \\
+    $\norm{\mathbf{F}}$
+      & $\sqrt{k_{\max}}\,\Delta t$
+      & depends on contour $\Gamma$ \\
+    $\sigma_{\min}(\mathbf{A})$
+      & $k_{\max}\,\Delta t^2$
+      & $\sigma_{\min}(\mathbf{F}^*\mathbf{F}) + \alpha_t\pi^2/N_t^2 + \lambda$ \\
+    \hline
+  \end{tabular}
+  \caption{Comparison of the FFT truncation pipeline and the regularised
+           inverse within the bias--variance framework of
+           Theorem~\ref{thm:bv}.}
+  \label{tab:comparison}
+\end{table}
+ 
+The key insight is that the spectral truncation error \eqref{eq:trunc_error}
+falls \emph{outside} the bias--variance decomposition of
+Theorem~\ref{thm:bv}: it is neither a regularisation bias nor a propagated
+surrogate error. It is an intrinsic limitation of the FFT inversion that
+the regularised inverse eliminates by construction, at the cost of
+introducing a controlled regularisation bias.
+
+ 
+\begin{thebibliography}{9}
+\bibitem{attarian2026}
+K.~Attarian,
+\textit{Learning Latent Representations for Neural Surrogate Models of
+Partial Differential Equations},
+\'Ecole Polytechnique / Institut Polytechnique de Paris, April 2026.
+\end{thebibliography}
+
+\end{document}

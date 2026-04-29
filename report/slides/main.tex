@@ -460,9 +460,16 @@
       \item \textbf{Laplace Domain Decomposition:} Solves the memory bottleneck effectively, matching non-linear dynamics without losing spatial resolution.
       \item \textbf{Frequency-Conditioned Model:} Effectively builds a continuous non-linear space shared among complex frequencies.
       \item \textbf{End-to-End Fine-Tuning:} Absolutely indispensable for circumventing decoding bottlenecks (-50\% error).
-      \item \textbf{Post-Hoc Residual Correction:} An elegant, lightweight solution for eliminating spectral truncation footprints (-52\% further error reduction).
+      \item \textbf{Post-Hoc Residual Correction:} A lightweight solution for eliminating spectral truncation footprints (-52\% further error reduction).
   \end{itemize}
-  \vspace{1em}
+\end{frame}
+
+\begin{frame}{Future Work}
+  \begin{itemize}
+      \item \textbf{Regularization of the Laplace inversion} (rather than truncation + Unet).
+      \item \textbf{Contour discussion:} A purely vertical or horizontal contour seems suboptimal.
+  \end{itemize}
+  \vspace{2em}
   \begin{center}
       \textbf{Thank you!}
   \end{center}
