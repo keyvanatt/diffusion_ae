@@ -3,3 +3,17 @@ __pycache__
 wandb
 notebooks
 dataset/mnist
+
+# LaTeX auxiliary files
+report/**/*.aux
+report/**/*.log
+report/**/*.toc
+report/**/*.out
+report/**/*.bbl
+report/**/*.blg
+report/**/*.fls
+report/**/*.fdb_latexmk
+report/**/*.synctex.gz
+report/**/*.nav
+report/**/*.snm
+report/**/*.vrb
