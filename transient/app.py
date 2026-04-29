@@ -6,11 +6,14 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import base64
 import io
+import json
 import numpy as np
 import matplotlib
 import torch
 import streamlit as st
+import streamlit.components.v1 as components
 import plotly.graph_objects as go
 from PIL import Image
 
@@ -56,8 +59,7 @@ def get_model(model_key: str):
     return model, ckpt, device
 
 
-@st.cache_data(show_spinner=False)
-def run_cached_inference(model_key: str, k: float, A: float, C: float, dt: float):
+def _compute_upred(model_key: str, k: float, A: float, C: float, dt: float) -> np.ndarray:
     model, ckpt, device = get_model(model_key)
     theta = np.array([[k, A, C]], dtype=np.float32)
     return run_inference(theta, model, ckpt, device, dt=dt, k_max=CKPT_K_MAX)[0]  # (Nt, N, N)
@@ -69,7 +71,7 @@ def render_frame(frame: np.ndarray, cmap_name: str) -> bytes:
     cmap_fn = matplotlib.colormaps[_CMAP_MAP.get(cmap_name, 'viridis')]
     rgba    = (cmap_fn(U_norm) * 255).astype(np.uint8)
     buf     = io.BytesIO()
-    Image.fromarray(rgba[..., :3]).save(buf, format='PNG')
+    Image.fromarray(rgba[..., :3]).save(buf, format='PNG', optimize=True)
     return buf.getvalue()
 
 
@@ -93,25 +95,142 @@ for label, lo, hi, default, fmt in THETA_PARAMS:
     slider_vals.append(v)
 k_val, A_val, C_val = slider_vals
 
-t_idx = st.sidebar.slider('t (instant)', 0, NT - 1, value=0)
+st.sidebar.markdown('---')
+t_idx = st.sidebar.slider('t (instant)', 0, NT - 1, value=0, key='t_slider')
 
 st.sidebar.markdown('---')
 _cmaps    = list(_CMAP_MAP.keys())
 cmap_name = st.sidebar.selectbox('Colormap', _cmaps, index=0)
 
 # ---------------------------------------------------------------------------
-# Inférence + affichage
+# Inférence  (U_pred mis en cache dans session_state)
 # ---------------------------------------------------------------------------
-with st.spinner('Inférence en cours…'):
-    U_pred = run_cached_inference(model_key, k_val, A_val, C_val, dt_val)
+_cache_key = (model_key, k_val, A_val, C_val, dt_val)
+if st.session_state.get('upred_key') != _cache_key:
+    with st.spinner('Inférence en cours…'):
+        st.session_state['U_pred'] = _compute_upred(model_key, k_val, A_val, C_val, dt_val)
+    st.session_state['upred_key'] = _cache_key
 
-st.caption(
-    f'θ = (k={k_val:.3f}, A={A_val:.1f}, C={C_val:.4f})  |  '
-    f't = {t_idx}  (t·dt = {t_idx * dt_val:.2f} s)  |  '
-    f'min `{U_pred[t_idx].min():.4f}`  max `{U_pred[t_idx].max():.4f}`'
-)
+U_pred = st.session_state['U_pred']
 
-st.image(render_frame(U_pred[t_idx], cmap_name), width=300)
+# ---------------------------------------------------------------------------
+# Pré-rendu des frames  (recalculé si U_pred ou colormap change)
+# ---------------------------------------------------------------------------
+_frames_key = (_cache_key, cmap_name)
+if st.session_state.get('frames_key') != _frames_key:
+    with st.spinner('Rendu des frames…'):
+        st.session_state['frames'] = [render_frame(U_pred[i], cmap_name) for i in range(NT)]
+    st.session_state['frames_key'] = _frames_key
+
+frames = st.session_state['frames']
+
+# ---------------------------------------------------------------------------
+# Composant animation JS (toutes les frames en base64, animation client-side)
+# ---------------------------------------------------------------------------
+st.caption(f'θ = (k={k_val:.3f}, A={A_val:.1f}, C={C_val:.4f})')
+
+frames_b64 = json.dumps([base64.b64encode(f).decode() for f in frames])
+
+anim_html = f"""
+<style>
+  body {{ margin:0; background:transparent; }}
+  .ctrl {{
+    display:flex; align-items:center; gap:10px;
+    margin-top:10px;
+  }}
+  #playbtn {{
+    background:#4a90d9; border:none; border-radius:50%;
+    width:38px; height:38px; font-size:18px; cursor:pointer;
+    color:#fff; flex-shrink:0; line-height:1;
+    transition: background .15s;
+  }}
+  #playbtn:hover {{ background:#2d72b8; }}
+  #tslider {{
+    flex:1; accent-color:#4a90d9; height:4px; cursor:pointer;
+  }}
+  .mono {{
+    font-family:monospace; font-size:13px; color:#ccc;
+    min-width:52px; text-align:right;
+  }}
+  .fps-row {{
+    display:flex; align-items:center; gap:6px;
+    margin-top:6px; font-size:12px; color:#aaa;
+  }}
+  #fpsinput {{
+    width:44px; background:#2a2a2a; border:1px solid #555;
+    border-radius:4px; color:#eee; padding:2px 4px;
+    font-size:12px; text-align:center;
+  }}
+</style>
+<div style="display:flex;flex-direction:column;align-items:center;font-family:sans-serif;padding:4px 8px">
+  <img id="anim-frame"
+       src="data:image/png;base64,{base64.b64encode(frames[t_idx]).decode()}"
+       style="width:300px;height:300px;object-fit:contain;border-radius:4px"/>
+  <div class="ctrl" style="width:340px">
+    <button id="playbtn" onclick="togglePlay()">▶</button>
+    <input type="range" id="tslider" min="0" max="{NT-1}" value="{t_idx}"
+           oninput="seek(+this.value)"/>
+    <span id="tlabel" class="mono">t = {t_idx}</span>
+  </div>
+  <div class="fps-row">
+    FPS
+    <input type="number" id="fpsinput" value="15" min="1" max="60"
+           oninput="setFps(+this.value)"/>
+  </div>
+</div>
+<script>
+(function() {{
+  const frames = {frames_b64};
+  const img    = document.getElementById('anim-frame');
+  const slider = document.getElementById('tslider');
+  const label  = document.getElementById('tlabel');
+  const btn    = document.getElementById('playbtn');
+
+  let idx     = {t_idx};
+  let playing = false;
+  let fps     = 15;
+  let handle  = null;
+
+  function render() {{
+    img.src = 'data:image/png;base64,' + frames[idx];
+    slider.value = idx;
+    label.textContent = 't = ' + idx;
+  }}
+
+  function advance() {{
+    idx = (idx + 1) % frames.length;
+    render();
+  }}
+
+  window.togglePlay = function() {{
+    playing = !playing;
+    btn.textContent = playing ? '⏸' : '▶';
+    if (playing) {{
+      handle = setInterval(advance, 1000 / fps);
+    }} else {{
+      clearInterval(handle);
+    }}
+  }};
+
+  window.seek = function(i) {{
+    idx = i;
+    render();
+  }};
+
+  window.setFps = function(f) {{
+    fps = f || 1;
+    if (playing) {{
+      clearInterval(handle);
+      handle = setInterval(advance, 1000 / fps);
+    }}
+  }};
+
+  render();
+}})();
+</script>
+"""
+
+components.html(anim_html, height=420, scrolling=False)
 
 # ---------------------------------------------------------------------------
 # Courbe temporelle
@@ -123,7 +242,6 @@ with st.expander('Évolution temporelle (moyenne spatiale)', expanded=False):
         x=list(range(U_pred.shape[0])), y=mean_t.tolist(),
         mode='lines', line=dict(color='royalblue'),
     ))
-    fig_ts.add_vline(x=t_idx, line_dash='dash', line_color='red')
     fig_ts.update_layout(
         xaxis_title='t', yaxis_title='mean(U)',
         height=240,
