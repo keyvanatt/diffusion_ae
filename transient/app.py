@@ -24,7 +24,7 @@ from transient.main import load_model, run_inference
 # ---------------------------------------------------------------------------
 THETA_PARAMS = [
     ('k (Diffusion)',                  0.0,   1.00,   0.55,   '%.3f'),
-    ('A (angle)',                      0.0,   350.0,  175.0,  '%.1f'),
+    ('A (angle)',                      0.0,   360.0,  0,  '%.1f'),
     ('C (Injection rate (kg/m3/s))',   0.005, 0.02,   0.0125, '%.4f'),
 ]
 
@@ -96,9 +96,6 @@ for label, lo, hi, default, fmt in THETA_PARAMS:
 k_val, A_val, C_val = slider_vals
 
 st.sidebar.markdown('---')
-t_idx = st.sidebar.slider('t (instant)', 0, NT - 1, value=0, key='t_slider')
-
-st.sidebar.markdown('---')
 _cmaps    = list(_CMAP_MAP.keys())
 cmap_name = st.sidebar.selectbox('Colormap', _cmaps, index=0)
 
@@ -125,112 +122,84 @@ if st.session_state.get('frames_key') != _frames_key:
 frames = st.session_state['frames']
 
 # ---------------------------------------------------------------------------
-# Composant animation JS (toutes les frames en base64, animation client-side)
+# Composant animation JS — reconstruit uniquement quand les frames changent
 # ---------------------------------------------------------------------------
 st.caption(f'θ = (k={k_val:.3f}, A={A_val:.1f}, C={C_val:.4f})')
 
-frames_b64 = json.dumps([base64.b64encode(f).decode() for f in frames])
-
-anim_html = f"""
+if st.session_state.get('anim_html_key') != _frames_key:
+    _frames_b64 = json.dumps([base64.b64encode(f).decode() for f in frames])
+    _first_b64  = base64.b64encode(frames[0]).decode()
+    st.session_state['anim_html_key'] = _frames_key
+    st.session_state['anim_html'] = """
 <style>
-  body {{ margin:0; background:transparent; }}
-  .ctrl {{
-    display:flex; align-items:center; gap:10px;
-    margin-top:10px;
-  }}
-  #playbtn {{
+  body { margin:0; background:transparent; }
+  .ctrl { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  #playbtn {
     background:#4a90d9; border:none; border-radius:50%;
-    width:38px; height:38px; font-size:18px; cursor:pointer;
-    color:#fff; flex-shrink:0; line-height:1;
-    transition: background .15s;
-  }}
-  #playbtn:hover {{ background:#2d72b8; }}
-  #tslider {{
-    flex:1; accent-color:#4a90d9; height:4px; cursor:pointer;
-  }}
-  .mono {{
-    font-family:monospace; font-size:13px; color:#ccc;
-    min-width:52px; text-align:right;
-  }}
-  .fps-row {{
-    display:flex; align-items:center; gap:6px;
-    margin-top:6px; font-size:12px; color:#aaa;
-  }}
-  #fpsinput {{
+    width:38px; height:38px; font-size:15px; cursor:pointer;
+    color:#fff; flex-shrink:0; line-height:1; transition:background .15s;
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  #playbtn:hover { background:#2d72b8; }
+  #tslider { flex:1; accent-color:#4a90d9; cursor:pointer; }
+  .mono { font-family:monospace; font-size:13px; color:#ccc; min-width:52px; text-align:right; }
+  .fps-row { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:#aaa; }
+  #fpsinput {
     width:44px; background:#2a2a2a; border:1px solid #555;
-    border-radius:4px; color:#eee; padding:2px 4px;
-    font-size:12px; text-align:center;
-  }}
+    border-radius:4px; color:#eee; padding:2px 4px; font-size:12px; text-align:center;
+  }
 </style>
 <div style="display:flex;flex-direction:column;align-items:center;font-family:sans-serif;padding:4px 8px">
   <img id="anim-frame"
-       src="data:image/png;base64,{base64.b64encode(frames[t_idx]).decode()}"
+       src="data:image/png;base64,""" + _first_b64 + """"
        style="width:300px;height:300px;object-fit:contain;border-radius:4px"/>
-  <div class="ctrl" style="width:340px">
-    <button id="playbtn" onclick="togglePlay()">▶</button>
-    <input type="range" id="tslider" min="0" max="{NT-1}" value="{t_idx}"
-           oninput="seek(+this.value)"/>
-    <span id="tlabel" class="mono">t = {t_idx}</span>
+  <div class="ctrl" style="width:320px">
+    <button id="playbtn" onclick="togglePlay()">&#9654;</button>
+    <input type="range" id="tslider" min="0" value="0" oninput="seek(+this.value)"/>
+    <span id="tlabel" class="mono">t = 0</span>
   </div>
   <div class="fps-row">
     FPS
-    <input type="number" id="fpsinput" value="15" min="1" max="60"
-           oninput="setFps(+this.value)"/>
+    <input type="number" id="fpsinput" value="15" min="1" max="60" oninput="setFps(+this.value)"/>
   </div>
 </div>
 <script>
-(function() {{
-  const frames = {frames_b64};
+(function() {
+  const frames = """ + _frames_b64 + """;
+  const NT     = frames.length;
+  document.getElementById('tslider').max = NT - 1;
   const img    = document.getElementById('anim-frame');
   const slider = document.getElementById('tslider');
   const label  = document.getElementById('tlabel');
   const btn    = document.getElementById('playbtn');
 
-  let idx     = {t_idx};
-  let playing = false;
-  let fps     = 15;
-  let handle  = null;
+  const _saved = parseInt(localStorage.getItem('anim_t') || '0');
+  let idx = (!isNaN(_saved) && _saved < NT) ? _saved : 0;
+  let playing = false, fps = 15, handle = null;
 
-  function render() {{
+  function render() {
     img.src = 'data:image/png;base64,' + frames[idx];
     slider.value = idx;
     label.textContent = 't = ' + idx;
-  }}
+  }
+  function advance() { idx = (idx + 1) % NT; localStorage.setItem('anim_t', idx); render(); }
 
-  function advance() {{
-    idx = (idx + 1) % frames.length;
-    render();
-  }}
-
-  window.togglePlay = function() {{
+  window.togglePlay = function() {
     playing = !playing;
-    btn.textContent = playing ? '⏸' : '▶';
-    if (playing) {{
-      handle = setInterval(advance, 1000 / fps);
-    }} else {{
-      clearInterval(handle);
-    }}
-  }};
-
-  window.seek = function(i) {{
-    idx = i;
-    render();
-  }};
-
-  window.setFps = function(f) {{
+    btn.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
+    playing ? (handle = setInterval(advance, 1000/fps)) : clearInterval(handle);
+  };
+  window.seek = function(i) { idx = i; localStorage.setItem('anim_t', idx); render(); };
+  window.setFps = function(f) {
     fps = f || 1;
-    if (playing) {{
-      clearInterval(handle);
-      handle = setInterval(advance, 1000 / fps);
-    }}
-  }};
-
+    if (playing) { clearInterval(handle); handle = setInterval(advance, 1000/fps); }
+  };
   render();
-}})();
+})();
 </script>
 """
 
-components.html(anim_html, height=420, scrolling=False)
+components.html(st.session_state['anim_html'], height=400, scrolling=False)
 
 # ---------------------------------------------------------------------------
 # Courbe temporelle
