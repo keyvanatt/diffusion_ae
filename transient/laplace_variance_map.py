@@ -96,6 +96,79 @@ def compute_all_stats(U_sims: np.ndarray, re_vals: np.ndarray, im_vals: np.ndarr
     return results
 
 
+# ── SVD residual ─────────────────────────────────────────────────────────────
+
+def compute_svd_residuals(U_sims: np.ndarray, re_vals: np.ndarray, im_vals: np.ndarray,
+                          dt: float, n_latent: int,
+                          device: str = 'cuda', sim_batch: int = 20,
+                          g_batch: int = 10) -> np.ndarray:
+    """
+    For each grid point s, compute the residual SVD error at rank n_latent:
+
+        residual(s) = sqrt( sum_{i > n_latent} σ_i(s)^2 )
+
+    where D(s) = [Re(hatU(s)) | Im(hatU(s))] is the (N_sim, 2*HW) data matrix
+    and σ_i are its singular values (equiv. eigenvalues of D @ D.T).
+
+    G = D_re @ D_re.T + D_im @ D_im.T  (N_sim × N_sim, float64)
+    avoids forming the full (N_sim, 2*HW) matrix.
+
+    Returns (N_grid,) float64 array, ordered row-major over (re_vals, im_vals).
+    """
+    N_sim, Nt, H, W = U_sims.shape
+    N_re, N_im = len(re_vals), len(im_vals)
+    N_grid = N_re * N_im
+    HW = H * W
+
+    t     = torch.arange(Nt, dtype=torch.float32, device=device)
+    w     = torch.ones(Nt, device=device); w[0] = 0.5; w[-1] = 0.5
+    re_all = torch.tensor([re_vals[ri] for ri in range(N_re) for _ in range(N_im)],
+                          dtype=torch.float32, device=device)
+    im_all = torch.tensor([im_vals[ci] for _ in range(N_re) for ci in range(N_im)],
+                          dtype=torch.float32, device=device)
+
+    residuals = np.zeros(N_grid, dtype=np.float64)
+
+    for g_start in tqdm(range(0, N_grid, g_batch), desc='SVD residuals'):
+        g_end = min(g_start + g_batch, N_grid)
+        gb    = g_end - g_start
+
+        re_g  = re_all[g_start:g_end]
+        im_g  = im_all[g_start:g_end]
+        amp   = dt * w[None, :] * torch.exp(-re_g[:, None] * t[None, :])  # (gb, Nt)
+        phase = im_g[:, None] * t[None, :]
+        k_g   = torch.cat([amp * torch.cos(phase),
+                           -amp * torch.sin(phase)], dim=0)                # (2*gb, Nt)
+
+        # D[g] = Re(hatU) for grid point g  (N_sim, HW)
+        # D[gb+g] = Im(hatU)               (N_sim, HW)
+        D = torch.zeros(2 * gb, N_sim, HW, dtype=torch.float32, device=device)
+        for s in range(0, N_sim, sim_batch):
+            U_b  = torch.from_numpy(U_sims[s:s + sim_batch]).to(device)
+            B    = U_b.shape[0]
+            U_t  = U_b.reshape(B, Nt, HW).permute(1, 0, 2).reshape(Nt, B * HW)
+            hatU = torch.mm(k_g, U_t).reshape(2 * gb, B, HW)
+            D[:, s:s + B, :] = hatU
+
+        # Batched Gram: G[g] = D_re[g] @ D_re[g].T + D_im[g] @ D_im[g].T
+        # One bmm call per component, no inner loop over g
+        D_re = D[:gb].double()                                      # (gb, N_sim, HW)
+        G    = torch.bmm(D_re, D_re.permute(0, 2, 1))              # (gb, N_sim, N_sim)
+        del D_re
+        D_im = D[gb:].double()
+        G   += torch.bmm(D_im, D_im.permute(0, 2, 1))
+        del D_im, D
+
+        # Batched eigvalsh + vectorised relative residual
+        sigma_sq   = torch.linalg.eigvalsh(G)                            # (gb, N_sim) ascending
+        tail       = sigma_sq[:, :-n_latent].clamp(min=0).sum(dim=1)     # (gb,)
+        total      = sigma_sq.clamp(min=0).sum(dim=1)                    # (gb,) = ||D||_F²
+        rel_res    = (tail / total.clamp(min=1e-30)).sqrt()
+        residuals[g_start:g_end] = rel_res.cpu().numpy()
+
+    return residuals
+
+
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 
 def save_ckpt(results: dict, sim_idx: np.ndarray, path: str):
@@ -158,7 +231,7 @@ if __name__ == '__main__':
     DATA_PATH  = 'dataset/ch4_rotated.npy'
     dt         = 1.0
     Nt         = 150
-    N_NEG      = 15
+    N_NEG      = 10
     N_POS      = 15
     N_OMEGA    = 20
     N_sim      = 1000
@@ -173,7 +246,7 @@ if __name__ == '__main__':
     T          = Nt * dt
     nyquist    = np.pi / dt
     re_max_pos = float(-np.log(np.finfo(np.float64).eps) / dt)  # ≈ 36 for dt=1
-    re_neg  = -np.logspace(np.log10(0.01), np.log10(0.1), N_NEG)[::-1]  # [-0.1…-0.01]
+    re_neg  = -np.logspace(np.log10(0.05), np.log10(0.1), N_NEG)[::-1]  # [-0.1…-0.01]
     re_zero = np.array([0.0])
     re_pos  = np.logspace(-3, 0, N_POS)                                  # [0.001…1.0]
     re_vals = np.concatenate([re_neg, re_zero, re_pos])
@@ -197,9 +270,28 @@ if __name__ == '__main__':
     U_sims = U_raw[sim_idx].astype(np.float32)       # (N_sim, Nt, H, W) in RAM
     print(f"RAM usage: {U_sims.nbytes / 1e9:.1f} GB")
 
-    # ── Compute all grid points in one pass ───────────────────────────────────
+    # ── n_latent from surrogate checkpoint ───────────────────────────────────
+    SURROGATE_CKPT = 'checkpoints/LaplaceLatentModel_finetuned.pt'
+    try:
+        ckpt_s = torch.load(SURROGATE_CKPT, map_location='cpu', weights_only=False)
+        n_latent = int(ckpt_s['latent_dim'])
+        print(f"n_latent = {n_latent}  (from {SURROGATE_CKPT})")
+    except Exception as e:
+        n_latent = 64
+        print(f"Could not load surrogate ckpt ({e}). Using n_latent={n_latent}")
+
+    # ── Compute variance / energy stats (one pass over all grid points) ───────
+    torch.cuda.empty_cache()
     results = compute_all_stats(U_sims, re_vals, im_vals, dt,
                                 device=DEVICE, sim_batch=SIM_BATCH)
+
+    # ── Compute SVD residual at rank n_latent ─────────────────────────────────
+    torch.cuda.empty_cache()
+    svd_res = compute_svd_residuals(U_sims, re_vals, im_vals, dt, n_latent,
+                                    device=DEVICE, sim_batch=SIM_BATCH, g_batch=10)
+    for ri in range(N_re):
+        for ci in range(N_im):
+            results[(ri, ci)]['svd_residual'] = float(svd_res[ri * N_im + ci])
 
     # ── Save & plot ───────────────────────────────────────────────────────────
     save_ckpt(results, sim_idx, RESULTS)
@@ -209,4 +301,8 @@ if __name__ == '__main__':
     plot_heatmap(results, re_vals, im_vals, 'energy',
                  'Mean energy of $\\hat{U}(s)$  [mean $|\\hat{U}|^2$ per pixel]',
                  'Energy', FIG_ENERGY, nyquist)
+    plot_heatmap(results, re_vals, im_vals, 'svd_residual',
+                 f'Relative SVD residual at rank $n={n_latent}$'
+                 r'  $\left(\sum_{i>n}\sigma_i^2\,/\,\sum_i\sigma_i^2\right)^{1/2}$',
+                 f'Relative residual (rank {n_latent})', 'plots/laplace_svd_residual.png', nyquist)
     print("Done.")
