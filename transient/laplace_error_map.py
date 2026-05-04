@@ -83,31 +83,56 @@ class SimpleConvAE(nn.Module):
         return torch.cat([self.refine_re(trunk), self.refine_im(trunk)], dim=1)
 
 
-# ── Laplace transform for arbitrary s ────────────────────────────────────────
+# ── Laplace transform — GPU-batched over (im_vals × sim_batch) ───────────────
 
-def compute_laplace_fields(U_batch: np.ndarray, s: complex, dt: float) -> np.ndarray:
+def compute_laplace_row(U_sims: np.ndarray, re_val: float, im_vals: np.ndarray,
+                        dt: float, device: str, sim_batch: int = 50) -> np.ndarray:
     """
-    Compute hat_U(s) = dt * sum_n w_n * U_i[n] * exp(-s * t_n) for a batch of sims.
+    Compute hat_U(s_k) for one fixed Re(s)=re_val and all Im(s) in im_vals.
+
+    Uses a single GPU matmul over the (2*n_im, Nt) kernel matrix so all
+    frequencies are processed simultaneously — avoids re-reading U_sims
+    once per frequency.
 
     Parameters
     ----------
-    U_batch : (B, Nt, H, W) float32
-    s       : complex scalar  (s = re + i*im)
-    dt      : time step
+    U_sims   : (N_sim, Nt, H, W) float16 in RAM
+    re_val   : scalar Re(s)
+    im_vals  : (n_im,) array of Im(s) values
+    sim_batch: number of simulations per GPU chunk (tune to VRAM)
 
     Returns
     -------
-    (B, 2, H, W) float32 — [Re(hat_U), Im(hat_U)]
+    (n_im, N_sim, 2, H, W) float32
     """
-    Nt = U_batch.shape[1]
-    t  = np.arange(Nt, dtype=np.float64) * dt
-    w  = np.ones(Nt); w[0] = 0.5; w[-1] = 0.5          # trapezoidal weights
-    amp  = dt * w * np.exp(-s.real * t)                  # exp(-Re(s)*t) part
-    k_re = (amp *  np.cos(s.imag * t)).astype(np.float32)   # Re(exp(-s*t))
-    k_im = (amp * -np.sin(s.imag * t)).astype(np.float32)   # Im(exp(-s*t))
-    M_re = np.einsum('t,bthw->bhw', k_re, U_batch, optimize=True)
-    M_im = np.einsum('t,bthw->bhw', k_im, U_batch, optimize=True)
-    return np.stack([M_re, M_im], axis=1)                    # (B, 2, H, W)
+    N_sim, Nt, H, W = U_sims.shape
+    n_im = len(im_vals)
+    HW   = H * W
+
+    t   = torch.arange(Nt, dtype=torch.float32, device=device)
+    w   = torch.ones(Nt, device=device); w[0] = 0.5; w[-1] = 0.5
+    amp = dt * w * torch.exp(torch.tensor(-re_val, dtype=torch.float32, device=device) * t)
+
+    im_t  = torch.tensor(im_vals, dtype=torch.float32, device=device)  # (n_im,)
+    phase = im_t[:, None] * t[None, :]                                  # (n_im, Nt)
+    k_re  =  amp[None, :] * torch.cos(phase)                           # (n_im, Nt)
+    k_im  = -amp[None, :] * torch.sin(phase)
+    k     = torch.cat([k_re, k_im], dim=0)                             # (2*n_im, Nt)
+
+    # Accumulate into CPU buffer to keep GPU memory small
+    out = np.empty((2 * n_im, N_sim, HW), dtype=np.float32)
+    for s in range(0, N_sim, sim_batch):
+        U_b  = torch.from_numpy(
+            np.asarray(U_sims[s:s + sim_batch], dtype=np.float32)
+        ).to(device)                                        # (B, Nt, H, W)
+        B    = U_b.shape[0]
+        U_t  = U_b.reshape(B, Nt, HW).permute(1, 0, 2).reshape(Nt, B * HW)
+        hatU = torch.mm(k, U_t).reshape(2 * n_im, B, HW)
+        out[:, s:s + B, :] = hatU.cpu().numpy()
+
+    out_re = out[:n_im].reshape(n_im, N_sim, H, W)
+    out_im = out[n_im:].reshape(n_im, N_sim, H, W)
+    return np.stack([out_re, out_im], axis=2)               # (n_im, N_sim, 2, H, W)
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -130,6 +155,45 @@ def load_ckpt(path: str):
 
 # ── Plots ─────────────────────────────────────────────────────────────────────
 
+def plot_correlation(results: dict, x_key: str, y_key: str,
+                     xlabel: str, ylabel: str, title: str, path: str):
+    """Log-log scatter of y_key vs x_key across all grid points, with power-law fit."""
+    xs, ys = [], []
+    for v in results.values():
+        x = v.get(x_key)
+        y = v.get(y_key)
+        if x is not None and y is not None and x > 0 and y > 0:
+            xs.append(x)
+            ys.append(y)
+    if not xs:
+        print(f"  [skip] no data for {x_key} vs {y_key}")
+        return
+    xs, ys = np.array(xs), np.array(ys)
+    log_x, log_y = np.log(xs), np.log(ys)
+    r = float(np.corrcoef(log_x, log_y)[0, 1])
+    slope, intercept = np.polyfit(log_x, log_y, 1)
+
+    x_fit = np.logspace(np.log10(xs.min()), np.log10(xs.max()), 200)
+    y_fit = np.exp(intercept) * x_fit ** slope
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.scatter(xs, ys, s=45, alpha=0.85, edgecolors='k', linewidths=0.4, zorder=3)
+    ax.plot(x_fit, y_fit, 'r--', lw=1.8,
+            label=f'slope = {slope:.2f},  r = {r:.3f}')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=11)
+    ax.legend(fontsize=9)
+    ax.grid(True, which='both', ls=':', alpha=0.4)
+    ax.tick_params(axis='x', rotation=45)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  → {path}")
+
+
 def plot_error_heatmap(results: dict, re_vals: np.ndarray, im_vals: np.ndarray,
                        path: str):
     Nr, Ni = len(re_vals), len(im_vals)
@@ -139,7 +203,9 @@ def plot_error_heatmap(results: dict, re_vals: np.ndarray, im_vals: np.ndarray,
 
     fig, ax = plt.subplots(figsize=(7, 5))
     pm = ax.pcolormesh(re_vals, im_vals, grid.T, cmap='viridis', shading='nearest')
-    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.set_xscale('symlog', linthresh=1e-3)
+    ax.set_yscale('log')
+    ax.axvline(0, color='white', lw=0.8, ls='--', alpha=0.6)
     ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
     ax.set_title('Median relative L2 error — AE reconstruction in Laplace domain')
 
@@ -177,30 +243,56 @@ if __name__ == '__main__':
     DATA_PATH  = 'dataset/ch4_rotated.npy'
     dt         = 1.0
     Nt         = 150
-    N          = 200
-    Nr         = 15            # grid points along Re(s)
-    Ni         = 15            # grid points along Im(s)
-    N_sim      = 500           # random subset of simulations to use
-    LOAD_BATCH = 50            # sims loaded per batch when computing Laplace fields
+    N=200
+    N_POS      = 6
+    N_NEG      = N_POS*2//3
+    N_OMEGA    = 10
+    N_sim      = 1000           # random subset of simulations to use
+    SIM_BATCH  = 50            # sims per GPU chunk in compute_laplace_row
     dz         = 32            # AE latent dimension
-    epochs     = 30
+    epochs     = 300
+    patience   = 20
     batch_size = 32
     lr         = 1e-3
     RESULTS    = 'plots/error_map.pkl'
     FIG_ERROR  = 'plots/error_map.png'
     FIG_FIELDS = 'plots/error_map_fields.png'
+    FIG_CORR_SVD    = 'plots/laplace_error_svd_correlation.png'
+    FIG_CORR_RELVAR = 'plots/laplace_error_variance_correlation.png'
+    VAR_MAP_PKL     = 'plots/laplace_variance_map.pkl'
     SEED       = 42
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
 
     # ── Grid ──────────────────────────────────────────────────────────────────
-    T       = Nt * dt                                   # total duration
-    re_vals = np.logspace(-2, np.log10(10.0 / dt), Nr)
-    im_vals = np.logspace(np.log10(1.0 / T), np.log10(np.pi / dt), Ni)
+    T          = Nt * dt
+    nyquist    = np.pi / dt
+    re_neg  = -np.logspace(-3, -2, N_NEG)[::-1]  # [-0.05…-0.01]
+    re_zero = np.array([0.0])
+    re_pos  = np.logspace(-3, -1, N_POS)                                  # [0.001…1.0]
+    re_vals = np.concatenate([re_neg, re_zero, re_pos])
+
+    im_vals = np.logspace(np.log10(1.0 / T), np.log10(nyquist), N_OMEGA)
+
+    # ── Variance map (pre-computed by laplace_variance_map.py) ───────────────
+    var_map_data = {}
+    if Path(VAR_MAP_PKL).exists():
+        with open(VAR_MAP_PKL, 'rb') as f:
+            _vm = pickle.load(f)
+        var_map_data = _vm.get('results', {})
+        print(f"Loaded variance map: {len(var_map_data)} points")
+    else:
+        print(f"Warning: {VAR_MAP_PKL} not found — correlation plots will be skipped")
 
     # ── Data / checkpoint ─────────────────────────────────────────────────────
     results, fields_demo, sim_idx_ckpt = load_ckpt(RESULTS)
+
+    # Enrich already-computed results with variance map data (resume-safe)
+    for key, v in results.items():
+        if 'svd_residual' not in v and key in var_map_data:
+            v['svd_residual']      = var_map_data[key]['svd_residual']
+            v['relative_variance'] = var_map_data[key]['relative_variance']
     U_raw = np.load(DATA_PATH, mmap_mode='r')           # (ns, Nt, H, W)
     rng   = np.random.default_rng(SEED)
 
@@ -212,86 +304,135 @@ if __name__ == '__main__':
     n_train = int(0.8 * N_sim)
     n_val   = N_sim - n_train
 
-    print(f"Grid: {Nr}×{Ni} = {Nr * Ni} points")
+    print(f"Grid: {N_NEG+N_POS+1}×{N_OMEGA} = {len(re_vals) * len(im_vals)} points")
     print(f"Simulations: {N_sim}  (train={n_train}, val={n_val})")
 
+    print(f"Loading {N_sim} simulations into RAM (float16, "
+          f"{N_sim*Nt*N*N*2/1e9:.1f} GB)...")
+    U_sims = U_raw[sim_idx].astype(np.float16)          # (N_sim, Nt, H, W)
+    print("  done.")
+
     # ── Main grid loop ────────────────────────────────────────────────────────
+    # Outer loop: one Re(s) row at a time.
+    # Per row: one GPU matmul computes all pending Im(s) simultaneously,
+    # then AEs are trained from the precomputed fields.
     for ri, re in enumerate(tqdm(re_vals, desc='Re(s)', position=0)):
-        for ci, im in enumerate(tqdm(im_vals, desc='  Im(s)', position=1, leave=False)):
-            key = (ri, ci)
-            if key in results:
-                continue
 
-            s = complex(re, im)
+        # Identify which Im(s) values still need computation in this row
+        pending_ci = [ci for ci in range(len(im_vals)) if (ri, ci) not in results]
 
-            # ── Compute Laplace fields ─────────────────────────────────────
-            batches = []
-            n_batches = (N_sim + LOAD_BATCH - 1) // LOAD_BATCH
-            for start in tqdm(range(0, N_sim, LOAD_BATCH),
-                              desc='    load', total=n_batches,
-                              position=2, leave=False):
-                idx    = sim_idx[start:start + LOAD_BATCH]
-                U_b    = U_raw[idx].astype(np.float32)      # (B, Nt, H, W)
-                batches.append(compute_laplace_fields(U_b, s, dt))
-            fields = np.concatenate(batches, axis=0)        # (N_sim, 2, H, W)
+        if pending_ci:
+            # One GPU call for all pending im values in this row
+            row_fields = compute_laplace_row(
+                U_sims, re, im_vals[np.array(pending_ci)], dt, device, SIM_BATCH
+            )  # (len(pending_ci), N_sim, 2, H, W)
 
-            # Store Re(hat_U) of first sim for the field preview grid
-            fields_demo[key] = fields[0, 0].copy()          # (H, W)
+            for j, ci in enumerate(tqdm(pending_ci, desc='  Im(s)', position=1, leave=False)):
+                key    = (ri, ci)
+                fields = row_fields[j]              # (N_sim, 2, H, W)
+                s      = complex(re, im_vals[ci])
 
-            # ── Dead zone check ────────────────────────────────────────────
-            norms = np.linalg.norm(fields.reshape(N_sim, -1), axis=1)
-            if float(np.median(norms)) < 1e-10:
-                results[key] = {'val_error': 1.0, 's': s}
+                fields_demo[key] = fields[0, 0].copy()   # Re(hat_U) of first sim
+
+                # ── Dead zone check ───────────────────────────────────────
+                norms = np.linalg.norm(fields.reshape(N_sim, -1), axis=1)
+                if float(np.median(norms)) < 1e-10:
+                    entry = {'val_error': 1.0, 's': s}
+                    if key in var_map_data:
+                        entry['svd_residual']      = var_map_data[key]['svd_residual']
+                        entry['relative_variance'] = var_map_data[key]['relative_variance']
+                    results[key] = entry
+                    save_ckpt(results, fields_demo, sim_idx, RESULTS)
+                    continue
+
+                # ── Normalise (train-split stats) ─────────────────────────
+                mean        = fields[:n_train].mean(axis=0, keepdims=True)
+                std         = fields[:n_train].std(axis=0, keepdims=True) + 1e-8
+                fields_norm = (fields - mean) / std
+
+                # ── DataLoaders ───────────────────────────────────────────
+                X            = torch.from_numpy(fields_norm).float()
+                train_loader = DataLoader(TensorDataset(X[:n_train]),
+                                          batch_size=batch_size, shuffle=True,
+                                          num_workers=0)
+                val_loader   = DataLoader(TensorDataset(X[n_train:]),
+                                          batch_size=batch_size, num_workers=0)
+
+                # ── Train fresh AE with early stopping ───────────────────
+                model     = SimpleConvAE(N=N, dz=dz).to(device)
+                opt       = torch.optim.Adam(model.parameters(), lr=lr)
+                crit      = nn.MSELoss()
+                best_val  = float('inf')
+                best_state = None
+                wait       = 0
+
+                for _ in tqdm(range(epochs), desc='    train', position=2, leave=False):
+                    model.train()
+                    for (xb,) in train_loader:
+                        xb = xb.to(device)
+                        opt.zero_grad()
+                        crit(model(xb), xb).backward()
+                        opt.step()
+
+                    model.eval()
+                    with torch.no_grad():
+                        val_loss = sum(
+                            crit(model(xb.to(device)), xb.to(device)).item()
+                            for (xb,) in val_loader
+                        ) / len(val_loader)
+
+                    if val_loss < best_val - 1e-6:
+                        best_val   = val_loss
+                        best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                        wait       = 0
+                    else:
+                        wait += 1
+                        if wait >= patience:
+                            break
+
+                model.load_state_dict(best_state)
+
+                # ── Validation error ──────────────────────────────────────
+                model.eval()
+                preds_list = []
+                with torch.no_grad():
+                    for (xb,) in val_loader:
+                        preds_list.append(model(xb.to(device)).cpu())
+                preds_norm = torch.cat(preds_list).numpy()
+                preds_raw  = preds_norm * std + mean
+                tgts_raw   = fields[n_train:]
+                diffs      = np.linalg.norm((preds_raw - tgts_raw).reshape(n_val, -1), axis=1)
+                norms_val  = np.linalg.norm(tgts_raw.reshape(n_val, -1), axis=1)
+                val_error  = float(np.median(diffs / (norms_val + 1e-10)))
+
+                entry = {'val_error': val_error, 's': s}
+                if key in var_map_data:
+                    entry['svd_residual']      = var_map_data[key]['svd_residual']
+                    entry['relative_variance'] = var_map_data[key]['relative_variance']
+                results[key] = entry
                 save_ckpt(results, fields_demo, sim_idx, RESULTS)
-                continue
 
-            # ── Normalise (stats on train split only) ─────────────────────
-            mean        = fields[:n_train].mean(axis=0, keepdims=True)   # (1,2,H,W)
-            std         = fields[:n_train].std(axis=0, keepdims=True) + 1e-8
-            fields_norm = (fields - mean) / std                           # (N_sim,2,H,W)
-
-            # ── DataLoaders ────────────────────────────────────────────────
-            X            = torch.from_numpy(fields_norm).float()
-            train_loader = DataLoader(TensorDataset(X[:n_train]),
-                                      batch_size=batch_size, shuffle=True,
-                                      num_workers=0)
-            val_loader   = DataLoader(TensorDataset(X[n_train:]),
-                                      batch_size=batch_size, num_workers=0)
-
-            # ── Train fresh AE ─────────────────────────────────────────────
-            model = SimpleConvAE(N=N, dz=dz).to(device)
-            opt   = torch.optim.Adam(model.parameters(), lr=lr)
-            crit  = nn.MSELoss()
-
-            for _ in tqdm(range(epochs), desc='    train', position=2, leave=False):
-                model.train()
-                for (xb,) in train_loader:
-                    xb = xb.to(device)
-                    opt.zero_grad()
-                    crit(model(xb), xb).backward()
-                    opt.step()
-
-            # ── Validation error ───────────────────────────────────────────
-            model.eval()
-            preds_list = []
-            with torch.no_grad():
-                for (xb,) in val_loader:
-                    preds_list.append(model(xb.to(device)).cpu())
-            preds_norm = torch.cat(preds_list).numpy()       # (Nval, 2, H, W)
-            preds_raw  = preds_norm * std + mean             # denormalise
-            tgts_raw   = fields[n_train:]
-            diffs      = np.linalg.norm((preds_raw - tgts_raw).reshape(n_val, -1), axis=1)
-            norms_val  = np.linalg.norm(tgts_raw.reshape(n_val, -1), axis=1)
-            val_error  = float(np.median(diffs / (norms_val + 1e-10)))
-
-            results[key] = {'val_error': val_error, 's': s}
-            save_ckpt(results, fields_demo, sim_idx, RESULTS)
-
-        # Intermediate error heatmap after each Re(s) row
+        # Intermediate heatmap after each Re(s) row
         plot_error_heatmap(results, re_vals, im_vals, FIG_ERROR)
 
     # ── Final plots ───────────────────────────────────────────────────────────
     print("\nPlotting final figures...")
     plot_error_heatmap(results, re_vals, im_vals, FIG_ERROR)
     plot_field_grid(fields_demo, re_vals, im_vals, FIG_FIELDS)
+    plot_correlation(
+        results,
+        x_key='svd_residual', y_key='val_error',
+        xlabel='Relative SVD residual  (rank-$n$ tail energy)',
+        ylabel='AE val error  (median rel. L2)',
+        title='AE reconstruction error vs. SVD residual',
+        path=FIG_CORR_SVD,
+    )
+    plot_correlation(
+        results,
+        x_key='relative_variance', y_key='val_error',
+        xlabel=r'Relative variance  $\mathrm{Var}[\hat{U}(s)]\,/\,\mathbb{E}[|\hat{U}|^2]$',
+        ylabel='AE val error  (median rel. L2)',
+        title='AE reconstruction error vs. relative variance',
+        path=FIG_CORR_RELVAR,
+    )
     print("Done.")
