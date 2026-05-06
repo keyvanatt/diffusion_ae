@@ -37,7 +37,7 @@
 \maketitle
 
 \begin{abstract}
-This document derives rigorously the bias--variance decomposition of the total reconstruction error for a Laplace-domain neural surrogate model combined with a regularised inversion step. Using this theoretical framework, we formulate an optimization problem to find the optimal integration contour frequencies that minimize the expected error. We also discuss approximating the surrogate error using the mean Singular Value Decomposition (SVD) residual.
+This document rigorously derives the bias--variance decomposition of the total reconstruction error for a Laplace-domain neural surrogate model coupled with a regularised inversion step. Leveraging this theoretical framework, we formulate a proxy optimization problem to systematically discover the optimal integration contour frequencies that minimize the expected reconstruction error. Furthermore, we establish a computationally efficient method to approximate the expected non-linear surrogate error using the mean Singular Value Decomposition (SVD) residual, providing a fully differentiable objective for contour optimization.
 \end{abstract}
 
 \tableofcontents
@@ -56,7 +56,7 @@ The primary goal of this document is to formalise the total reconstruction error
 \begin{itemize}
     \item Variables representing physical quantities in the real space-time domain are denoted by $\mathbf{v}$.
     \item Variables representing quantities in the complex Laplace domain are denoted by $\mathbf{u}$ or $\mathbf{U}$.
-    \item The superscript asterisk ($^*$) designates the optimal solution to an equation or an optimization problem (e.g., the reconstructed field $\mathbf{v}^*$).
+    \item The superscript asterisk ($^*$) designates the optimal solution to an equation or an optimization problem (e.g., the exact reconstructed field $\mathbf{v}^*$ from true Laplace coefficients, or $\hat{\mathbf{v}}^*$ from surrogate coefficients).
     \item The circumflex accent ($\hat{\cdot}$) designates a quantity that is predicted or approximated by a model (e.g., the neural surrogate prediction $\hat{\mathbf{u}}$, or the SVD approximation $\hat{\mathbf{U}}_k$).
     \item The superscript ($^H$) denotes the Hermitian (conjugate) transpose of a matrix or operator.
     \item $\norm{\cdot}_F$ denotes the Frobenius norm of a matrix.
@@ -178,7 +178,7 @@ Rearranging gives the linear system:
     \left(\mathbf{F}_{st}^H\mathbf{F}_{st}
     + \mathbf{L}_{\mathrm{reg}}\right)
   }_{=:\,\mathbf{A}}
-  \mathbf{v}^*
+  \hat{\mathbf{v}}^*
   \;=\;
   \mathbf{F}_{st}^H \hat{\mathbf{u}}.
 \end{equation}
@@ -191,19 +191,20 @@ Rearranging gives the linear system:
 The unique reconstructed solution is therefore given directly by:
 \begin{equation}
   \label{eq:solution}
-  \mathbf{v}^*(\theta)
+  \hat{\mathbf{v}}^*(\theta)
   \;=\;
   \mathbf{A}^{-1}\mathbf{F}_{st}^H \hat{\mathbf{u}}(\theta).
 \end{equation}
 
 \subsection{Bias--Variance Decomposition}
 
-We decompose the total reconstruction error $\mathbf{v}(\theta) - \mathbf{v}^*(\theta)$ by introducing the \emph{exact} Laplace coefficients $\mathbf{u}(\theta) = \mathbf{F}_{st}\mathbf{v}(\theta)$. Adding and subtracting $\mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{u}(\theta)$:
+We decompose the total reconstruction error $\mathbf{v}(\theta) - \hat{\mathbf{v}}^*(\theta)$ by introducing the \emph{exact} Laplace coefficients $\mathbf{u}(\theta) = \mathbf{F}_{st}\mathbf{v}(\theta)$ and the \emph{exact} ILT solution $\mathbf{v}^*(\theta) = \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{u}(\theta)$. Adding and subtracting $\mathbf{v}^*(\theta)$:
 
 \begin{align}
-  \mathbf{v}(\theta) - \mathbf{v}^*(\theta)
-  &= \mathbf{v}(\theta)
-     - \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{F}_{st}\mathbf{v}(\theta)
+  \mathbf{v}(\theta) - \hat{\mathbf{v}}^*(\theta)
+  &= \bigl(\mathbf{v}(\theta) - \mathbf{v}^*(\theta)\bigr)
+   + \bigl(\mathbf{v}^*(\theta) - \hat{\mathbf{v}}^*(\theta)\bigr) \notag \\
+  &= \bigl(\mathbf{v}(\theta) - \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{F}_{st}\mathbf{v}(\theta)\bigr)
    + \mathbf{A}^{-1}\mathbf{F}_{st}^H
        \bigl(\mathbf{u}(\theta) - \hat{\mathbf{u}}(\theta)\bigr).
   \label{eq:decomp}
@@ -211,9 +212,9 @@ We decompose the total reconstruction error $\mathbf{v}(\theta) - \mathbf{v}^*(\
 
 The first term is the \emph{bias} (due to the transformation and regularisation) and the second is the \emph{variance} (the surrogate error propagated through the inversion). Using the definition $\mathbf{A} = \mathbf{F}_{st}^H\mathbf{F}_{st} + \mathbf{L}_{\mathrm{reg}}$, we can simplify the bias term:
 \begin{equation}
-  \mathbf{v} - \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{F}_{st}\mathbf{v}
-  \;=\; \mathbf{A}^{-1}\bigl(\mathbf{A} - \mathbf{F}_{st}^H\mathbf{F}_{st}\bigr)\mathbf{v}
-  \;=\; \mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}.
+  \mathbf{v}(\theta) - \mathbf{v}^*(\theta)
+  \;=\; \mathbf{A}^{-1}\bigl(\mathbf{A} - \mathbf{F}_{st}^H\mathbf{F}_{st}\bigr)\mathbf{v}(\theta)
+  \;=\; \mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}(\theta).
 \end{equation}
 
 By taking the norm of \eqref{eq:decomp} and applying the triangle inequality along with the sub-multiplicativity of the operator norm for the variance term, we directly obtain the final upper bound:
@@ -223,10 +224,10 @@ By taking the norm of \eqref{eq:decomp} and applying the triangle inequality alo
   For any $\theta \in \Theta$, the reconstruction error satisfies
   \begin{equation}
     \label{eq:bv_bound}
-    \norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}
+    \norm{\mathbf{v}(\theta) - \hat{\mathbf{v}}^*(\theta)}
     \;\leq\;
     \underbrace{
-      \norm{\mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}(\theta)}
+      \norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}
     }_{\text{regularisation bias}}
     \;+\;
     \underbrace{
@@ -244,14 +245,14 @@ This decomposition clearly highlights the fundamental trade-off in regularised L
 
 The matrices $\mathbf{F}_{st}$ and $\mathbf{L}_{\mathrm{reg}}$, and consequently the operator $\mathbf{A}$, depend explicitly on the choice of the complex frequencies $\mathbf{s} = \{s_1, \ldots, s_K\}$ defining the integration contour and coefficients $\alpha = (\alpha_x, \alpha_t)$ and $\lambda$.
 
-Therefore, we aim to jointly optimize $\mathbf{s}$, $\lambda$, and $\alpha$ to minimize the expected mean reconstruction error $\E_\theta\!\left[\norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}\right]$. Since evaluating this true error directly is challenging without ground truth for every instance, we treat these hyperparameters as learnable parameters and optimize a surrogate loss function $\mathcal{L}(\mathbf{s}, \lambda, \alpha)$. This loss is derived directly from the bias--variance upper bound :
+Therefore, we aim to jointly optimize $\mathbf{s}$, $\lambda$, and $\alpha$ to minimize the expected mean reconstruction error $\E_\theta\!\left[\norm{\mathbf{v}(\theta) - \hat{\mathbf{v}}^*(\theta)}\right]$. Since evaluating this true error directly is challenging without ground truth for every instance, we treat these hyperparameters as learnable parameters and optimize a surrogate loss function $\mathcal{L}(\mathbf{s}, \lambda, \alpha)$. This loss is derived directly from the bias--variance upper bound :
 \begin{align}
-    \E_\theta\!\left[\norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}\right] \;&\leq\; \mathcal{L}(\mathbf{s}, \lambda, \alpha), \\
+    \E_\theta\!\left[\norm{\mathbf{v}(\theta) - \hat{\mathbf{v}}^*(\theta)}\right] \;&\leq\; \mathcal{L}(\mathbf{s}, \lambda, \alpha), \\
     \mathcal{L}(\mathbf{s}, \lambda, \alpha) \;&=\; \mathcal{L}_{\mathrm{bias}}(\mathbf{s}, \lambda, \alpha) + \mathcal{L}_{\mathrm{var}}(\mathbf{s}, \lambda, \alpha),
 \end{align}
 where
 \begin{align}
-    \mathcal{L}_{\mathrm{bias}}(\mathbf{s}, \lambda, \alpha) &\;=\; \E_\theta\!\left[\norm{\mathbf{A}(\mathbf{s}, \lambda, \alpha)^{-1}\mathbf{L}_{\mathrm{reg}}(\lambda, \alpha)\mathbf{v}(\theta)}\right], \\
+    \mathcal{L}_{\mathrm{bias}}(\mathbf{s}, \lambda, \alpha) &\;=\; \E_\theta\!\left[\norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}\right], \\
     \mathcal{L}_{\mathrm{var}}(\mathbf{s}, \lambda, \alpha) &\;=\; \norm{\mathbf{A}(\mathbf{s}, \lambda, \alpha)^{-1}\mathbf{F}_{st}(\mathbf{s})^H} \cdot \epsilon_{\mathrm{surr}}(\mathbf{s}).
 \end{align}
 
@@ -272,7 +273,11 @@ For any specific frequency $s_i \in \mathbf{s}$, let us first rigorously derive 
 
 If we use a linear surrogate $\hat{\mathbf{u}}_{\mathrm{lin}}$ with a latent dimension (rank) of $r$, evaluating its expected squared error over the dataset $\Theta$ is equivalent to computing the mean of the squared Euclidean norms of its column-wise errors:
 \begin{equation}
-    \E_{\theta \in \Theta}\!\left[\norm{\mathbf{u}(s_i, \theta) - \hat{\mathbf{u}}_{\mathrm{lin}}(s_i, \theta)}^2\right] \;=\; \frac{1}{|\Theta|} \sum_{m=1}^{|\Theta|} \norm{\mathbf{u}(s_i, \theta_m) - \hat{\mathbf{u}}_{\mathrm{lin}}(s_i, \theta_m)}_{\C^{N_x}}^2 \;=\; \frac{1}{|\Theta|} \norm{\mathbf{U}^{(s_i)} - \hat{\mathbf{U}}_{\mathrm{lin}}^{(s_i)}}_F^2
+    \begin{aligned}
+        \E_{\theta \in \Theta}\!\left[\norm{\mathbf{u}(s_i, \theta) - \hat{\mathbf{u}}_{\mathrm{lin}}(s_i, \theta)}^2\right] 
+        \;&=\; \frac{1}{|\Theta|} \sum_{m=1}^{|\Theta|} \norm{\mathbf{u}(s_i, \theta_m) - \hat{\mathbf{u}}_{\mathrm{lin}}(s_i, \theta_m)}_{\C^{N_x}}^2 \\
+        \;&=\; \frac{1}{|\Theta|} \norm{\mathbf{U}^{(s_i)} - \hat{\mathbf{U}}_{\mathrm{lin}}^{(s_i)}}_F^2
+    \end{aligned}
 \end{equation}
 
 The minimum for this squared Frobenius norm among all rank-$r$ approximations $\hat{\mathbf{U}}$ is achieved by the truncated Singular Value Decomposition (SVD), and is exactly equal to the sum of the discarded squared singular values, $\sigma_j^{(s_i)}$, for $j > r$. Consequently, the optimal linear baseline $\mathcal{E}_{\mathrm{SVD}}(s_i)$ is given by:
@@ -312,21 +317,24 @@ To account for the enhanced expressivity of the non-linear Autoencoder over the 
 \end{equation}
 where $\mathcal{L}_{\mathrm{var}}^{\mathrm{SVD}}$ is evaluated using the SVD residual $\mathcal{E}_{\mathrm{SVD}}(\mathbf{s})$ in place of the true expected surrogate error $\epsilon_{\mathrm{surr}}(\mathbf{s})$.
 
-\subsection{Conclusion: The Final Proxy Objective}
+\section{Conclusion: The Final Proxy Objective}
 
 We can finally derive the final explicit proxy objective function used in our optimization routine:
 \begin{equation}
-    \boxed{ \mathcal{L}^{\mathrm{proxy}}(\mathbf{s}, \lambda, \alpha) \;=\; \frac{1}{|\Theta|} \sum_{\theta \in \Theta} \norm{\mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}(\theta)} + \frac{1}{\lambda_{\mathrm{AE}}} \norm{\mathbf{A}^{-1}\mathbf{F}_{st}^H} \cdot \sqrt{ \frac{1}{|\Theta|} \sum_{s_i \in \mathbf{s}} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 } }
+    \boxed{ \begin{aligned}
+        \mathcal{L}^{\mathrm{proxy}}(\mathbf{s}, \lambda, \alpha) \;&=\; \frac{1}{|\Theta|} \sum_{\theta \in \Theta} \norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)} \\
+        &\quad + \frac{1}{\lambda_{\mathrm{AE}}} \norm{\mathbf{A}^{-1}\mathbf{F}_{st}^H} \cdot \sqrt{ \frac{1}{|\Theta|} \sum_{s_i \in \mathbf{s}} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 } 
+    \end{aligned} }
 \end{equation}
-Where:
-\begin{itemize}
-    \item $\mathbf{v}(\theta) \in \R^{N_x N_t}$ is the exact transient physical field for the simulation instance $\theta \in \Theta$.
-    \item $\mathbf{F}_{st}(\mathbf{s})$ is the discrete spatio-temporal Laplace transform operator associated with the chosen contour frequencies $\mathbf{s}$.
-    \item $\mathbf{L}_{\mathrm{reg}}(\lambda, \alpha)$ is the regularisation penalty matrix, controlling amplitude ($\lambda$) and spatio-temporal smoothness ($\alpha_x, \alpha_t$).
-    \item $\mathbf{A} = \mathbf{F}_{st}^H\mathbf{F}_{st} + \mathbf{L}_{\mathrm{reg}}$ is the invertible system matrix of the normal equations. Thus, $\mathbf{A}^{-1}\mathbf{F}_{st}^H$ acts as the actual regularised Inverse Laplace Transform operator.
-    \item $\sigma_j^{(s_i)}$ are the singular values of the exact Laplace coefficients dataset matrix at frequency $s_i$. The square root term computes the global root-mean-square residual of the optimal linear SVD compression beyond the Autoencoder's bottleneck latent dimension $r$, serving as a worst-case upper bound proxy for the surrogate's prediction error.
-    \item $\lambda_{\mathrm{AE}} \geq 1$ is an empirical hyperparameter scaling down the SVD variance to account for the superior expressivity of the non-linear Autoencoder.
-\end{itemize}
+
+Furthermore, to explicitly mitigate the Gibbs phenomenon and other unphysical high-frequency artifacts, we can augment the proxy objective function with heuristic penalty terms based on the spatial and temporal gradients of the inversion error:
+\begin{equation}
+    \begin{aligned}
+        \mathcal{L}^{\mathrm{proxy}}(\mathbf{s}, \lambda, \alpha) \;&=\; \frac{1}{|\Theta|} \sum_{\theta \in \Theta} \norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)} \\
+        &\quad + \frac{1}{\lambda_{\mathrm{AE}}} \norm{\mathbf{A}^{-1}\mathbf{F}_{st}^H} \cdot \sqrt{ \frac{1}{|\Theta|} \sum_{s_i \in \mathbf{s}} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 } \\
+        &\quad + \lambda_x \norm{\nabla \left(\mathbf{v}^*(\theta) -\mathbf{v}(\theta)\right)} + \lambda_t \norm{\partial_t \left(\mathbf{v}^*(\theta) -\mathbf{v}(\theta)\right)}
+    \end{aligned}
+\end{equation}
 
 Minimizing this fully differentiable surrogate loss $\mathcal{L}^{\mathrm{proxy}}$ using gradient-based methods enables us to systematically discover optimal integration contours $\mathbf{s}$ and optimal regularisation penalties that minimize the inherent bias-variance trade-off. The validity of this approximation, specifically how tightly the AE error tracks the SVD residual across different contours, remains a subject to be benchmarked empirically.
 
