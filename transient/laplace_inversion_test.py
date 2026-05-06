@@ -78,10 +78,10 @@ def path_c_shape(K, R=5.0, center=1.0):
     return s
 
 
-s_list = np.array([-0.0293+-0.0142j, -0.0172+0.0463j, -0.0089+0.0908j, -0.0076+0.1349j, -0.0048+0.1784j, -0.0048+0.2224j, -0.0026+0.2662j, -0.0025+0.3105j, -0.0014+0.3544j, -0.0045+0.3965j, -0.0011+0.4413j, -0.0056+0.4836j, -0.0009+0.5276j, -0.0052+0.5699j, -0.0114+0.6329j, -0.0121+0.7010j, -0.0122+0.7720j, -0.0116+0.8425j, -0.0097+0.9124j, -0.0054+0.9778j])
+s_list = np.array([-0.0070+0.0485j, 0.0023+0.1779j, -0.0039+0.0938j, -0.0199+0.0116j, -0.0125+0.3900j, 0.0051+0.1447j, -0.0114+0.4638j, -0.0109+0.2446j, -0.0060+0.6059j, -0.0096+0.5372j, -0.0127+0.3164j, 0.1250+0.0000j, 0.1248+0.0000j, 0.1251+0.0000j, 2.5916+0.0000j, 3.2529+0.0000j, 3.5301+0.0000j, 3.4871+0.0000j, 5.2667+0.0000j, 8.8792+0.0000j])
 
-alpha_t = 0.18
-lam     = 0.37
+alpha_t = 0.1
+lam     = 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +162,7 @@ ax.scatter(np.conj(s_list[cmask]).real, np.conj(s_list[cmask]).imag,
 ax.axhline(0, color='gray', lw=0.5)
 ax.axvline(0, color='gray', lw=0.5)
 ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
+ax.set_xscale('symlog', linthresh=1e-3)
 ax.set_title(f's points  ({len(s_full)} total)')
 ax.legend(fontsize=7)
 
@@ -170,6 +171,50 @@ out_path = os.path.join("plots", "laplace_inversion_test.png")
 plt.savefig(out_path, dpi=150, bbox_inches='tight')
 plt.show()
 print(f"Figure saved → {out_path}")
+
+# ---------------------------------------------------------------------------
+# Laplace spectrum figure — Re and Im side by side for each s_k
+# ---------------------------------------------------------------------------
+U_re = U_hat.real.reshape(Hsub, Wsub, K)   # (Hsub, Wsub, K)
+U_im = U_hat.imag.reshape(Hsub, Wsub, K)
+
+ncols_k = min(K, 5)
+nrows_k  = (K + ncols_k - 1) // ncols_k
+# 2 sub-columns per k (Re | Im)
+fig2, axes2 = plt.subplots(nrows_k, ncols_k * 2,
+                            figsize=(3.0 * ncols_k * 2, 2.8 * nrows_k))
+axes2 = np.array(axes2).reshape(nrows_k, ncols_k, 2)
+
+for k in range(K):
+    row, col = divmod(k, ncols_k)
+    sk = s_list[k]
+
+    re_map = U_re[:, :, k]
+    im_map = U_im[:, :, k]
+
+    for part, data, cmap, label in [
+        (0, re_map, 'RdBu_r', 'Re'),
+        (1, im_map, 'PiYG',   'Im'),
+    ]:
+        ax = axes2[row, col, part]
+        lim = np.abs(data).max() or 1.0
+        im2 = ax.imshow(data, origin='lower', cmap=cmap, vmin=-lim, vmax=lim)
+        ax.set_title(f'k={k} {label}\ns={sk.real:.3f}{sk.imag:+.3f}j', fontsize=6)
+        ax.axis('off')
+        plt.colorbar(im2, ax=ax, shrink=0.8, pad=0.02)
+
+# hide leftover axes
+for k in range(K, nrows_k * ncols_k):
+    row, col = divmod(k, ncols_k)
+    axes2[row, col, 0].axis('off')
+    axes2[row, col, 1].axis('off')
+
+fig2.suptitle(f'Laplace transform Re/Im at K={K} frequencies', fontsize=11)
+plt.tight_layout()
+out_path2 = os.path.join("plots", "laplace_spectrum_all_k.png")
+plt.savefig(out_path2, dpi=150, bbox_inches='tight')
+plt.show()
+print(f"Figure saved → {out_path2}")
 
 # ---------------------------------------------------------------------------
 # GIF
