@@ -227,7 +227,7 @@ lr = 5e-3
 n_epochs = 200
 case_chunk = 10   # cases per checkpoint call
 sp_chunk   = 2000  # spatial points per Gram-accumulation step
-initial_s = path_bromwich(K, gamma=gamma)
+initial_s = path_log_reel(K, Nt*dt, dt)  # logarithmic path parallel to real axis, with small imag part for stability
 print(f"Initial s points: {', '.join(f'{z:.4f}' for z in initial_s)}")
 
 device  = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -316,7 +316,7 @@ for epoch in pbar:
     amp     = amplification_factor(LU, pivots, F_full)
     ae      = ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=sp_chunk)
     var_los = amp * ae / lambda_ae
-    loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff) / (lambda_diff + 1.0) + var_los
+    loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff) + var_los
     loss.backward()
 
     torch.nn.utils.clip_grad_norm_([s_list, lam, alpha_t], max_norm=1.0)
@@ -385,22 +385,22 @@ for k, (a, b) in enumerate(zip(si, so)):
 sc0 = ax.scatter(si.real, si.imag, c=np.arange(K), cmap='plasma',
                  s=60, marker='o', zorder=3, label='Initial')
 sc1 = ax.scatter(so.real, so.imag, c=np.arange(K), cmap='plasma',
-                 s=100, marker='*', zorder=4, label='Optimisé')
+                 s=100, marker='*', zorder=4, label='Optimized')
 plt.colorbar(sc1, ax=ax, label='k')
 ax.axhline(0, color='gray', lw=0.5); ax.axvline(0, color='gray', lw=0.5)
 ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
-ax.set_title('s-points : initial → optimisé'); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+ax.set_title('s-points: initial → optimized'); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
 fig.tight_layout()
 wandb.log({"final/s_points_trajectory": wandb.Image(fig)}, step=n_epochs)
 plt.close(fig)
 
 fig, ax = plt.subplots(figsize=(6, 4))
 ax.hist(l2rel_init, bins=30, alpha=0.6, color='steelblue',
-        label=f'Initial   méd={np.median(l2rel_init):.2%}')
+        label=f'Initial    med={np.median(l2rel_init):.2%}')
 ax.hist(l2rel_opt,  bins=30, alpha=0.6, color='tomato',
-        label=f'Optimisé  méd={np.median(l2rel_opt):.2%}')
+        label=f'Optimized  med={np.median(l2rel_opt):.2%}')
 ax.set_xlabel('L2 relative error'); ax.set_ylabel('Count')
-ax.set_title('Distribution L2rel : initial vs optimisé')
+ax.set_title('L2rel distribution: initial vs optimized')
 ax.legend(); ax.grid(True, alpha=0.3)
 fig.tight_layout()
 wandb.log({"final/l2rel_histogram": wandb.Image(fig)}, step=n_epochs)
@@ -412,21 +412,21 @@ v_final = V_recon_opt[0, node].detach().cpu().numpy()
 e_i = np.linalg.norm(v_init  - v_true) / (np.linalg.norm(v_true) + 1e-12)
 e_f = np.linalg.norm(v_final - v_true) / (np.linalg.norm(v_true) + 1e-12)
 fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-axes[0].plot(t_ax, v_true,  'k',         lw=1.5, label='Vrai')
-axes[0].plot(t_ax, v_init,  'steelblue', lw=1.2, ls='--', label=f'Initial  L2={e_i:.2%}')
-axes[0].plot(t_ax, v_final, 'tomato',    lw=1.2, ls='--', label=f'Optimisé L2={e_f:.2%}')
+axes[0].plot(t_ax, v_true,  'k',         lw=1.5, label='True')
+axes[0].plot(t_ax, v_init,  'steelblue', lw=1.2, ls='--', label=f'Initial   L2={e_i:.2%}')
+axes[0].plot(t_ax, v_final, 'tomato',    lw=1.2, ls='--', label=f'Optimized L2={e_f:.2%}')
 axes[0].set_xlabel('t'); axes[0].set_ylabel('CH4')
-axes[0].set_title('Série temporelle'); axes[0].legend(fontsize=8); axes[0].grid(True, alpha=0.3)
+axes[0].set_title('Time series'); axes[0].legend(fontsize=8); axes[0].grid(True, alpha=0.3)
 axes[1].plot(t_ax, v_true - v_init,  'steelblue', lw=1.2,
-             label=f'Résidu initial  rms={np.std(v_true - v_init):.2e}')
+             label=f'Initial residual   rms={np.std(v_true - v_init):.2e}')
 axes[1].plot(t_ax, v_true - v_final, 'tomato',    lw=1.2,
-             label=f'Résidu optimisé rms={np.std(v_true - v_final):.2e}')
+             label=f'Optimized residual rms={np.std(v_true - v_final):.2e}')
 axes[1].axhline(0, color='gray', lw=0.5)
-axes[1].set_xlabel('t'); axes[1].set_ylabel('Résidu')
-axes[1].set_title('Résidus temporels'); axes[1].legend(fontsize=8); axes[1].grid(True, alpha=0.3)
+axes[1].set_xlabel('t'); axes[1].set_ylabel('Residual')
+axes[1].set_title('Temporal residuals'); axes[1].legend(fontsize=8); axes[1].grid(True, alpha=0.3)
 fig.tight_layout()
 wandb.log({"final/reconstruction": wandb.Image(fig)}, step=n_epochs)
 plt.close(fig)
 
 wandb.finish()
-print("Run wandb terminé.")
+print("wandb run finished.")
