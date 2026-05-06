@@ -1,0 +1,333 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{amsmath, amsthm, amssymb}
+\usepackage{mathtools}
+\usepackage{geometry}
+\usepackage{hyperref}
+
+\geometry{margin=2.5cm}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{assumption}{Assumption}[section]
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\norm}[1]{\left\|#1\right\|}
+\newcommand{\abs}[1]{\left|#1\right|}
+\newcommand{\inner}[2]{\left\langle #1,\, #2 \right\rangle}
+
+\title{%
+  Contour Optimization via Bias--Variance Trade-off\\
+  for Regularised Laplace Inversion
+}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document derives rigorously the bias--variance decomposition of the total reconstruction error for a Laplace-domain neural surrogate model combined with a regularised inversion step. Using this theoretical framework, we formulate an optimization problem to find the optimal integration contour frequencies that minimize the expected error. We also discuss approximating the surrogate error using the mean Singular Value Decomposition (SVD) residual.
+\end{abstract}
+
+\tableofcontents
+\newpage
+\section{Introduction}
+
+We present a theoretical and practical framework for optimizing the integration contour used in the inverse Laplace transform. Our approach relies on a two-step prediction pipeline:
+\begin{enumerate}
+    \item \textbf{Surrogate Prediction:} Given a set of simulation parameters $\theta$, a neural surrogate model (typically an Autoencoder with a bottleneck latent dimension of $r$) predicts the corresponding system state directly in the complex Laplace domain, outputting the predicted Laplace coefficients $\hat{\mathbf{u}}(\theta)$ on a certain contour $\mathbf{s} = (s_1, \dots, s_K)$ that we want to optimize. The number of frequencies $K$ is smaller than the number of time steps $N_t$, $K << N_t$.
+    \item \textbf{Regularised Reconstruction:} A regularised inverse Laplace transform is then applied to these predicted coefficients $\hat{\mathbf{u}}(\theta)$ to reconstruct the optimal transient physical field $\hat{\mathbf{v}}^*(\theta)$ in the real space-time domain.
+\end{enumerate}
+
+The primary goal of this document is to formalise the total reconstruction error $\mathbf{v} - \hat{\mathbf{v}}^*$ and decompose it into a \emph{bias} term (introduced by regularisation and the finite integration contour) and a \emph{variance} term (representing the surrogate's prediction error $\mathbf{u} - \hat{\mathbf{u}}$ propagated through the inversion process). By doing so, we can jointly optimize the contour frequencies $\mathbf{s}$ and the regularisation hyperparameters to minimize the mean reconstruction error over a given dataset.
+
+\paragraph{Notation Convention.} Throughout this document, we adhere to the following consistent notational rules:
+\begin{itemize}
+    \item Variables representing physical quantities in the real space-time domain are denoted by $\mathbf{v}$.
+    \item Variables representing quantities in the complex Laplace domain are denoted by $\mathbf{u}$ or $\mathbf{U}$.
+    \item The superscript asterisk ($^*$) designates the optimal solution to an equation or an optimization problem (e.g., the reconstructed field $\mathbf{v}^*$).
+    \item The circumflex accent ($\hat{\cdot}$) designates a quantity that is predicted or approximated by a model (e.g., the neural surrogate prediction $\hat{\mathbf{u}}$, or the SVD approximation $\hat{\mathbf{U}}_k$).
+    \item The superscript ($^H$) denotes the Hermitian (conjugate) transpose of a matrix or operator.
+    \item $\norm{\cdot}_F$ denotes the Frobenius norm of a matrix.
+\end{itemize}
+
+
+
+\section{Governing Equations and Coercivity}
+
+Our neural surrogate model is designed to emulate the transient dynamics of a reacting flow system. The physical system is governed by a set of coupled partial differential equations representing the conservation of mass, momentum, energy, and chemical species. 
+
+\subsection{Physical Model}
+
+The dynamics of the fluid and the chemical reactions are described by the following equations:
+\begin{enumerate}
+    \item \textbf{Fluid Mechanics (Momentum):}
+    \begin{equation}
+        \frac{\partial(\rho \mathbf{U})}{\partial t} + \nabla \cdot (\rho \mathbf{U} \mathbf{U}) - \nabla \cdot \tau = -\nabla p + \rho \mathbf{g}
+    \end{equation}
+    \item \textbf{Chemical Species Transport:}
+    \begin{equation}
+        \label{eq:species_transport}
+        \frac{\partial(\rho Y_i)}{\partial t} + \nabla \cdot (\rho \mathbf{U} Y_i) - \nabla \cdot (\mu_{\mathrm{eff}} \nabla Y_i) = \dot{\omega}_{i, \mathrm{eff}}
+    \end{equation}
+    under the constraint $\sum Y_i = 1$.
+    \item \textbf{Energy:}
+    \begin{equation}
+        \frac{\partial(\rho h)}{\partial t} + \nabla \cdot (\rho \mathbf{U} h) + \frac{\partial(\rho K)}{\partial t} + \nabla \cdot (\rho \mathbf{U} K) - \frac{\partial p}{\partial t} - \nabla \cdot (\alpha_{\mathrm{eff}} \nabla h) = \dot{q}_{\mathrm{chem}}
+    \end{equation}
+    where $K = \frac{1}{2}|\mathbf{U}|^2$ is the kinetic energy.
+    \item \textbf{Combustion Model (PaSR):} The effective reaction rate is modulated by the Partially Stirred Reactor model:
+    \begin{equation}
+        \dot{\omega}_{i, \mathrm{eff}} = \kappa \dot{\omega}_i(c^*, T^*), \quad \text{with} \quad \kappa = \frac{\tau_c}{\tau_c + \tau_{\mathrm{mix}}}
+    \end{equation}
+    where $\tau_c$ and $\tau_{\mathrm{mix}}$ are the characteristic chemical and turbulent mixing times, respectively.
+    \item \textbf{Equation of State:} The ideal gas law closes the system:
+    \begin{equation}
+        p = \rho R T \quad \text{or} \quad \rho = \psi p \quad \text{with} \quad \psi = \frac{1}{RT}
+    \end{equation}
+\end{enumerate}
+
+\subsection{Convection-Diffusion Form and Coercivity}
+
+We are particularly interested in emulating the transport of the methane mass fraction, $Y_{\mathrm{CH}_4}$. Equation~\eqref{eq:species_transport} for CH$_4$ can be recast into a standard convection-diffusion-reaction form. Assuming the density $\rho$ variations are handled or quasi-steady, the spatial differential operator acting on the concentration field $Y = Y_{\mathrm{CH}_4}$ is:
+\begin{equation}
+    \mathcal{L}(Y) = \nabla \cdot (\rho \mathbf{U} Y) - \nabla \cdot (\mu_{\mathrm{eff}} \nabla Y)
+\end{equation}
+so that the evolution equation reads:
+\begin{equation}
+    \frac{\partial (\rho Y)}{\partial t} + \mathcal{L}(Y) = \dot{\omega}_{\mathrm{CH}_4, \mathrm{eff}}.
+\end{equation}
+
+\emph{TODO : améliorer}
+
+For the Laplace transform analysis to be well-posed, the spatial operator $\mathcal{L}$ must be coercive. The diffusion term $-\nabla \cdot (\mu_{\mathrm{eff}} \nabla Y)$ is uniformly elliptic due to the strictly positive effective viscosity/diffusivity ($\mu_{\mathrm{eff}} \geq \mu_{\min} > 0$). By Poincaré's inequality, this principal part is strongly coercive in $H_0^1(\Omega)$. 
+
+The convective term $\nabla \cdot (\rho \mathbf{U} Y)$ acts as a lower-order continuous perturbation. According to standard PDE theory, the combined convection-diffusion operator $\mathcal{L}$ remains strongly elliptic and coercive (often analyzed via a Gårding inequality). This implies that the spectrum of $\mathcal{L}$ is bounded from the right, meaning the eigenvalues have real parts strictly bounded above by some $-\lambda_1 < 0$. This fundamental property ensures that the unforced physical modes decay exponentially, confirming that the Laplace transform of the field is well-defined and analytic for $\mathrm{Re}(s) > -\lambda_1$.
+
+\section{Theoretical framework}
+
+\subsection{Discrete Mathematical Formulation}
+
+Let $\Omega \subset \R^d$ be the spatial domain, discretised on $N_x$ nodes
+$\{x_j\}_{j=1}^{N_x}$.
+Time is discretised on a uniform grid $t_n = n\Delta t$, $n = 0,\ldots,N_t-1$,
+with time step $\Delta t > 0$ and final time $T = (N_t-1)\Delta t$.
+
+For each simulation parameter $\theta \in \Theta$, the spatio-temporal field
+is represented as a vector $\mathbf{v}(\theta) \in \R^{N_x N_t}$,
+which is the flattened version of the space-time matrix $V_{j,n}(\theta) = U(x_j, t_n;\theta)$.
+
+Fix $K$ complex frequencies $s_1,\ldots,s_K \in \C$ with
+$\mathrm{Re}(s_k) > -\lambda_1$ for all $k$, where $\lambda_1 > 0$ is the
+coercivity constant of the spatial operator. The \emph{Laplace matrix} $\mathbf{F} \in \C^{K \times N_t}$ is defined by
+\begin{equation}
+  \label{eq:F_def}
+  F_{k,n} \;=\; \Delta t \cdot w_n \cdot e^{-s_k t_n},
+  \qquad k = 1,\ldots,K,\quad n = 0,\ldots,N_t-1,
+\end{equation}
+where $w_n$ are quadrature weights. The discrete Laplace transform is applied along the temporal dimension for each spatial node. We define the spatio-temporal Laplace operator $\mathbf{F}_{st} = \mathbf{I}_{N_x} \otimes \mathbf{F} \in \C^{N_x K \times N_x N_t}$. The exact Laplace coefficients are given by $\mathbf{u} = \mathbf{F}_{st}\mathbf{v} \in \C^{N_x K}$.
+
+The neural surrogate predicts $\hat{\mathbf{u}} \in \C^{N_x K}$.
+We reconstruct $\hat{\mathbf{v}}^*$ by solving a
+regularised least-squares problem. We regularise the inversion using a discrete Sobolev loss that penalizes the amplitudes, the spatial gradients, and the temporal derivatives:
+\begin{equation}
+  \label{eq:inv_problem}
+  \hat{\mathbf{v}}^*(\theta)
+  \;=\;
+  \arg\min_{\mathbf{v} \in \R^{N_x N_t}}
+  \;\norm{\mathbf{F}_{st}\mathbf{v} - \hat{\mathbf{u}}(\theta)}_{\C^{N_x K}}^2
+  + \lambda \norm{\mathbf{v}}^2 + \alpha_x \norm{\mathbf{D}_x\mathbf{v}}^2 + \alpha_t \norm{\mathbf{D}_t\mathbf{v}}^2,
+\end{equation}
+where $\lambda > 0$ penalizes the amplitude, and $\alpha_x, \alpha_t \geq 0$ control the spatial and temporal smoothness respectively. $\mathbf{D}_x$ and $\mathbf{D}_t$ are the discrete first-difference operators in space and time. We can rewrite the regularisation term compactly as $\mathbf{v}^\top \mathbf{L}_{\mathrm{reg}} \mathbf{v}$, where $\mathbf{L}_{\mathrm{reg}} = \lambda \mathbf{I} + \alpha_x \mathbf{D}_x^H\mathbf{D}_x + \alpha_t \mathbf{D}_t^H\mathbf{D}_t$ is a symmetric positive-definite matrix.
+
+\begin{remark}
+  The constraint $\mathbf{v} \in \R^{N_x N_t}$ (real-valued reconstruction) is
+  handled by splitting $\mathbf{F}_{st} = \mathrm{Re}(\mathbf{F}_{st}) + i\,\mathrm{Im}(\mathbf{F}_{st})$
+  and forming the real augmented system.
+  For clarity of exposition we write the analysis in complex form; the
+  real-valued case follows identically by replacing $\C^{N_x K}$ with $\R^{2 N_x K}$.
+\end{remark}
+
+\subsection{Normal Equations and Closed-Form Solution}
+
+The optimality condition (normal equations) for \eqref{eq:inv_problem} is obtained by taking the gradient with respect to $\mathbf{v}$ and setting it to zero:
+\begin{align}
+  0 &= \frac{\partial}{\partial \mathbf{v}}
+  \left[
+    \norm{\mathbf{F}_{st}\mathbf{v} - \hat{\mathbf{u}}}^2
+    + \mathbf{v}^\top \mathbf{L}_{\mathrm{reg}} \mathbf{v}
+  \right] \notag \\
+  &= 2\,\mathbf{F}_{st}^H(\mathbf{F}_{st}\mathbf{v} - \hat{\mathbf{u}})
+     + 2\mathbf{L}_{\mathrm{reg}}\mathbf{v}. \notag
+\end{align}
+Rearranging gives the linear system:
+\begin{equation}
+  \label{eq:normal}
+  \underbrace{
+    \left(\mathbf{F}_{st}^H\mathbf{F}_{st}
+    + \mathbf{L}_{\mathrm{reg}}\right)
+  }_{=:\,\mathbf{A}}
+  \mathbf{v}^*
+  \;=\;
+  \mathbf{F}_{st}^H \hat{\mathbf{u}}.
+\end{equation}
+
+\begin{proposition}[Invertibility of $\mathbf{A}$]
+  \label{prop:invertible}
+  Since $\lambda > 0$ and $\mathbf{D}_x^H\mathbf{D}_x$, $\mathbf{D}_t^H\mathbf{D}_t$ are positive semi-definite, $\mathbf{L}_{\mathrm{reg}}$ is positive definite ($\mathbf{L}_{\mathrm{reg}} \succeq \lambda \mathbf{I}$). Thus, $\mathbf{A}$ is symmetric positive definite and hence invertible.
+\end{proposition}
+
+The unique reconstructed solution is therefore given directly by:
+\begin{equation}
+  \label{eq:solution}
+  \mathbf{v}^*(\theta)
+  \;=\;
+  \mathbf{A}^{-1}\mathbf{F}_{st}^H \hat{\mathbf{u}}(\theta).
+\end{equation}
+
+\subsection{Bias--Variance Decomposition}
+
+We decompose the total reconstruction error $\mathbf{v}(\theta) - \mathbf{v}^*(\theta)$ by introducing the \emph{exact} Laplace coefficients $\mathbf{u}(\theta) = \mathbf{F}_{st}\mathbf{v}(\theta)$. Adding and subtracting $\mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{u}(\theta)$:
+
+\begin{align}
+  \mathbf{v}(\theta) - \mathbf{v}^*(\theta)
+  &= \mathbf{v}(\theta)
+     - \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{F}_{st}\mathbf{v}(\theta)
+   + \mathbf{A}^{-1}\mathbf{F}_{st}^H
+       \bigl(\mathbf{u}(\theta) - \hat{\mathbf{u}}(\theta)\bigr).
+  \label{eq:decomp}
+\end{align}
+
+The first term is the \emph{bias} (due to the transformation and regularisation) and the second is the \emph{variance} (the surrogate error propagated through the inversion). Using the definition $\mathbf{A} = \mathbf{F}_{st}^H\mathbf{F}_{st} + \mathbf{L}_{\mathrm{reg}}$, we can simplify the bias term:
+\begin{equation}
+  \mathbf{v} - \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{F}_{st}\mathbf{v}
+  \;=\; \mathbf{A}^{-1}\bigl(\mathbf{A} - \mathbf{F}_{st}^H\mathbf{F}_{st}\bigr)\mathbf{v}
+  \;=\; \mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}.
+\end{equation}
+
+By taking the norm of \eqref{eq:decomp} and applying the triangle inequality along with the sub-multiplicativity of the operator norm for the variance term, we directly obtain the final upper bound:
+
+\begin{theorem}[Bias--variance bound]
+  \label{thm:bv}
+  For any $\theta \in \Theta$, the reconstruction error satisfies
+  \begin{equation}
+    \label{eq:bv_bound}
+    \norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}
+    \;\leq\;
+    \underbrace{
+      \norm{\mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}(\theta)}
+    }_{\text{regularisation bias}}
+    \;+\;
+    \underbrace{
+      \underbrace{\norm{\mathbf{A}^{-1}\mathbf{F}_{st}^H}}_{\text{amplification factor}} \cdot \underbrace{\norm{\mathbf{u}(\theta) - \hat{\mathbf{u}}(\theta)}_{\C^{N_x K}}}_{\text{surrogate error}}
+    }_{\text{propagated surrogate error}}.
+  \end{equation}
+\end{theorem}
+
+\paragraph{Interpretation.}
+This decomposition clearly highlights the fundamental trade-off in regularised Laplace inversion. The \emph{regularisation bias} depends on the true field $\mathbf{v}$ and the regularisation operator $\mathbf{L}_{\mathrm{reg}}$, representing the error introduced by spatial and temporal smoothing. It is mitigated by the well-posedness of $\mathbf{A}^{-1}$. On the other hand, the \emph{propagated surrogate error} is driven by the predictive capability of the neural network in the Laplace domain. Crucially, any discrepancy $\mathbf{u} - \hat{\mathbf{u}}$ is magnified during reconstruction by the \emph{amplification factor} $\norm{\mathbf{A}^{-1}\mathbf{F}_{st}^H}$, which acts as a condition number for the inversion process.
+
+\section{Contour Optimization}
+
+\subsection{Optimization Problem Formulation}
+
+The matrices $\mathbf{F}_{st}$ and $\mathbf{L}_{\mathrm{reg}}$, and consequently the operator $\mathbf{A}$, depend explicitly on the choice of the complex frequencies $\mathbf{s} = \{s_1, \ldots, s_K\}$ defining the integration contour and coefficients $\alpha = (\alpha_x, \alpha_t)$ and $\lambda$.
+
+Therefore, we aim to jointly optimize $\mathbf{s}$, $\lambda$, and $\alpha$ to minimize the expected mean reconstruction error $\E_\theta\!\left[\norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}\right]$. Since evaluating this true error directly is challenging without ground truth for every instance, we treat these hyperparameters as learnable parameters and optimize a surrogate loss function $\mathcal{L}(\mathbf{s}, \lambda, \alpha)$. This loss is derived directly from the bias--variance upper bound :
+\begin{align}
+    \E_\theta\!\left[\norm{\mathbf{v}(\theta) - \mathbf{v}^*(\theta)}\right] \;&\leq\; \mathcal{L}(\mathbf{s}, \lambda, \alpha), \\
+    \mathcal{L}(\mathbf{s}, \lambda, \alpha) \;&=\; \mathcal{L}_{\mathrm{bias}}(\mathbf{s}, \lambda, \alpha) + \mathcal{L}_{\mathrm{var}}(\mathbf{s}, \lambda, \alpha),
+\end{align}
+where
+\begin{align}
+    \mathcal{L}_{\mathrm{bias}}(\mathbf{s}, \lambda, \alpha) &\;=\; \E_\theta\!\left[\norm{\mathbf{A}(\mathbf{s}, \lambda, \alpha)^{-1}\mathbf{L}_{\mathrm{reg}}(\lambda, \alpha)\mathbf{v}(\theta)}\right], \\
+    \mathcal{L}_{\mathrm{var}}(\mathbf{s}, \lambda, \alpha) &\;=\; \norm{\mathbf{A}(\mathbf{s}, \lambda, \alpha)^{-1}\mathbf{F}_{st}(\mathbf{s})^H} \cdot \epsilon_{\mathrm{surr}}(\mathbf{s}).
+\end{align}
+
+
+Where $\epsilon_{\mathrm{surr}}(\mathbf{s}) = \E_\theta\!\left[\norm{\mathbf{u}(\mathbf{s}) - \hat{\mathbf{u}}(\mathbf{s})}_{\C^{N_x K}}\right]$. By applying Jensen's inequality ($\E[\sqrt{X}] \leq \sqrt{\E[X]}$) to upper-bound this expected norm, we get:
+\begin{equation}
+    \epsilon_{\mathrm{surr}}(\mathbf{s}) \;\leq\; \sqrt{ \E_\theta\!\left[\norm{\mathbf{u}(\mathbf{s}) - \hat{\mathbf{u}}(\mathbf{s})}_{\C^{N_x K}}^2\right] } \;=\; \sqrt{ \sum_{s_k \in \mathbf{s}} \E_\theta\!\left[\norm{\mathbf{u}(s_k) - \hat{\mathbf{u}}(s_k)}_{\C^{N_x}}^2\right] }.
+\end{equation}
+During the contour optimization phase, training a full neural surrogate for every proposed contour $\mathbf{s}$ is computationally intractable. We thus need a fast and reliable proxy to evaluate this expected per-frequency surrogate error.
+
+We propose to approximate the Autoencoder (AE) surrogate error independently for each frequency using the mean Singular Value Decomposition (SVD) residual error.
+
+\subsection{Approximating the Surrogate Error via SVD Residual}
+
+\subsubsection{Optimal Linear Surrogate Baseline}
+
+For any specific frequency $s_i \in \mathbf{s}$, let us first rigorously derive the optimal expected error if the surrogate were restricted to linear predictions. Let $\mathbf{U}^{(s_i)} \in \C^{N_x \times |\Theta|}$ be the dataset matrix formed by stacking the exact spatial Laplace coefficients $\mathbf{u}(s_i, \theta)$ across all simulation instances $\theta \in \Theta$. 
+
+If we use a linear surrogate $\hat{\mathbf{u}}_{\mathrm{lin}}$ with a latent dimension (rank) of $r$, evaluating its expected squared error over the dataset $\Theta$ is equivalent to computing the mean of the squared Euclidean norms of its column-wise errors:
+\begin{equation}
+    \E_{\theta \in \Theta}\!\left[\norm{\mathbf{u}(s_i, \theta) - \hat{\mathbf{u}}_{\mathrm{lin}}(s_i, \theta)}^2\right] \;=\; \frac{1}{|\Theta|} \sum_{m=1}^{|\Theta|} \norm{\mathbf{u}(s_i, \theta_m) - \hat{\mathbf{u}}_{\mathrm{lin}}(s_i, \theta_m)}_{\C^{N_x}}^2 \;=\; \frac{1}{|\Theta|} \norm{\mathbf{U}^{(s_i)} - \hat{\mathbf{U}}_{\mathrm{lin}}^{(s_i)}}_F^2
+\end{equation}
+
+The minimum for this squared Frobenius norm among all rank-$r$ approximations $\hat{\mathbf{U}}$ is achieved by the truncated Singular Value Decomposition (SVD), and is exactly equal to the sum of the discarded squared singular values, $\sigma_j^{(s_i)}$, for $j > r$. Consequently, the optimal linear baseline $\mathcal{E}_{\mathrm{SVD}}(s_i)$ is given by:
+\begin{equation}
+    \mathcal{E}_{\mathrm{SVD}}(s_i) \;=\; \sqrt{ \min_{\mathrm{rank}(\hat{\mathbf{U}}) \leq r} \frac{1}{|\Theta|} \norm{\mathbf{U}^{(s_i)} - \hat{\mathbf{U}}}_F^2 } \;=\; \sqrt{ \frac{1}{|\Theta|} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 }.
+\end{equation}
+We thus define the global SVD error for the contour $\mathbf{s}$ as:
+\begin{equation}
+    \mathcal{E}_{\mathrm{SVD}}(\mathbf{s}) \;=\; \sqrt{ \sum_{s_i \in \mathbf{s}} \mathcal{E}_{\mathrm{SVD}}(s_i)^2 } = \sqrt{\frac{1}{|\Theta|}\sum_{s_i \in \mathbf{s}} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 }.
+\end{equation}
+This establishes the fundamental lower bound for the expected error of any linear surrogate of latent dimension $r$.
+
+\subsubsection{Generalization to Non-Linear Autoencoders}
+
+We now generalize this concept to our non-linear Autoencoder (AE) surrogate. Because the neural surrogate is independently evaluated for each frequency, we analyze the generalization bound $s$ by $s$. An Autoencoder with non-linear activations structurally generalizes the linear PCA/SVD approach. Theoretically, if the neural network has a bottleneck latent dimension of $r$, its expected prediction error $\epsilon_{\mathrm{AE}}(s_i)$ should be upper-bounded by the optimal linear baseline $\mathcal{E}_{\mathrm{SVD}}(s_i)$ at that exact same frequency:
+\begin{equation}
+    \epsilon_{\mathrm{AE}}(s_i) \;\leq\; \mathcal{E}_{\mathrm{SVD}}(s_i).
+\end{equation}
+and thus
+\begin{equation}
+    \epsilon_{\mathrm{AE}}(\mathbf{s}) \;\leq\; \mathcal{E}_{\mathrm{SVD}}(\mathbf{s}).
+\end{equation}
+
+\begin{proof}[Proof Sketch]
+Consider an Autoencoder trained on the spatial fields of frequency $s_i$, with an encoder $f_{\phi}$ and a decoder $g_{\psi}$ mapping to a latent dimension $r$. The hypothesis space of non-linear autoencoders inherently includes linear transformations. Let $W_{\mathrm{enc}}$ and $W_{\mathrm{dec}}$ represent the optimal linear projection matrices derived from the SVD of $\mathbf{U}^{(s_i)}$. By setting the network weights to these linear matrices and configuring the activation functions to operate in their locally linear regimes (e.g., identity for purely linear, or linear regions of ReLU), the AE can exactly replicate the SVD reconstruction. Since the AE is trained over a superset of linear functions, the optimal non-linear parameters should theoretically yield an expected error equal to or strictly less than the optimal linear parameters for that frequency.
+\end{proof}
+
+
+
+\subsubsection{Practical Implications}
+
+In practice, the actual AE error might differ slightly due to optimization challenges (local minima) or architectural constraints. However, for contour optimization, we are primarily interested in the \emph{relative} behavior of $\epsilon_{\mathrm{surr}}(\mathbf{s})$ with respect to $\mathbf{s}$ rather than its absolute value. The SVD residual is fast and deterministic to compute for any given contour $\mathbf{s}$, making it highly suitable for iterative optimization.
+
+To account for the enhanced expressivity of the non-linear Autoencoder over the linear SVD baseline, we introduce a scaling hyperparameter $\lambda_{\mathrm{AE}} \geq 1$. This factor represents our estimation of how much relatively better the Autoencoder will perform compared to the linear projection. Consequently, the proxy variance loss used in the actual optimization is scaled down by this factor:
+\begin{equation}
+    \mathcal{L}_{\mathrm{var}}^{\mathrm{proxy}}(\mathbf{s}, \lambda, \alpha) \;=\; \frac{\mathcal{L}_{\mathrm{var}}^{\mathrm{SVD}}(\mathbf{s}, \lambda, \alpha)}{\lambda_{\mathrm{AE}}}
+\end{equation}
+where $\mathcal{L}_{\mathrm{var}}^{\mathrm{SVD}}$ is evaluated using the SVD residual $\mathcal{E}_{\mathrm{SVD}}(\mathbf{s})$ in place of the true expected surrogate error $\epsilon_{\mathrm{surr}}(\mathbf{s})$.
+
+\subsection{Conclusion: The Final Proxy Objective}
+
+We can finally derive the final explicit proxy objective function used in our optimization routine:
+\begin{equation}
+    \boxed{ \mathcal{L}^{\mathrm{proxy}}(\mathbf{s}, \lambda, \alpha) \;=\; \frac{1}{|\Theta|} \sum_{\theta \in \Theta} \norm{\mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}(\theta)} + \frac{1}{\lambda_{\mathrm{AE}}} \norm{\mathbf{A}^{-1}\mathbf{F}_{st}^H} \cdot \sqrt{ \frac{1}{|\Theta|} \sum_{s_i \in \mathbf{s}} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 } }
+\end{equation}
+Where:
+\begin{itemize}
+    \item $\mathbf{v}(\theta) \in \R^{N_x N_t}$ is the exact transient physical field for the simulation instance $\theta \in \Theta$.
+    \item $\mathbf{F}_{st}(\mathbf{s})$ is the discrete spatio-temporal Laplace transform operator associated with the chosen contour frequencies $\mathbf{s}$.
+    \item $\mathbf{L}_{\mathrm{reg}}(\lambda, \alpha)$ is the regularisation penalty matrix, controlling amplitude ($\lambda$) and spatio-temporal smoothness ($\alpha_x, \alpha_t$).
+    \item $\mathbf{A} = \mathbf{F}_{st}^H\mathbf{F}_{st} + \mathbf{L}_{\mathrm{reg}}$ is the invertible system matrix of the normal equations. Thus, $\mathbf{A}^{-1}\mathbf{F}_{st}^H$ acts as the actual regularised Inverse Laplace Transform operator.
+    \item $\sigma_j^{(s_i)}$ are the singular values of the exact Laplace coefficients dataset matrix at frequency $s_i$. The square root term computes the global root-mean-square residual of the optimal linear SVD compression beyond the Autoencoder's bottleneck latent dimension $r$, serving as a worst-case upper bound proxy for the surrogate's prediction error.
+    \item $\lambda_{\mathrm{AE}} \geq 1$ is an empirical hyperparameter scaling down the SVD variance to account for the superior expressivity of the non-linear Autoencoder.
+\end{itemize}
+
+Minimizing this fully differentiable surrogate loss $\mathcal{L}^{\mathrm{proxy}}$ using gradient-based methods enables us to systematically discover optimal integration contours $\mathbf{s}$ and optimal regularisation penalties that minimize the inherent bias-variance trade-off. The validity of this approximation, specifically how tightly the AE error tracks the SVD residual across different contours, remains a subject to be benchmarked empirically.
+
+\end{document}
