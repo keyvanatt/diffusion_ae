@@ -5,6 +5,7 @@ This script uses AdamW to optimize the K points in C, minimizing the MSE between
 Memory strategy: forward + inverse Laplace are fused inside a single checkpoint per chunk
 of cases so U_hat (n_cases, N_spatial, K) is never fully materialized. The Gram matrix
 for ae_error is accumulated over spatial chunks to avoid storing full U_hat too.
+
 """
 
 import sys
@@ -40,7 +41,16 @@ def _compute_laplace_matrices(s_list, alpha_t, lam, w):
     FH     = torch.conj(F_full).T                                  # (Nt, K_full)
     FtF    = torch.real(FH @ F_full)                               # (Nt, Nt)
     A      = FtF + alpha_t * _DtTDt + lam * _eye_Nt
-    LU, pivots = torch.linalg.lu_factor(A)
+    try:
+        LU, pivots = torch.linalg.lu_factor(A)
+    except RuntimeError as e:
+        print("LU factorization failed:", e)
+        print("s_list:", s_list)
+        print("alpha_t:", alpha_t.item())
+        print("lam:", lam.item())
+        raise
+    if torch.isnan(LU).any() or torch.isinf(LU).any():
+        raise ValueError("LU factorization resulted in NaN or Inf, check matrix A.")
     return c_mask, F_full, FH, LU, pivots
 
 
@@ -78,6 +88,9 @@ def _fused_chunk(V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask):
     norm_err = torch.norm(err_c, dim=(1, 2))
     norm_v   = torch.norm(V_c,   dim=(1, 2))
 
+    if torch.isnan(norm_err).any() or torch.isinf(norm_err).any():
+        raise ValueError("NaN or Inf detected in error norms, check V_recon and V_c.")
+
     return torch.sum(err_c ** 2), torch.sum(diff_c ** 2), torch.sum(norm_err / norm_v)
 
 
@@ -88,7 +101,6 @@ def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
 
     Gram matrix G[k, i, j] = sum_spatial Re(U[i,sp,k] * conj(U[j,sp,k]))
     is accumulated over spatial chunks — memory = n_cases * sp_chunk * K * 8 B.
-    With sp_chunk=2000, n_cases=100, K=20 that is ~32 MB.
     """
     s_exp = torch.exp(-s_list[:, None] * t)          # (K, Nt)
     F_re  = (dt * w[None, :] * s_exp.real)            # (K, Nt)
@@ -112,14 +124,20 @@ def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
     r        = min(n_latent, n)
     tail_sq  = ev[:, :n - r].sum(dim=-1)
     total_sq = ev.sum(dim=-1)
-    return (tail_sq / total_sq.clamp(min=1e-30)).sqrt().mean()
+    error = (tail_sq.clamp(min=1e-10) / total_sq.clamp(min=1e-10)).sqrt().mean()
+    if torch.isnan(error) or torch.isinf(error):
+        raise ValueError("AE error computation resulted in NaN or Inf, check eigenvalues.")
+    return error
 
 
 def amplification_factor(LU, pivots, F_full):
     FH     = torch.conj(F_full).T
     amp_re = torch.linalg.lu_solve(LU, pivots, FH.real)
     amp_im = torch.linalg.lu_solve(LU, pivots, FH.imag)
-    return torch.linalg.matrix_norm(torch.cat([amp_re, amp_im], dim=0), ord='fro')
+    result = torch.linalg.matrix_norm(torch.cat([amp_re, amp_im], dim=0), ord='fro')
+    if torch.isnan(result) or torch.isinf(result):
+        raise ValueError("Amplification factor is NaN or Inf, check LU solve outputs.")
+    return result
 
 
 @torch.no_grad()
@@ -165,11 +183,24 @@ def _log_s_scatter(s_cur, s_ref, epoch):
                s=80, marker='*', zorder=4, label='current')
     ax.axhline(0, color='gray', lw=0.5); ax.axvline(0, color='gray', lw=0.5)
     ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
+    ax.grid(True, alpha=0.3);
+    ax.set_xscale('symlog', linthresh=1e-3)
     ax.set_title(f's-points  epoch {epoch}'); ax.legend(fontsize=7)
     fig.tight_layout()
     img = wandb.Image(fig)
     plt.close(fig)
     return img
+
+def _log_s_text(s_list):
+    s_str = ", ".join(f"{z.real:.4f}+{z.imag:.4f}j" for z in s_list.detach().cpu().numpy().tolist())
+    return wandb.Html(f"<pre style='font-family: monospace; white-space: pre-wrap;'>[{s_str}]</pre>")
+
+def path_log_reel(K,T,dt, eps_im = 1e-3):
+    """Path logarithmique parallèle à l'axe réel, avec espacement log entre eps et 1/dt."""
+    s_max = 10.0 / dt
+    s_min = 1.0/T
+    return torch.logspace(np.log10(s_min), np.log10(s_max), K, dtype=torch.float64) + eps_im * 1j
+
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +210,7 @@ Nt      = 150
 dt      = 1.0
 K       = 20
 gamma   = 0.0
-lambda_diff = 2.0
+lambda_diff = 0.5
 step     = 1
 t_frame  = 50
 seed = 42
@@ -188,9 +219,11 @@ n_latent = 64
 lambda_ae = 1.25
 gamma_min = -0.05
 lr = 5e-3
-n_epochs = 100
-case_chunk = 2   # cases per checkpoint call
+n_epochs = 200
+case_chunk = 10   # cases per checkpoint call
 sp_chunk   = 2000  # spatial points per Gram-accumulation step
+initial_s = path_log_reel(K, Nt, dt)
+print(f"Initial s points: {', '.join(f'{z:.4f}' for z in initial_s)}")
 
 device  = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t       = torch.arange(Nt, dtype=torch.float64, device=device) * dt
@@ -207,10 +240,9 @@ wandb.init(
                 case_chunk=case_chunk, sp_chunk=sp_chunk),
 )
 
-initial_s = path_bromwich(K, gamma=gamma)
-s_list  = torch.tensor(initial_s, dtype=torch.cdouble, device=device).requires_grad_(True)
-lam     = torch.tensor(1e-8, dtype=torch.float64,  device=device).requires_grad_(True)
-alpha_t = torch.tensor(1e-8, dtype=torch.float64,  device=device).requires_grad_(True)
+s_list  = initial_s.detach().clone().to(device).requires_grad_(True).type(torch.complex128)
+lam     = torch.tensor(1e-3, dtype=torch.float64,  device=device).requires_grad_(True)
+alpha_t = torch.tensor(1e-3, dtype=torch.float64,  device=device).requires_grad_(True)
 
 data_path = os.path.join("dataset", "CH4.npy")
 C_full = np.load(data_path, mmap_mode='r')
@@ -267,7 +299,7 @@ for epoch in pbar:
             _fused_chunk,
             V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask,
             use_reentrant=False,
-        )
+        ) # type: ignore
         sq_err    = sq_err    + sq_e
         sq_diff   = sq_diff   + sq_d
         sum_l2rel = sum_l2rel + l2r
@@ -287,8 +319,8 @@ for epoch in pbar:
 
     with torch.no_grad():
         s_list.real.clamp_(min=gamma_min)
-        lam.clamp_(min=1e-10, max=1e-2)
-        alpha_t.clamp_(min=1e-10, max=1e-2)
+        lam.clamp_(min=1e-6, max=1e-1)
+        alpha_t.clamp_(min=1e-6, max=1e-1)
         s_list.imag.clamp_(min=0)
 
     l2rel_val = (sum_l2rel / n_cases).item()
@@ -315,6 +347,7 @@ for epoch in pbar:
         "params/lam":      lam.item(),
         "params/alpha_t":  alpha_t.item(),
     }
+    log["s_points/text"] = _log_s_text(s_list)
 
     if epoch % 10 == 0 or epoch == n_epochs - 1:
         log["s_points/scatter"] = _log_s_scatter(s_list, s_init, epoch)
@@ -331,13 +364,13 @@ with torch.no_grad():
     ).cpu().numpy()
 
 print("Optimized s points:", ", ".join(
-    f"{z.real:.4f}+{z.imag:.4f}j" for z in s_opt.numpy().tolist()))
+    f"{z.real:.4f}+{z.imag:.4f}j" for z in s_opt.detach().cpu().numpy().tolist()))
 print("Optimized lam: ", lam.item())
 print("Optimized alpha_t: ", alpha_t.item())
 
 # ── Figures finales loggées sur wandb ─────────────────────────────────────────
 fig, ax = plt.subplots(figsize=(7, 5))
-si, so = s_init.numpy(), s_opt.numpy()
+si, so = s_init.detach().cpu().numpy(), s_opt.detach().cpu().numpy()
 cmap = plt.cm.plasma
 for k, (a, b) in enumerate(zip(si, so)):
     col = cmap(k / max(K - 1, 1))
