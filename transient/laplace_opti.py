@@ -23,7 +23,7 @@ from tqdm import tqdm
 def path_bromwich(K, gamma=0.0):
     """Bromwich: horizontal line at Re(s)=gamma, linearly spaced omega."""
     omega = 2 * np.pi * np.fft.rfftfreq(Nt, d=dt)[:K]
-    return gamma + 1j * omega
+    return torch.tensor(gamma) + 1j * torch.tensor(omega)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,11 @@ def _fused_chunk(V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask):
     are recomputed during backward instead of stored.
 
     V_c : (cc, N_spatial, Nt)  float64, no grad
-    Returns: (sq_err, sq_diff, sum_l2rel)  three scalar float64 tensors.
+    Returns: (sum_norm_err, sum_norm_diff, sum_l2rel)  three scalar float64 tensors.
+
+    sum_norm_err  = Σ_c ‖A^{-1} L_reg v_c‖      (absolute bias, brouillon §4)
+    sum_norm_diff = Σ_c ‖Δ_t err_c‖             (temporal diff heuristic, absolute)
+    sum_l2rel     = Σ_c ‖err_c‖/‖v_c‖           (relative error, for monitoring only)
     """
     cc, N_spatial, _ = V_c.shape
 
@@ -81,17 +85,18 @@ def _fused_chunk(V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask):
     RHS       = FH_re @ U_flat_re.T - FH_im @ U_flat_im.T   # (Nt, cc*N_spatial)
     V_recon_c = torch.linalg.lu_solve(LU, pivots, RHS).T.reshape(cc, N_spatial, -1)
 
-    # Loss terms
+    # Bias: err_c = v* - v = -A^{-1} L_reg v  (exact bias when surrogate is perfect)
     err_c  = V_recon_c - V_c
     diff_c = err_c[:, :, 1:] - err_c[:, :, :-1]
 
-    norm_err = torch.norm(err_c, dim=(1, 2))
-    norm_v   = torch.norm(V_c,   dim=(1, 2))
+    norm_err  = torch.norm(err_c,  dim=(1, 2))   # (cc,) — per-case bias norm
+    norm_diff = torch.norm(diff_c, dim=(1, 2))   # (cc,) — per-case temporal diff norm
+    norm_v    = torch.norm(V_c,    dim=(1, 2))   # (cc,) — for l2rel monitoring only
 
     if torch.isnan(norm_err).any() or torch.isinf(norm_err).any():
         raise ValueError("NaN or Inf detected in error norms, check V_recon and V_c.")
 
-    return torch.sum(err_c ** 2), torch.sum(diff_c ** 2), torch.sum(norm_err / norm_v)
+    return torch.sum(norm_err), torch.sum(norm_diff), torch.sum(norm_err / norm_v)
 
 
 def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
@@ -119,12 +124,12 @@ def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
         G += (torch.einsum('isk,jsk->kij', U_re_sp, U_re_sp) +
               torch.einsum('isk,jsk->kij', U_im_sp, U_im_sp))
 
-    ev       = torch.linalg.eigvalsh(G)               # (K, n_cases)
-    n        = ev.shape[-1]
-    r        = min(n_latent, n)
-    tail_sq  = ev[:, :n - r].sum(dim=-1)
-    total_sq = ev.sum(dim=-1)
-    error = (tail_sq.clamp(min=1e-10) / total_sq.clamp(min=1e-10)).sqrt().mean()
+    ev      = torch.linalg.eigvalsh(G)               # (K, n_cases); ev[k,j] = σ_j^{(k)²}
+    n       = ev.shape[-1]
+    r       = min(n_latent, n)
+    tail_sq = ev[:, :n - r].sum(dim=-1)              # (K,) — Σ_{j>r} σ_j² per freq
+    # E_SVD(s) = sqrt(1/|Θ| · Σ_k Σ_{j>r} σ_j²) (cf papier)
+    error   = torch.sqrt(tail_sq.sum().clamp(min=1e-20) / n)
     if torch.isnan(error) or torch.isinf(error):
         raise ValueError("AE error computation resulted in NaN or Inf, check eigenvalues.")
     return error
@@ -222,7 +227,7 @@ lr = 5e-3
 n_epochs = 200
 case_chunk = 10   # cases per checkpoint call
 sp_chunk   = 2000  # spatial points per Gram-accumulation step
-initial_s = path_log_reel(K, Nt, dt)
+initial_s = path_bromwich(K, gamma=gamma)
 print(f"Initial s points: {', '.join(f'{z:.4f}' for z in initial_s)}")
 
 device  = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -237,7 +242,8 @@ wandb.init(
     config=dict(K=K, Nt=Nt, dt=dt, gamma=gamma, lambda_diff=lambda_diff,
                 step=step, n_cases=n_cases, n_latent=n_latent, lambda_ae=lambda_ae,
                 gamma_min=gamma_min, lr_init=lr, n_epochs=n_epochs, seed=seed,
-                case_chunk=case_chunk, sp_chunk=sp_chunk),
+                case_chunk=case_chunk, sp_chunk=sp_chunk,
+                alpha_x=0, bias_formula="mean_abs"), 
 )
 
 s_list  = initial_s.detach().clone().to(device).requires_grad_(True).type(torch.complex128)
@@ -261,8 +267,7 @@ optimizer = torch.optim.AdamW([s_list, lam, alpha_t], lr=lr, weight_decay=1e-4)
 w = torch.ones(Nt, dtype=torch.float64, device=device); w[0] = 0.5; w[-1] = 0.5
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
-norm_V_tensor  = torch.norm(V_tensor)
-norm_diff_V    = torch.norm(V_tensor[:, :, 1:] - V_tensor[:, :, :-1])
+norm_V_tensor  = torch.norm(V_tensor)   # kept for baseline logging only
 
 # ── Baseline avant optimisation ───────────────────────────────────────────────
 s_init = s_list.detach().clone()
@@ -289,23 +294,24 @@ for epoch in pbar:
     F_re, F_im   = F_base.real, F_base.imag
     FH_re, FH_im = FH.real, FH.imag
 
-    sq_err     = torch.zeros(1, dtype=torch.float64, device=device)
-    sq_diff    = torch.zeros(1, dtype=torch.float64, device=device)
-    sum_l2rel  = torch.zeros(1, dtype=torch.float64, device=device)
+    sum_norm_err  = torch.zeros(1, dtype=torch.float64, device=device)
+    sum_norm_diff = torch.zeros(1, dtype=torch.float64, device=device)
+    sum_l2rel     = torch.zeros(1, dtype=torch.float64, device=device)
 
     for i in range(0, n_cases, case_chunk):
         V_c = V_tensor[i:i + case_chunk]   # no grad — only s_list/lam/alpha_t require grad
-        sq_e, sq_d, l2r = checkpoint.checkpoint(
+        ne, nd, l2r = checkpoint.checkpoint(
             _fused_chunk,
             V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask,
             use_reentrant=False,
         ) # type: ignore
-        sq_err    = sq_err    + sq_e
-        sq_diff   = sq_diff   + sq_d
-        sum_l2rel = sum_l2rel + l2r
+        sum_norm_err  = sum_norm_err  + ne
+        sum_norm_diff = sum_norm_diff + nd
+        sum_l2rel     = sum_l2rel     + l2r
 
-    biais_loss_l2   = torch.sqrt(sq_err)   / norm_V_tensor
-    biais_loss_diff = torch.sqrt(sq_diff)  / norm_diff_V
+    # L_bias = (1/n) Σ_c ‖A^{-1} L_reg v_c‖  (brouillon §4, absolu)
+    biais_loss_l2   = sum_norm_err  / n_cases
+    biais_loss_diff = sum_norm_diff / n_cases
 
     amp     = amplification_factor(LU, pivots, F_full)
     ae      = ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=sp_chunk)
@@ -319,8 +325,8 @@ for epoch in pbar:
 
     with torch.no_grad():
         s_list.real.clamp_(min=gamma_min)
-        lam.clamp_(min=1e-6, max=1e-1)
-        alpha_t.clamp_(min=1e-6, max=1e-1)
+        lam.clamp_(min=1e-6, max=1.0)
+        alpha_t.clamp_(min=1e-6, max=1.0)
         s_list.imag.clamp_(min=0)
 
     l2rel_val = (sum_l2rel / n_cases).item()
