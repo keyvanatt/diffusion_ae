@@ -85,18 +85,34 @@ def _fused_chunk(V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask):
     RHS       = FH_re @ U_flat_re.T - FH_im @ U_flat_im.T   # (Nt, cc*N_spatial)
     V_recon_c = torch.linalg.lu_solve(LU, pivots, RHS).T.reshape(cc, N_spatial, -1)
 
-    # Bias: err_c = v* - v = -A^{-1} L_reg v  (exact bias when surrogate is perfect)
+    # Bias: err_c = v* - v
     err_c  = V_recon_c - V_c
-    diff_c = err_c[:, :, 1:] - err_c[:, :, :-1]
+    # Différence temporelle
+    diff_t = err_c[:, :, 1:] - err_c[:, :, :-1]
 
-    norm_err  = torch.norm(err_c,  dim=(1, 2))   # (cc,) — per-case bias norm
-    norm_diff = torch.norm(diff_c, dim=(1, 2))   # (cc,) — per-case temporal diff norm
-    norm_v    = torch.norm(V_c,    dim=(1, 2))   # (cc,) — for l2rel monitoring only
+    # Différence spatiale
+    # On redimensionne l'erreur pour retrouver la topologie 2D (cc, H, W, Nt)
+    err_2d = err_c.reshape(cc, H_sub, W_sub, -1)
+    
+    # Gradients spatiaux via différences finies
+    diff_x = err_2d[:, 1:, :, :] - err_2d[:, :-1, :, :]
+    diff_y = err_2d[:, :, 1:, :] - err_2d[:, :, :-1, :]
 
-    if torch.isnan(norm_err).any() or torch.isinf(norm_err).any():
-        raise ValueError("NaN or Inf detected in error norms, check V_recon and V_c.")
+    # Normes
+    norm_err    = torch.norm(err_c,  dim=(1, 2))
+    norm_diff_t = torch.norm(diff_t, dim=(1, 2))
+    
+    # Norme de Frobenius des gradients spatiaux (somme des normes partielles)
+    norm_diff_x = diff_x.flatten(1).norm(dim=1)
+    norm_diff_y = diff_y.flatten(1).norm(dim=1)
+    norm_diff_s = norm_diff_x + norm_diff_y # Approximation robuste de ||∇(err)||
 
-    return torch.sum(norm_err), torch.sum(norm_diff), torch.sum(norm_err / norm_v)
+    norm_v = torch.norm(V_c, dim=(1, 2))
+
+    return (torch.sum(norm_err), 
+            torch.sum(norm_diff_t), 
+            torch.sum(norm_diff_s), 
+            torch.sum(norm_err / norm_v))
 
 
 def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
@@ -124,14 +140,16 @@ def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
         G += (torch.einsum('isk,jsk->kij', U_re_sp, U_re_sp) +
               torch.einsum('isk,jsk->kij', U_im_sp, U_im_sp))
 
-    ev      = torch.linalg.eigvalsh(G)               # (K, n_cases); ev[k,j] = σ_j^{(k)²}
+    G_global = G.sum(dim=0)                          # (n_cases, n_cases)
+
+    #  On fait une seule diagonalisation
+    ev      = torch.linalg.eigvalsh(G_global)        # (n_cases,)
     n       = ev.shape[-1]
     r       = min(n_latent, n)
-    tail_sq = ev[:, :n - r].sum(dim=-1)              # (K,) — Σ_{j>r} σ_j² per freq
-    # E_SVD(s) = sqrt(1/|Θ| · Σ_k Σ_{j>r} σ_j²) (cf papier)
-    error   = torch.sqrt(tail_sq.sum().clamp(min=1e-20) / n)
-    if torch.isnan(error) or torch.isinf(error):
-        raise ValueError("AE error computation resulted in NaN or Inf, check eigenvalues.")
+    
+    # On coupe la queue globale et on calcule l'erreur
+    tail_sq = ev[:n - r].sum()                       # Scalaire
+    error   = torch.sqrt(tail_sq.clamp(min=1e-20) / n)
     return error
 
 
@@ -216,6 +234,7 @@ dt      = 1.0
 K       = 20
 gamma   = 0.0
 lambda_diff = 0.5
+lambda_x = 0.5
 step     = 1
 t_frame  = 50
 seed = 42
@@ -227,7 +246,7 @@ lr = 5e-3
 n_epochs = 200
 case_chunk = 10   # cases per checkpoint call
 sp_chunk   = 2000  # spatial points per Gram-accumulation step
-initial_s = path_log_reel(K, Nt*dt, dt)  # logarithmic path parallel to real axis, with small imag part for stability
+initial_s = path_bromwich(K, gamma=gamma)  # (K,) complex64 tensor
 print(f"Initial s points: {', '.join(f'{z:.4f}' for z in initial_s)}")
 
 device  = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -239,7 +258,7 @@ _eye_Nt = torch.eye(Nt, dtype=torch.float64, device=device)
 wandb.init(
     project="convdiff",
     name="laplace_opti_s",
-    config=dict(K=K, Nt=Nt, dt=dt, gamma=gamma, lambda_diff=lambda_diff,
+    config=dict(K=K, Nt=Nt, dt=dt, gamma=gamma, lambda_diff=lambda_diff, lambda_x=lambda_x,
                 step=step, n_cases=n_cases, n_latent=n_latent, lambda_ae=lambda_ae,
                 gamma_min=gamma_min, lr_init=lr, n_epochs=n_epochs, seed=seed,
                 case_chunk=case_chunk, sp_chunk=sp_chunk,
@@ -297,10 +316,11 @@ for epoch in pbar:
     sum_norm_err  = torch.zeros(1, dtype=torch.float64, device=device)
     sum_norm_diff = torch.zeros(1, dtype=torch.float64, device=device)
     sum_l2rel     = torch.zeros(1, dtype=torch.float64, device=device)
+    sum_norm_diff_x = torch.zeros(1, dtype=torch.float64, device=device)
 
     for i in range(0, n_cases, case_chunk):
         V_c = V_tensor[i:i + case_chunk]   # no grad — only s_list/lam/alpha_t require grad
-        ne, nd, l2r = checkpoint.checkpoint(
+        ne, nd, nx, l2r = checkpoint.checkpoint(
             _fused_chunk,
             V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask,
             use_reentrant=False,
@@ -308,15 +328,17 @@ for epoch in pbar:
         sum_norm_err  = sum_norm_err  + ne
         sum_norm_diff = sum_norm_diff + nd
         sum_l2rel     = sum_l2rel     + l2r
+        sum_norm_diff_x = sum_norm_diff_x + nx
 
     # L_bias = (1/n) Σ_c ‖A^{-1} L_reg v_c‖  (brouillon §4, absolu)
     biais_loss_l2   = sum_norm_err  / n_cases
     biais_loss_diff = sum_norm_diff / n_cases
+    biais_loss_diff_x = sum_norm_diff_x / n_cases
 
     amp     = amplification_factor(LU, pivots, F_full)
     ae      = ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=sp_chunk)
     var_los = amp * ae / lambda_ae
-    loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff) + var_los
+    loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff + lambda_x * biais_loss_diff_x)/(1 + lambda_diff + lambda_x) + var_los
     loss.backward()
 
     torch.nn.utils.clip_grad_norm_([s_list, lam, alpha_t], max_norm=1.0)
@@ -334,17 +356,14 @@ for epoch in pbar:
 
     pbar.set_postfix(
         loss=f"{loss.item():.3e}",
-        biais_l2=f"{biais_loss_l2.item():.3e}",
-        biais_diff=f"{biais_loss_diff.item():.3e}",
-        var=f"{var_los.item():.3e}",
         l2rel=f"{l2rel_val:.4f}",
-        lr=f"{cur_lr:.1e}",
     )
 
     log = {
         "loss/total":      loss.item(),
         "loss/biais_l2":   biais_loss_l2.item(),
         "loss/biais_diff": biais_loss_diff.item(),
+        "loss/biais_diff_x": biais_loss_diff_x.item(),
         "loss/var":        var_los.item(),
         "metrics/l2rel":   l2rel_val,
         "metrics/amp":     amp.item(),
