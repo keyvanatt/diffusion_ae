@@ -36,13 +36,13 @@ class _LaplaceFlatDataset(_Dataset):
     Cela rend les accès memmap quasi-séquentiels (une sim = un bloc contigu).
     Appeler reshuffle() au début de chaque epoch pour mélanger l'ordre des sims.
     """
-    def __init__(self, U_laplace, target_mean, target_std, indices, Nt_half, k_max=None):
+    def __init__(self, U_laplace, target_mean, target_std, indices, K, k_max=None):
         self.U_laplace   = U_laplace
-        self.target_mean = target_mean   # (Nt_half, 2, N, N)
+        self.target_mean = target_mean   # (K, 2, N, N)
         self.target_std  = target_std
         self._indices    = [int(i) for i in indices]
-        self._n_freqs    = (min(k_max, Nt_half - 1) + 1) if k_max is not None else Nt_half
-        self._freq_ratio = [k / max(Nt_half - 1, 1) for k in range(self._n_freqs)]
+        self._n_freqs    = (min(k_max, K - 1) + 1) if k_max is not None else K
+        self._freq_ratio = [k / max(K - 1, 1) for k in range(self._n_freqs)]
         self.pairs       = self._make_pairs()
 
     def _make_pairs(self):
@@ -87,14 +87,14 @@ def train_ae(
     Chaque paire (simulation n, fréquence k) est traitée comme un échantillon.
     """
     N         = dataset.N
-    Nt_half   = dataset.Nt_half
+    K         = dataset.K
     device    = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(ckpt_dir, exist_ok=True)
 
     train_ds = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
-                                   train_idx, Nt_half, k_max=k_max)
+                                   train_idx, K, k_max=k_max)
     val_ds   = _LaplaceFlatDataset(dataset.U_laplace, dataset.target_mean, dataset.target_std,
-                                   val_idx,   Nt_half, k_max=k_max)
+                                   val_idx,   K, k_max=k_max)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
                               num_workers=8, pin_memory=True, persistent_workers=True)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,

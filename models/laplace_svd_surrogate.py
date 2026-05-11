@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from models.base import BaseDecoder
 
 
@@ -66,19 +67,19 @@ class LaplaceSVDModel(BaseDecoder):
       surrogates_re[k] : theta_norm → Re(Û_k)  via coefficients SVD
       surrogates_im[k] : theta_norm → Im(Û_k)  via coefficients SVD
 
-    Les fréquences k_freq .. N_half-1 restent à zéro.
+    Les fréquences k_freq .. K-1 restent à zéro.
     La symétrie conjuguée reconstruit les k dernières fréquences du spectre complet.
 
     Interface compatible avec transient/main.py :
       model.generate(theta_norm, dt=..., gamma=..., rule=...) → (B, Nt, N, N)
     """
 
-    def __init__(self, k_freq: int, N_freq: int, N_half: int, N: int,
+    def __init__(self, k_freq: int, K: int, Nt: int, N: int,
                  theta_dim: int, k_svd: int):
         super().__init__()
         self.k_freq    = k_freq
-        self.N_freq    = N_freq   # = Nt, passé explicitement comme dans LaplaceModel
-        self.N_half    = N_half
+        self.K         = K
+        self.Nt        = Nt
         self.N         = N
         self.theta_dim = theta_dim
         self.k_svd     = k_svd
@@ -89,64 +90,50 @@ class LaplaceSVDModel(BaseDecoder):
         self.surrogates_im = nn.ModuleList([
             LaplaceSVDSurrogate(k_svd, theta_dim, N) for _ in range(k_freq)
         ])
+        self.register_buffer('s_real', torch.zeros(K, dtype=torch.float64))
+        self.register_buffer('s_imag', torch.zeros(K, dtype=torch.float64))
 
-    def _forward_half(self, theta_norm: torch.Tensor) -> torch.Tensor:
-        """
-        Calcule le demi-spectre complexe (B, N*N, N_half).
-        Les fréquences k >= k_freq sont à zéro.
-        """
-        B  = theta_norm.shape[0]
-        NN = self.N * self.N
-        M_half = torch.zeros((B, NN, self.N_half),
-                              dtype=torch.complex64, device=theta_norm.device)
+    @property
+    def s_list(self) -> torch.Tensor:
+        return torch.complex(self.s_real, self.s_imag)
+
+    def set_s_list(self, s_list):
+        s = np.asarray(s_list, dtype=np.complex128)
+        self.s_real.copy_(torch.tensor(s.real, dtype=torch.float64))
+        self.s_imag.copy_(torch.tensor(s.imag, dtype=torch.float64))
+
+    def _forward_k(self, theta_norm: torch.Tensor) -> torch.Tensor:
+        """Spectre complexe (B, N*N, K). Fréquences k >= k_freq restent à zéro."""
+        B, NN = theta_norm.shape[0], self.N * self.N
+        M = torch.zeros((B, NN, self.K), dtype=torch.complex64, device=theta_norm.device)
         for k in range(self.k_freq):
-            re = self.surrogates_re[k].get_field(theta_norm)  # (B, N*N)
-            im = self.surrogates_im[k].get_field(theta_norm)  # (B, N*N)
-            M_half[:, :, k] = torch.complex(re, im)
-        return M_half
+            re = self.surrogates_re[k].get_field(theta_norm)
+            im = self.surrogates_im[k].get_field(theta_norm)
+            M[:, :, k] = torch.complex(re, im)
+        return M
 
     def forward(self, theta_norm: torch.Tensor) -> torch.Tensor:
-        """Spectre complet (B, N_freq, N, N) complexe."""
-        B      = theta_norm.shape[0]
-        M_half = self._forward_half(theta_norm)
-        n_tail = self.N_freq - self.N_half
-        if n_tail > 0:
-            tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
-            M_full = torch.cat([M_half, tail], dim=2)
-        else:
-            M_full = M_half
-        return M_full.reshape(B, self.N, self.N, self.N_freq).permute(0, 3, 1, 2)
+        """Spectre normalisé : (B, K, N, N) complexe."""
+        B = theta_norm.shape[0]
+        M = self._forward_k(theta_norm)            # (B, N*N, K)
+        return M.reshape(B, self.N, self.N, self.K).permute(0, 3, 1, 2)
 
     def _generate(self, theta_norm: torch.Tensor,
-                  dt: float = 1.0, gamma: float = 0.0,
+                  dt: float = 1.0, alpha_t: float = 0.0, lam: float = 1e-6,
                   rule: str = 'trap', **kwargs) -> torch.Tensor:
-        """
-        theta_norm : (B, theta_dim) — déjà normalisé
-        Retourne U_pred (B, Nt, N, N) en valeurs physiques.
-        """
-        B  = theta_norm.shape[0]
-        Nt = self.N_freq
+        """Inférence CPU float64 via laplace_inverse_tik."""
+        from utils.laplace import laplace_inverse_tik
+        B, NN  = theta_norm.shape[0], self.N ** 2
+        device = theta_norm.device
 
-        M_half = self._forward_half(theta_norm)  # (B, N*N, N_half)
+        M      = self._forward_k(theta_norm)       # (B, NN, K) complex64
+        M_flat = M.detach().cpu().cdouble().reshape(B * NN, self.K)
+        U_flat = laplace_inverse_tik(M_flat, self.s_list, dt, self.Nt, alpha_t, lam, rule)
 
-        # Symétrie conjuguée → spectre complet
-        n_tail = self.N_freq - self.N_half
-        if n_tail > 0:
-            tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
-            M_full = torch.cat([M_half, tail], dim=2)   # (B, N*N, N_freq)
-        else:
-            M_full = M_half
-
-        # Inverse Laplace différentiable (même logique que LaplaceModel._generate_diff)
-        t     = torch.arange(Nt, dtype=torch.float32, device=M_full.device) * dt
-        w     = torch.ones(Nt,  dtype=torch.float32, device=M_full.device)
-        if rule == 'trap':
-            w[0] = 0.5; w[-1] = 0.5
-        denom = dt * w * torch.exp(torch.tensor(-gamma, device=M_full.device) * t)
-
-        a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)  # (B, N*N, Nt) complex
-        U_pred = a_rec.real / denom                      # (B, N*N, Nt)
-        return U_pred.permute(0, 2, 1).reshape(B, Nt, self.N, self.N)
+        return (U_flat.float()
+                .reshape(B, NN, self.Nt).permute(0, 2, 1)
+                .reshape(B, self.Nt, self.N, self.N)
+                .to(device))
 
     def loss(self, theta_norm: torch.Tensor,
              coeff_re_norm: torch.Tensor,
@@ -158,16 +145,14 @@ class LaplaceSVDModel(BaseDecoder):
         return loss_re + loss_im
 
     def __repr__(self) -> str:
-        return (f"LaplaceSVDModel(k_freq={self.k_freq}, N_freq={self.N_freq}, "
-                f"N_half={self.N_half}, N={self.N}, theta_dim={self.theta_dim}, "
+        return (f"LaplaceSVDModel(k_freq={self.k_freq}, K={self.K}, Nt={self.Nt}, "
+                f"N={self.N}, theta_dim={self.theta_dim}, "
                 f"k_svd={self.k_svd})\n  surrogates_re[0]: {self.surrogates_re[0].mlp}")
 
 
 if __name__ == '__main__':
-    k_freq, N_freq, N_half, N, theta_dim, k_svd = 5, 19, 10, 32, 3, 8
-    model  = LaplaceSVDModel(k_freq, N_freq, N_half, N, theta_dim, k_svd)
+    k_freq, K, Nt, N, theta_dim, k_svd = 5, 10, 150, 32, 3, 8
+    model  = LaplaceSVDModel(k_freq, K, Nt, N, theta_dim, k_svd)
     theta  = torch.randn(2, theta_dim)
-    # Sans set_svd les buffers sont None → get_field plantera ;
-    # ce bloc vérifie seulement la construction.
     print(model)
-    print(f"N_freq={model.N_freq}")
+    print(f"K={model.K}  Nt={model.Nt}")

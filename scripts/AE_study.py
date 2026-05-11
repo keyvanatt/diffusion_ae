@@ -52,9 +52,9 @@ test_idx = idx[n_train + n_val:].numpy()
 
 dataset.fit(train_idx)
 
-Nt_half = 76
+K = dataset.K
 k_max = 20  # L'AE a été entraîné avec k_max=20
-print(f"Dataset: ns={len(dataset)}, Nt_half={Nt_half}, N={N}, k_max={k_max}")
+print(f"Dataset: ns={len(dataset)}, K={K}, N={N}, k_max={k_max}")
 
 # ============================================================
 # Charger l'autoencoder
@@ -79,13 +79,13 @@ print(f"\nUtilisation de {n_samples} samples de test")
 # ============================================================
 
 print(f"\nCalcul de l'erreur AE fréquence par fréquence (k ≤ {k_max})...")
-U_all = dataset[batch_idx][1].float().to(device)  # (B, Nt_half, 2, N, N)
+U_all = dataset[batch_idx][1].float().to(device)  # (B, K, 2, N, N)
 
 ae_l2rel_losses_re = []
 ae_l2rel_losses_im = []
 for k in tqdm(range(k_max + 1)):
     U = U_all[:, k]  # (B, 2, N, N)
-    freq_ratio = torch.full((U.shape[0],), k / (Nt_half - 1), device=device)
+    freq_ratio = torch.full((U.shape[0],), k / (K - 1), device=device)
 
     with torch.no_grad():
         U_hat, z = ae_model(U, freq_ratio)
@@ -133,16 +133,16 @@ Nt = dataset.Nt   # 150
 B  = n_samples
 NN = N * N
 
-target_std_cpu  = dataset.target_std.cpu()   # (Nt_half, 2, N, N)
-target_mean_cpu = dataset.target_mean.cpu()  # (Nt_half, 2, N, N)
+target_std_cpu  = dataset.target_std.cpu()   # (K, 2, N, N)
+target_mean_cpu = dataset.target_mean.cpu()  # (K, 2, N, N)
 
-M_half_pred = np.zeros((B, NN, Nt_half), dtype=np.complex64)
-M_half_true = np.zeros((B, NN, Nt_half), dtype=np.complex64)
+M_half_pred = np.zeros((B, NN, K), dtype=np.complex64)
+M_half_true = np.zeros((B, NN, K), dtype=np.complex64)
 
 # k ≤ k_max : prédiction AE batchée par fréquence
 for k in tqdm(range(k_max + 1), desc="AE forward (k≤k_max)"):
     U_k = U_all[:, k]   # (B, 2, N, N) normalisé
-    freq_ratio = torch.full((B,), k / (Nt_half - 1), device=device)
+    freq_ratio = torch.full((B,), k / (K - 1), device=device)
     with torch.no_grad():
         U_k_pred, _ = ae_model(U_k, freq_ratio)   # (B, 2, N, N) normalisé
     tm_k = target_mean_cpu[k]   # (2, N, N)
@@ -151,14 +151,14 @@ for k in tqdm(range(k_max + 1), desc="AE forward (k≤k_max)"):
     M_half_pred[:, :, k] = (U_k_phys[:, 0] + 1j * U_k_phys[:, 1]).reshape(B, NN)
 
 # k > k_max : mean pixel par pixel par fréquence (même comportement que le surrogate)
-for k in range(k_max + 1, Nt_half):
+for k in range(k_max + 1, K):
     tm_k = target_mean_cpu[k].numpy()   # (2, N, N)
     M_k_mean = (tm_k[0] + 1j * tm_k[1]).reshape(NN)   # (N²,)
     M_half_pred[:, :, k] = M_k_mean[None]   # broadcast sur B
 
 # Spectre de référence : spectre vrai complet dénormalisé
-U_all_np = U_all.cpu().numpy()   # (B, Nt_half, 2, N, N)
-for k in range(Nt_half):
+U_all_np = U_all.cpu().numpy()   # (B, K, 2, N, N)
+for k in range(K):
     tm_k = target_mean_cpu[k].numpy()   # (2, N, N)
     ts_k = target_std_cpu[k].numpy()
     U_k_true = U_all_np[:, k]   # (B, 2, N, N) normalisé
@@ -166,13 +166,13 @@ for k in range(Nt_half):
     M_half_true[:, :, k] = (U_k_phys[:, 0] + 1j * U_k_phys[:, 1]).reshape(B, NN)
 
 # Symétrie conjuguée → spectre complet (B, N², Nt)
-n_tail = Nt - Nt_half
+n_tail = Nt - K
 
 def _to_full(M_h):
     M_f = np.zeros((B, NN, Nt), dtype=np.complex64)
-    M_f[:, :, :Nt_half] = M_h
+    M_f[:, :, :K] = M_h
     if n_tail > 0:
-        M_f[:, :, Nt_half:] = np.conj(M_h[:, :, 1:n_tail + 1])[:, :, ::-1]
+        M_f[:, :, K:] = np.conj(M_h[:, :, 1:n_tail + 1])[:, :, ::-1]
     return M_f
 
 M_full_pred = _to_full(M_half_pred)
@@ -264,7 +264,7 @@ for k in selected_freqs:
     # Prédiction AE
     with torch.no_grad():
         U_ae_input = U.unsqueeze(0).to(device)
-        freq_ratio_batch = torch.full((1,), k / (Nt_half - 1), device=device)
+        freq_ratio_batch = torch.full((1,), k / (K - 1), device=device)
         U_ae_pred, _ = ae_model(U_ae_input, freq_ratio_batch)
         U_ae_pred = U_ae_pred.squeeze(0).cpu()
 

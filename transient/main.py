@@ -34,8 +34,8 @@ def load_model(ckpt_path: str, device: torch.device):
     if model_type == 'LaplaceModel':
         from models.laplace_surrogate import LaplaceModel
         model = LaplaceModel(
-            N_freq    = ckpt['N_freq'],
-            N_half    = ckpt['N_half'],
+            K         = ckpt['K'],
+            Nt        = ckpt['Nt'],
             N         = ckpt['N'],
             theta_dim = ckpt['theta_dim'],
             k_max     = ckpt.get('k_max'),
@@ -44,8 +44,8 @@ def load_model(ckpt_path: str, device: torch.device):
     elif model_type == 'LaplaceLatentModel':
         from models.laplace_ae_surrogate import LaplaceLatentModel
         model = LaplaceLatentModel(
-            N_freq     = ckpt['N_freq'],
-            N_half     = ckpt['N_half'],
+            K          = ckpt['K'],
+            Nt         = ckpt['Nt'],
             N          = ckpt['N'],
             theta_dim  = ckpt['theta_dim'],
             latent_dim = ckpt['latent_dim'],
@@ -57,8 +57,8 @@ def load_model(ckpt_path: str, device: torch.device):
         from models.laplace_svd_surrogate import LaplaceSVDModel
         model = LaplaceSVDModel(
             k_freq    = ckpt['k_freq'],
-            N_freq    = ckpt['N_freq'],
-            N_half    = ckpt['N_half'],
+            K         = ckpt['K'],
+            Nt        = ckpt['Nt'],
             N         = ckpt['N'],
             theta_dim = ckpt['theta_dim'],
             k_svd     = ckpt['k_svd'],
@@ -100,7 +100,8 @@ def load_model(ckpt_path: str, device: torch.device):
 @torch.no_grad()
 def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
                   dt: float | None = None,
-                  gamma: float = 0.0,
+                  alpha_t: float = 0.0,
+                  lam: float = 1e-6,
                   rule: str = 'trap',
                   k_max: int | None = None) -> np.ndarray:
     """
@@ -119,9 +120,10 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
     model_type = ckpt.get('model_type', 'SVDSurrogate')
 
     if model_type in ('LaplaceModel', 'LaplaceLatentModel', 'LaplaceSVDModel', 'CorrectionAE'):
-        dt_eff = dt if dt is not None else float(ckpt.get('dt', 1.0))
-        gamma  = float(ckpt.get('gamma', gamma))
-        U_pred = model.generate(theta_norm, dt=dt_eff, gamma=gamma, rule=rule, k_max=k_max)
+        dt_eff  = dt if dt is not None else float(ckpt.get('dt', 1.0))
+        alpha_t = float(ckpt.get('alpha_t', alpha_t))
+        lam     = float(ckpt.get('lam', lam))
+        U_pred  = model.generate(theta_norm, dt=dt_eff, alpha_t=alpha_t, lam=lam, rule=rule, k_max=k_max)
         return U_pred.cpu().numpy()
 
     else:  # SVDSurrogate
@@ -131,7 +133,7 @@ def run_inference(theta_raw, model, ckpt: dict, device: torch.device,
 
 def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
             device_str: str = 'auto', dt: float | None = None,
-            gamma: float = 0.0, rule: str = 'trap',
+            alpha_t: float = 0.0, lam: float = 1e-6, rule: str = 'trap',
             k_max: int | None = None) -> np.ndarray:
     """
     Prédit U(t) pour un batch de theta.
@@ -150,7 +152,7 @@ def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
         device = torch.device(device_str)
 
     model, ckpt = load_model(ckpt_path, device)
-    return run_inference(theta_raw, model, ckpt, device, dt=dt, gamma=gamma, rule=rule, k_max=k_max)
+    return run_inference(theta_raw, model, ckpt, device, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, k_max=k_max)
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +160,7 @@ def predict(theta_raw, ckpt_path: str = 'checkpoints/LaplaceModel.pt',
 # ---------------------------------------------------------------------------
 
 def evaluate(U, theta, ckpt_path: str, test_idx=None,
-             dt: float | None = None, gamma: float = 0.0,
+             dt: float | None = None, alpha_t: float = 0.0, lam: float = 1e-6,
              rule: str = 'trap', step: int = 1,
              n_animate: int = 3, batch_size: int = 32,
              device_str: str = 'auto', k_max: int | None = None):
@@ -208,7 +210,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
         # Prédiction
         U_pred_b = run_inference(
-            theta_arr[idx_batch], model, ckpt, device, dt=dt, gamma=gamma, rule=rule, k_max=k_max
+            theta_arr[idx_batch], model, ckpt, device, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, k_max=k_max
         )  # (B, Nt, H_pred, W_pred)
 
         # Vérité terrain — chargée sample par sample depuis le mmap

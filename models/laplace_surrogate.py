@@ -3,7 +3,6 @@ import torch.nn.functional as F
 import torch.nn as nn
 from models.base import BaseDecoder
 import numpy as np
-from utils.laplace import laplace_inverse
 
 
 class LaplaceSurrogate(nn.Module):
@@ -17,7 +16,7 @@ class LaplaceSurrogate(nn.Module):
     def __init__(self, N, theta_dim: int = 4, s: complex | None = None,
                  freq_ratio: float = 0.0):
         """
-        freq_ratio : k / N_half ∈ [0, 1] — position normalisée dans le spectre.
+        freq_ratio : k / K ∈ [0, 1] — position normalisée dans le spectre.
         """
         super().__init__()
         self.s          = s
@@ -30,7 +29,7 @@ class LaplaceSurrogate(nn.Module):
             nn.ReLU(),
         )
 
-        # Encodeur de fréquence : scalaire k/N_half → vecteur de conditionnement
+        # Encodeur de fréquence : scalaire k/K → vecteur de conditionnement
         self.freq_enc = nn.Sequential(
             nn.Linear(1, 64),
             nn.ReLU(),
@@ -81,60 +80,75 @@ class LaplaceSurrogate(nn.Module):
 
 class LaplaceModel(BaseDecoder):
     """
-    Modèle complet dans l'espace de Laplace : encapsule N_half LaplaceSurrogate.
+    Modèle complet dans l'espace de Laplace : encapsule K LaplaceSurrogate.
 
-    forward(theta_norm)  → spectre normalisé (B, N_freq, N, N) complexe
-    generate(theta_norm, target_mean, target_std, dt, gamma, rule)
-                         → U_pred (B, Nt, N, N) en valeurs physiques
-
-    La normalisation est gérée en dehors du modèle (dans main.py / checkpoint).
+    forward(theta_norm)  → spectre normalisé (B, K, N, N) complexe
+    generate(theta_norm, dt, alpha_t, lam, rule)
+                         → U_pred (B, Nt, N, N) via laplace_inverse_tik
+                           (symétrie conjuguée gérée dans laplace_inverse_tik)
     """
 
-    def __init__(self, N_freq: int, N_half: int, N: int, theta_dim: int = 4,
+    def __init__(self, K: int, Nt: int, N: int, theta_dim: int = 4,
                  k_max: int | None = None):
         super().__init__()
         self.surrogates = nn.ModuleList([
-            LaplaceSurrogate(N, theta_dim, freq_ratio=k / max(N_half - 1, 1))
-            for k in range(N_half)
+            LaplaceSurrogate(N, theta_dim, freq_ratio=k / max(K - 1, 1))
+            for k in range(K)
         ])
-        self.N_freq    = N_freq
-        self.N_half    = N_half
+        self.K         = K
+        self.Nt        = Nt
         self.N         = N
         self.theta_dim = theta_dim
-        # Fréquences k > k_max → prédiction = moyenne (0 normalisé → target_mean après dénorm)
         self.k_max     = k_max
 
-        # Stats de dénormalisation target — remplies via set_normalization()
-        self.register_buffer('target_mean', torch.zeros(N_half, 2, N, N))
-        self.register_buffer('target_std',  torch.ones(N_half,  2, N, N))
+        self.register_buffer('target_mean', torch.zeros(K, 2, N, N))
+        self.register_buffer('target_std',  torch.ones(K,  2, N, N))
+        # Points s stockés en deux buffers float64 (complex128 non universel)
+        self.register_buffer('s_real', torch.zeros(K, dtype=torch.float64))
+        self.register_buffer('s_imag', torch.zeros(K, dtype=torch.float64))
 
-    def _forward_half(self, theta_norm: torch.Tensor, k_max: int | None = None) -> torch.Tensor:
-        """(B, N*N, N_half) complexe, valeurs normalisées par fréquence.
-        Les fréquences au-delà de k_max (ou self.k_max) restent à 0 → moyenne après dénorm."""
-        B = theta_norm.shape[0]
-        M_half = torch.zeros((B, self.N * self.N, self.N_half),
-                              dtype=torch.complex64, device=theta_norm.device)
+    @property
+    def s_list(self) -> torch.Tensor:
+        """Points s complexes : (K,) complex128 sur CPU."""
+        return torch.complex(self.s_real, self.s_imag)
+
+    def set_s_list(self, s_list):
+        """Charge les points s (numpy array ou liste). Appeler avant la sauvegarde."""
+        s = np.asarray(s_list, dtype=np.complex128)
+        self.s_real.copy_(torch.tensor(s.real, dtype=torch.float64))
+        self.s_imag.copy_(torch.tensor(s.imag, dtype=torch.float64))
+
+    def _forward_k(self, theta_norm: torch.Tensor, k_max: int | None = None) -> torch.Tensor:
+        """(B, N*N, K) complexe normalisé. Fréquences > k_max restent à 0."""
+        B     = theta_norm.shape[0]
+        M     = torch.zeros((B, self.N * self.N, self.K),
+                             dtype=torch.complex64, device=theta_norm.device)
         limit    = k_max if k_max is not None else self.k_max
-        n_active = min(limit + 1, self.N_half) if limit is not None else self.N_half
+        n_active = min(limit + 1, self.K) if limit is not None else self.K
         for k in range(n_active):
-            pred = self.surrogates[k](theta_norm)                      # (B, 2, N, N)
-            M_half[:, :, k] = (pred[:, 0] + 1j * pred[:, 1]).reshape(B, self.N * self.N)
-        return M_half
+            pred = self.surrogates[k](theta_norm)              # (B, 2, N, N)
+            M[:, :, k] = (pred[:, 0] + 1j * pred[:, 1]).reshape(B, self.N * self.N)
+        return M
+
+    def _forward_k_diff(self, theta_norm: torch.Tensor, n_active: int) -> torch.Tensor:
+        """Version différentiable pour n_active fréquences. (B, N*N, n_active) complex64.
+        Surchargé dans LaplaceLatentModel pour un appel batché au shared_decoder."""
+        B, NN = theta_norm.shape[0], self.N * self.N
+        preds = [self.surrogates[k](theta_norm) for k in range(n_active)]
+        return torch.stack(
+            [torch.complex(p[:, 0].reshape(B, NN).float(),
+                           p[:, 1].reshape(B, NN).float()) for p in preds],
+            dim=2,
+        )
 
     def forward(self, theta_norm: torch.Tensor) -> torch.Tensor:
-        """Spectre normalisé complet : (B, N_freq, N, N) complexe."""
-        B      = theta_norm.shape[0]
-        M_half = self._forward_half(theta_norm)
-        M_full = torch.zeros((B, self.N * self.N, self.N_freq),
-                              dtype=torch.complex64, device=theta_norm.device)
-        M_full[:, :, :self.N_half] = M_half
-        n_tail = self.N_freq - self.N_half
-        if n_tail > 0:
-            M_full[:, :, self.N_half:] = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
-        return M_full.reshape(B, self.N, self.N, self.N_freq).permute(0, 3, 1, 2)
+        """Spectre normalisé : (B, K, N, N) complexe."""
+        B = theta_norm.shape[0]
+        M = self._forward_k(theta_norm)            # (B, N*N, K)
+        return M.reshape(B, self.N, self.N, self.K).permute(0, 3, 1, 2)
 
     def set_normalization(self, target_mean, target_std):
-        """Charge les stats de dénormalisation target (appelé avant la sauvegarde)."""
+        """Charge les stats de dénormalisation (appelé avant la sauvegarde)."""
         def _t(x): return x if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)
         self.target_mean.copy_(_t(target_mean))
         self.target_std.copy_(_t(target_std))
@@ -144,127 +158,92 @@ class LaplaceModel(BaseDecoder):
             "L'entraînement se fait par fréquence via LaplaceSurrogate.loss()."
         )
 
-    def _forward_half_diff(self, theta_norm: torch.Tensor, n_active: int) -> torch.Tensor:
-        """
-        Calcule le demi-spectre normalisé différentiable pour les n_active premières fréquences.
-        Retourne M_active : (B, N*N, n_active) complex64.
-        Surchargé dans LaplaceLatentModel pour utiliser un décodeur partagé batché.
-        """
-        B  = theta_norm.shape[0]
+    def _denorm_k(self, M: torch.Tensor) -> torch.Tensor:
+        """Dénormalise (B, N*N, K) complexe (modifie en place)."""
         NN = self.N * self.N
-        preds = [self.surrogates[k](theta_norm) for k in range(n_active)]  # n_active × (B, 2, N, N)
-        return torch.stack(
-            [torch.complex(p[:, 0].reshape(B, NN).float(),
-                           p[:, 1].reshape(B, NN).float()) for p in preds],
-            dim=2,
-        )  # (B, N*N, n_active) complex64
-
-    def _generate_diff(self, theta_norm: torch.Tensor,
-                       dt: float = 1.0, gamma: float = 0.0,
-                       rule: str = 'trap', k_max: int | None = None) -> torch.Tensor:
-        """
-        Inverse Laplace différentiable via torch.fft.ifft.
-        Le gradient traverse tout le chemin θ → surrogates → spectre → U(t).
-
-        theta_norm : (B, theta_dim) — déjà normalisé
-        Retourne U_pred (B, Nt, N, N) en valeurs physiques.
-        """
-        B  = theta_norm.shape[0]
-        NN = self.N * self.N
-
-        limit    = k_max if k_max is not None else self.k_max
-        n_active = min(limit + 1, self.N_half) if limit is not None else self.N_half
-        M_active = self._forward_half_diff(theta_norm, n_active)  # (B, N*N, n_active)
-
-        if n_active < self.N_half:
-            pad = torch.zeros(B, NN, self.N_half - n_active,
-                              dtype=torch.complex64, device=theta_norm.device)
-            M_half = torch.cat([M_active, pad], dim=2)
-        else:
-            M_half = M_active
-
-        # Dénormalisation vectorisée — target_mean/std : (N_half, 2, N, N)
-        # → (1, N*N, N_half) pour broadcaster avec M_half (B, N*N, N_half)
-        def _denorm_vec(buf_c):  # buf_c : (N_half, N, N)
-            return buf_c.reshape(self.N_half, NN).permute(1, 0).unsqueeze(0)  # (1, NN, N_half)
-        tm_re = _denorm_vec(self.target_mean[:, 0])
-        tm_im = _denorm_vec(self.target_mean[:, 1])
-        ts_re = _denorm_vec(self.target_std[:,  0])
-        ts_im = _denorm_vec(self.target_std[:,  1])
-        M_half = torch.complex(
-            M_half.real * ts_re + tm_re,
-            M_half.imag * ts_im + tm_im,
-        )
-
-        # Symétrie conjuguée → spectre complet (B, N*N, N_freq)
-        n_tail = self.N_freq - self.N_half
-        if n_tail > 0:
-            tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
-            M_full = torch.cat([M_half, tail], dim=2)
-        else:
-            M_full = M_half
-
-        # Inverse Laplace différentiable
-        Nt    = self.N_freq
-        t     = torch.arange(Nt, dtype=torch.float32, device=M_full.device) * dt
-        w     = torch.ones(Nt,  dtype=torch.float32, device=M_full.device)
-        if rule == 'trap':
-            w[0] = 0.5; w[-1] = 0.5
-        denom = dt * w * torch.exp(torch.tensor(-gamma, device=M_full.device) * t)  # (Nt,)
-
-        a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)       # (B, N*N, Nt) complex
-        U_pred = a_rec.real / denom                           # (B, N*N, Nt)
-        return U_pred.permute(0, 2, 1).reshape(B, Nt, self.N, self.N)
+        for k in range(self.K):
+            tm, ts = self.target_mean[k], self.target_std[k]
+            re = M[:, :, k].real * ts[0].reshape(NN) + tm[0].reshape(NN)
+            im = M[:, :, k].imag * ts[1].reshape(NN) + tm[1].reshape(NN)
+            M[:, :, k] = torch.complex(re, im)
+        return M
 
     def _generate(self, theta_norm: torch.Tensor,
-                  dt: float = 1.0, gamma: float = 0.0,
+                  dt: float = 1.0, alpha_t: float = 0.0, lam: float = 1e-6,
                   rule: str = 'trap', k_max: int | None = None) -> torch.Tensor:
         """
-        theta_norm : (B, theta_dim) — déjà normalisé
-        k_max      : si donné, seules les fréquences k <= k_max sont calculées
-        Retourne U_pred (B, Nt, N, N) en valeurs physiques.
+        Inférence CPU float64 via laplace_inverse_tik.
+        La symétrie conjuguée est gérée dans laplace_inverse_tik.
         """
-        B = theta_norm.shape[0]
-        M_half = self._forward_half(theta_norm, k_max=k_max)          # (B, N*N, N_half)
+        from utils.laplace import laplace_inverse_tik
+        B, NN  = theta_norm.shape[0], self.N ** 2
+        device = theta_norm.device
 
-        # Dénormalisation par fréquence — tm/ts : (2, N, N) → flatten en (N*N,)
-        NN = self.N * self.N
-        for k in range(self.N_half):
-            tm = self.target_mean[k]  # (2, N, N)
-            ts = self.target_std[k]
-            re = M_half[:, :, k].real * ts[0].reshape(NN) + tm[0].reshape(NN)
-            im = M_half[:, :, k].imag * ts[1].reshape(NN) + tm[1].reshape(NN)
-            M_half[:, :, k] = torch.complex(re, im)
+        M = self._forward_k(theta_norm, k_max=k_max)  # (B, NN, K) complex64
+        M = self._denorm_k(M)
 
-        # Symétrie conjuguée → spectre complet
-        n_tail = self.N_freq - self.N_half
-        M_full = torch.zeros((B, self.N * self.N, self.N_freq),
-                              dtype=torch.complex64, device=theta_norm.device)
-        M_full[:, :, :self.N_half] = M_half
-        if n_tail > 0:
-            M_full[:, :, self.N_half:] = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
+        # CPU float64 pour la précision
+        M_flat = M.detach().cpu().cdouble().reshape(B * NN, self.K)
+        U_flat = laplace_inverse_tik(M_flat, self.s_list, dt, self.Nt, alpha_t, lam, rule)
+        # (B*NN, Nt) float64
 
-        # Transformée inverse de Laplace
-        M_np   = M_full.cpu().numpy()                                  # (B, N*N, N_freq)
-        U_pred = np.zeros((B, self.N_freq, self.N, self.N), dtype=np.float32)
-        for b in range(B):
-            C_b, _ = laplace_inverse(M_np[b], dt, self.N_freq, rule=rule, gamma=gamma)
-            U_pred[b] = C_b.reshape(self.N, self.N, self.N_freq).transpose(2, 0, 1).astype(np.float32)
+        return (U_flat.float()
+                .reshape(B, NN, self.Nt).permute(0, 2, 1)
+                .reshape(B, self.Nt, self.N, self.N)
+                .to(device))
 
-        return torch.from_numpy(U_pred).to(theta_norm.device)          # (B, Nt, N, N)
+    def _generate_diff(self, theta_norm: torch.Tensor,
+                       dt: float = 1.0, alpha_t: float = 0.0, lam: float = 1e-6,
+                       rule: str = 'trap', k_max: int | None = None) -> torch.Tensor:
+        """
+        Version différentiable GPU float32 via laplace_inverse_tik.
+        Gradients traversent θ → surrogates → spectre → laplace_inverse_tik (linalg.solve).
+        """
+        from utils.laplace import laplace_inverse_tik
+        B, NN  = theta_norm.shape[0], self.N ** 2
+        device = theta_norm.device
+
+        limit    = k_max if k_max is not None else self.k_max
+        n_active = min(limit + 1, self.K) if limit is not None else self.K
+        M_active = self._forward_k_diff(theta_norm, n_active)  # (B, NN, n_active)
+
+        if n_active < self.K:
+            pad = torch.zeros(B, NN, self.K - n_active, dtype=torch.complex64, device=device)
+            M   = torch.cat([M_active, pad], dim=2)
+        else:
+            M = M_active
+
+        # Dénorm vectorisée (B, NN, K)
+        tm     = self.target_mean.to(device)
+        ts     = self.target_std.to(device)
+        tm_re  = tm[:, 0].reshape(self.K, NN).T.unsqueeze(0)   # (1, NN, K)
+        tm_im  = tm[:, 1].reshape(self.K, NN).T.unsqueeze(0)
+        ts_re  = ts[:, 0].reshape(self.K, NN).T.unsqueeze(0)
+        ts_im  = ts[:, 1].reshape(self.K, NN).T.unsqueeze(0)
+        M = torch.complex(M.real * ts_re + tm_re, M.imag * ts_im + tm_im)
+
+        # GPU float32 (différentiable via linalg.solve)
+        s = torch.complex(
+            self.s_real.to(device=device, dtype=torch.float32),
+            self.s_imag.to(device=device, dtype=torch.float32),
+        )
+        U_flat = laplace_inverse_tik(M.reshape(B * NN, self.K), s, dt, self.Nt, alpha_t, lam, rule)
+        # (B*NN, Nt) float32
+
+        return U_flat.reshape(B, NN, self.Nt).permute(0, 2, 1).reshape(B, self.Nt, self.N, self.N)
 
     def __repr__(self) -> str:
-        return (f"LaplaceModel(N_freq={self.N_freq}, N_half={self.N_half}, "
+        return (f"LaplaceModel(K={self.K}, Nt={self.Nt}, "
                 f"N={self.N}, theta_dim={self.theta_dim})\n"
                 f"Surrogate par fréquence :\n{self.surrogates[0].__repr__()}")
 
 
 if __name__ == "__main__":
-    N_freq = 16
-    N_half = N_freq // 2 + 1
-    N      = 64
-    model  = LaplaceModel(N_freq=N_freq, N_half=N_half, N=N, theta_dim=4)
+    K  = 21
+    Nt = 150
+    N  = 64
+    model = LaplaceModel(K=K, Nt=Nt, N=N, theta_dim=4)
     print(model)
     theta = torch.randn(2, 4)
     out   = model(theta)
-    print(f"theta {theta.shape} → forward {out.shape}")
+    print(f"theta {theta.shape} → forward {out.shape}")   # (2, K, 64, 64)

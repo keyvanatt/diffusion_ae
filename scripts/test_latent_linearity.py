@@ -57,8 +57,8 @@ print(f"Modèles chargés : AE (N={N_ae}, lat={lat}) + décodeur finetuné + UNe
 
 # ── Cache Laplace N=128 + stats ───────────────────────────────────────────────
 cache_lap = np.load('/Data/KAT/ch4_rotated_laplace_N128_g0.000_trap.npy', mmap_mode='r')
-ns, Nt_half, _, _, _ = cache_lap.shape
-Nt = 2 * (Nt_half - 1)
+ns, K, _, _, _ = cache_lap.shape
+Nt = 2 * (K - 1)
 dt = 1.0
 
 stats_path = sorted(Path('/Data/KAT').glob('ch4_rotated_stats_N128_*.pt'))[0]
@@ -81,11 +81,11 @@ def load_sim(idx):
     return torch.from_numpy(cache_lap[idx].copy()).float()
 
 def encode_decode_interp(ul1, ul2):
-    """Interpolation latente fréquence par fréquence. Retourne (Nt_half,2,N,N)."""
+    """Interpolation latente fréquence par fréquence. Retourne (K,2,N,N)."""
     out = torch.zeros_like(ul1)
     with torch.no_grad():
-        for k in range(Nt_half):
-            fr = k / max(Nt_half - 1, 1)
+        for k in range(K):
+            fr = k / max(K - 1, 1)
             z1 = ae.encoder(norm(ul1[k].to(device), k).unsqueeze(0), fr)
             z2 = ae.encoder(norm(ul2[k].to(device), k).unsqueeze(0), fr)
             z  = alpha * z1 + (1 - alpha) * z2

@@ -28,7 +28,7 @@ from models.correction_ae import CorrectionAE
 
 # Pré-calcul : (ns, kt, N, N) × 2 memmaps
 def precompute(dataset, surrogate_ckpt, kt, cache_dir, batch_size=32,
-               dt=1.0, gamma=0.0, rule='trap', seed=0):
+               dt=1.0, alpha_t=0.0, lam=1e-6, rule='trap', seed=0):
     """
     Génère ou charge les memmaps U_pred et U_true de shape (ns, kt, N, N).
 
@@ -75,7 +75,7 @@ def precompute(dataset, surrogate_ckpt, kt, cache_dir, batch_size=32,
 
         theta_n = (dataset.theta[start:end].to(device) - theta_mean) / theta_std
         with torch.no_grad():
-            u_pred = surrogate.generate(theta_n, dt=dt, gamma=gamma, rule=rule).cpu()  # (B, Nt, N, N)
+            u_pred = surrogate.generate(theta_n, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule).cpu()  # (B, Nt, N, N)
 
         for i in range(B):
             ti = t_idx[start + i]
@@ -274,7 +274,8 @@ if __name__ == '__main__':
     cache_dir      = '/Data/KAT'
     seed           = 42
     dt             = 1.0
-    gamma          = 0.0
+    alpha_t        = 0.0
+    lam            = 1e-6
     rule           = 'trap'
     interp_size    = 128
 
@@ -302,7 +303,7 @@ if __name__ == '__main__':
 
     U_pred, U_true = precompute(
         dataset, surrogate_ckpt, kt=kt, cache_dir=cache_dir,
-        batch_size=32, dt=dt, gamma=gamma, rule=rule, seed=seed,
+        batch_size=32, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, seed=seed,
     )
 
     train(

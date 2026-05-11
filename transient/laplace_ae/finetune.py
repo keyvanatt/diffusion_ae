@@ -12,7 +12,7 @@ La loss et le critère d'arrêt anticipé opèrent sur U(t), pas sur les spectre
 
 Optimisations vitesse :
   - Toutes les projections θ→z sont calculées, puis UN SEUL appel batché au
-    shared_decoder (N_half*B samples) au lieu de N_half appels séquentiels.
+    shared_decoder (K*B samples) au lieu de K appels séquentiels.
   - La cible U(t) est reconstruite une seule fois par batch (via IFFT, no_grad).
   - Le denom de l'inverse Laplace est pré-calculé une fois pour tout le training.
 
@@ -43,15 +43,15 @@ from transient.dataset import TransientDataset
 class _FinetuneDataset(_Dataset):
     """
     Retourne (theta_norm, U_laplace_norm) où U_laplace_norm est de shape
-    (Nt_half, 2, N, N) — toutes les fréquences d'une simulation.
+    (K, 2, N, N) — toutes les fréquences d'une simulation.
 
     Chaque item = 1 simulation complète.
     """
     def __init__(self, U_laplace, theta_norm, target_mean, target_std, indices):
         self.U_laplace   = U_laplace             # ndarray ou tensor CPU
         self.theta_norm  = theta_norm.cpu()       # (ns, theta_dim) CPU
-        self.target_mean = target_mean.cpu()      # (Nt_half, 2, 1, 1) CPU
-        self.target_std  = target_std.cpu()       # (Nt_half, 2, 1, 1) CPU
+        self.target_mean = target_mean.cpu()      # (K, 2, 1, 1) CPU
+        self.target_std  = target_std.cpu()       # (K, 2, 1, 1) CPU
         self._indices    = [int(i) for i in indices]
 
     def __len__(self):
@@ -73,40 +73,34 @@ class _FinetuneDataset(_Dataset):
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def _laplace_to_u(U_laplace_norm, target_mean, target_std, N_freq, denom):
+def _laplace_to_u(U_laplace_norm, target_mean, target_std, s_list, Nt, dt,
+                  alpha_t=0.0, lam=1e-6, rule='trap'):
     """
-    Reconstruit U(t) physique depuis les spectres de Laplace normalisés.
+    Reconstruit U(t) physique depuis les spectres normalisés via laplace_inverse_tik.
+    La symétrie conjuguée est gérée dans laplace_inverse_tik.
 
-    U_laplace_norm : (B, Nt_half, 2, N, N) normalisé, GPU
-    target_mean    : (Nt_half, 2, 1, 1) GPU
-    target_std     : (Nt_half, 2, 1, 1) GPU
-    denom          : (Nt,) GPU — pré-calculé
+    U_laplace_norm : (B, K, 2, N, N) normalisé
+    s_list         : (K,) complex128 CPU
     → U_true (B, Nt, N, N) float32
     """
-    B, Nt_half, _, N, _ = U_laplace_norm.shape
+    from utils.laplace import laplace_inverse_tik
+    B, K, _, N, _ = U_laplace_norm.shape
     NN = N * N
-    Nt = N_freq
 
     # Dénorm
-    U_phys = U_laplace_norm * target_std + target_mean
+    U_phys = U_laplace_norm * target_std + target_mean  # (B, K, 2, N, N)
 
-    # → (B, NN, Nt_half) complexe
-    re     = U_phys[:, :, 0].reshape(B, Nt_half, NN).permute(0, 2, 1)
-    im     = U_phys[:, :, 1].reshape(B, Nt_half, NN).permute(0, 2, 1)
-    M_half = torch.complex(re, im)
+    # → (B, NN, K) complexe
+    re = U_phys[:, :, 0].reshape(B, K, NN).permute(0, 2, 1)
+    im = U_phys[:, :, 1].reshape(B, K, NN).permute(0, 2, 1)
+    M  = torch.complex(re, im)  # (B, NN, K) complex64
 
-    # Symétrie conjuguée
-    n_tail = Nt - Nt_half
-    if n_tail > 0:
-        tail   = torch.conj(M_half[:, :, 1:n_tail + 1]).flip(dims=[2])
-        M_full = torch.cat([M_half, tail], dim=2)
-    else:
-        M_full = M_half
+    # CPU float64 inverse (pas de gradient ici)
+    M_flat = M.cpu().cdouble().reshape(B * NN, K)
+    U_flat = laplace_inverse_tik(M_flat, s_list, dt, Nt, alpha_t, lam, rule)
+    # (B*NN, Nt) float64
 
-    # IFFT + dénorm temporelle
-    a_rec  = torch.fft.ifft(M_full, n=Nt, dim=-1)
-    U_true = a_rec.real / denom
-    return U_true.permute(0, 2, 1).reshape(B, Nt, N, N).float()
+    return U_flat.float().reshape(B, NN, Nt).permute(0, 2, 1).reshape(B, Nt, N, N)
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +121,13 @@ def finetune(
     save_dir,
     project,
     dt,
-    gamma,
     rule,
+    alpha_t=0.0,
+    lam=1e-6,
 ):
     N         = dataset.N
     Nt        = dataset.Nt
-    Nt_half   = dataset.Nt_half
+    K         = dataset.K
     theta_dim = dataset.theta_dim
     device    = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(save_dir, exist_ok=True)
@@ -140,7 +135,7 @@ def finetune(
     # --- Charger le modèle assemblé ---
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     model = LaplaceLatentModel(
-        N_freq=ckpt['N_freq'], N_half=ckpt['N_half'], N=ckpt['N'],
+        K=ckpt['K'], Nt=ckpt['Nt'], N=ckpt['N'],
         theta_dim=ckpt['theta_dim'], latent_dim=ckpt['latent_dim'],
         hidden_dim=ckpt['hidden_dim'], k_max=ckpt.get('k_max'),
     )
@@ -151,12 +146,8 @@ def finetune(
     # Dégeler le shared_decoder
     model.shared_decoder.requires_grad_(True)
 
-    # --- Pré-calculer le denom de l'inverse Laplace (une seule fois) ---
-    t_vec = torch.arange(Nt, dtype=torch.float32, device=device) * dt
-    w     = torch.ones(Nt, dtype=torch.float32, device=device)
-    if rule == 'trap':
-        w[0] = 0.5; w[-1] = 0.5
-    denom = dt * w * torch.exp(-gamma * t_vec)                    # (Nt,) GPU
+    # s_list pour la reconstruction ground-truth (CPU, float64)
+    s_list_cpu = model.s_list  # (K,) complex128 CPU
 
     # --- Theta normalisé (CPU pour le dataset) ---
     theta_norm = (dataset.theta - dataset.theta_mean) / dataset.theta_std   # CPU
@@ -195,7 +186,7 @@ def finetune(
 
     # --- Wandb ---
     wandb.init(project=project, name='LaplaceLatentModel_finetune_e2e', config=dict(
-        N=N, Nt=Nt, Nt_half=Nt_half, theta_dim=theta_dim,
+        N=N, Nt=Nt, K=K, theta_dim=theta_dim,
         latent_dim=ckpt['latent_dim'],
         epochs=epochs, batch_size=batch_size,
         lr_surrogate=lr_surrogate, lr_decoder=lr_decoder,
@@ -230,10 +221,10 @@ def finetune(
 
             # Cible U(t) physique
             u_true = _laplace_to_u(u_laplace_norm, model.target_mean, model.target_std,
-                                   Nt, denom)
+                                   s_list_cpu, Nt, dt, alpha_t=alpha_t, lam=lam, rule=rule).to(device)
 
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                u_pred = model._generate_diff(th, dt=dt, gamma=gamma, rule=rule)
+                u_pred = model._generate_diff(th, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule)
                 loss   = F.mse_loss(u_pred.float(), u_true)
 
             optimizer.zero_grad(set_to_none=True)
@@ -284,10 +275,10 @@ def finetune(
                 u_laplace_norm = u_laplace_norm.to(device, non_blocking=True)
 
                 u_true = _laplace_to_u(u_laplace_norm, model.target_mean, model.target_std,
-                                       Nt, denom)
+                                       s_list_cpu, Nt, dt, alpha_t=alpha_t, lam=lam, rule=rule).to(device)
 
                 with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                    u_pred = model._generate_diff(th, dt=dt, gamma=gamma, rule=rule)
+                    u_pred = model._generate_diff(th, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule)
 
                 val_loss  += F.mse_loss(u_pred.float(), u_true).item()
                 val_l2rel += ((u_pred.float() - u_true).flatten(1).norm(dim=1)
@@ -324,15 +315,16 @@ def finetune(
             torch.save({
                 'model_state': best_state,
                 'model_type':  'LaplaceLatentModel',
-                'N_freq':      Nt,
-                'N_half':      Nt_half,
+                'K':           K,
+                'Nt':          Nt,
                 'N':           N,
                 'theta_dim':   theta_dim,
                 'latent_dim':  ckpt['latent_dim'],
                 'hidden_dim':  ckpt['hidden_dim'],
                 'k_max':       ckpt.get('k_max'),
                 'dt':          dt,
-                'gamma':       gamma,
+                'alpha_t':     alpha_t,
+                'lam':         lam,
                 'theta_mean':  dataset.theta_mean,
                 'theta_std':   dataset.theta_std,
                 'test_idx':    np.asarray(test_idx),
@@ -358,19 +350,26 @@ if __name__ == "__main__":
     model_ckpt   = os.path.join("checkpoints", "LaplaceLatentModel.pt")
     save_dir     = "checkpoints"
     seed         = 42
-    gamma        = 0.0
     rule         = 'trap'
     interp_size  = 128
     dt           = 1.0
+    alpha_t      = 0.0
+    lam          = 1e-6
 
     epochs       = 50
-    batch_size   = 16       # chaque item = simulation complète (Nt_half freqs)
+    batch_size   = 16       # chaque item = simulation complète (K freqs)
     lr_surrogate = 5e-5
     lr_decoder   = 1e-5
     patience     = 15
     project      = 'convdiff'
 
-    dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
+    # Charger s_list depuis le checkpoint du modèle assemblé
+    _ckpt_s = torch.load(model_ckpt, map_location='cpu', weights_only=False)
+    _s_real = _ckpt_s['model_state']['s_real'].numpy()
+    _s_imag = _ckpt_s['model_state']['s_imag'].numpy()
+    s_list  = (_s_real + 1j * _s_imag).astype(np.complex128)
+
+    dataset = TransientDataset(data_path, laplace=True, s_list=s_list, rule=rule,
                                interp_size=interp_size, dt=dt)
 
     _split   = np.load('dataset/split.npz')
@@ -396,4 +395,4 @@ if __name__ == "__main__":
              epochs=epochs, batch_size=batch_size,
              lr_surrogate=lr_surrogate, lr_decoder=lr_decoder,
              patience=patience, save_dir=save_dir, project=project,
-             dt=dt, gamma=gamma, rule=rule)
+             dt=dt, rule=rule, alpha_t=alpha_t, lam=lam)

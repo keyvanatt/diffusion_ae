@@ -35,7 +35,7 @@ def compute_svd_for_freq(U_laplace, train_idx, val_idx, k, k_svd, N):
 
     Paramètres
     ----------
-    U_laplace : ndarray mmap (ns, Nt_half, 2, N, N)
+    U_laplace : ndarray mmap (ns, K, 2, N, N)
     train_idx : liste d'indices train
     val_idx   : liste d'indices val
     k         : indice de fréquence
@@ -186,13 +186,14 @@ def train_one_freq(k, k_svd, theta_dim, N,
 # ---------------------------------------------------------------------------
 
 def assemble_and_save(model, train_idx, val_idx, test_idx,
-                      dataset, N, Nt, N_half, theta_dim,
-                      k_freq, k_svd, dt, gamma, rule, save_path):
+                      dataset, N, Nt, K, theta_dim,
+                      k_freq, k_svd, dt, rule, save_path):
     """Sauvegarde le LaplaceSVDModel avec toutes les métadonnées."""
+    model.set_s_list(dataset.s)
     ckpt = {
         'model_type':  'LaplaceSVDModel',
-        'N_freq':      Nt,
-        'N_half':      N_half,
+        'K':           K,
+        'Nt':          Nt,
         'N':           N,
         'theta_dim':   theta_dim,
         'k_freq':      k_freq,
@@ -201,7 +202,6 @@ def assemble_and_save(model, train_idx, val_idx, test_idx,
         'theta_mean':  dataset.theta_mean.numpy(),
         'theta_std':   dataset.theta_std.numpy(),
         'dt':          dt,
-        'gamma':       gamma,
         'rule':        rule,
         'test_idx':    test_idx,
     }
@@ -219,7 +219,6 @@ if __name__ == '__main__':
     data_path  = '/Data/KAT/ch4_rotated.npy'
     doe_path   = '/Data/KAT/doe_rotated.npy'
     dt         = 1      # pas de temps
-    gamma      = 0          # amortissement Laplace
     rule       = 'trap'       # règle de quadrature
     k_freq     = 20           # fréquences à modéliser
     k_svd      = 100           # composantes SVD par (fréquence, composante)
@@ -232,13 +231,16 @@ if __name__ == '__main__':
 
     wandb.init(project='convdiff', name=f'LaplaceSVD_kf{k_freq}_ks{k_svd}')
 
+    # Points s : k_freq premières fréquences FFT (Nt=150 pour ch4_rotated)
+    s_list = (1j * 2 * np.pi * np.fft.rfftfreq(150, d=dt))[:k_freq]
+
     # Dataset avec transformée de Laplace (calcule/charge le cache)
     dataset = TransientDataset(data_path, doe_path=doe_path,
-                               laplace=True, gamma=gamma, rule=rule, dt=dt)
+                               laplace=True, s_list=s_list, rule=rule, dt=dt)
     ns        = dataset.ns
     N         = dataset.N
     Nt        = dataset.Nt
-    N_half    = dataset.Nt_half
+    K    = dataset.K
     theta_dim = dataset.theta_dim
 
     # Split test fixe, val aléatoire sur le reste
@@ -262,7 +264,7 @@ if __name__ == '__main__':
     theta_norm_val   = theta_norm_all[val_idx]                 # (ns_val,   theta_dim)
 
     # Modèle global
-    model = LaplaceSVDModel(k_freq, Nt, N_half, N, theta_dim, k_svd)
+    model = LaplaceSVDModel(k_freq, K, Nt, N, theta_dim, k_svd)
     svd_errors_re = []
     svd_errors_im = []
 
@@ -327,7 +329,7 @@ if __name__ == '__main__':
 
     # ── Sauvegarde ───────────────────────────────────────────────────────────
     assemble_and_save(model, train_idx, val_idx, test_idx,
-                      dataset, N, Nt, N_half, theta_dim,
-                      k_freq, k_svd, dt, gamma, rule, save_path)
+                      dataset, N, Nt, K, theta_dim,
+                      k_freq, k_svd, dt, rule, save_path)
 
     wandb.finish()

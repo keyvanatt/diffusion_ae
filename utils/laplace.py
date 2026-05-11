@@ -114,8 +114,12 @@ def laplace_inverse_tik(U_hat, s_list, dt, Nt, alpha_t, lam, rule='trap'):
         A v* = Re(F^H û)
         A   = Re(F^H F) + alpha_t * D_t^T D_t + lam * I
 
-    Conjugate symmetry is exploited: frequencies with Im(s) > 0 are extended
-    by their complex conjugates before forming the normal equations.
+    Conjugate symmetry: frequencies with Im(s) > 0 are extended by their conjugates
+    before forming the normal equations (doubles effective constraints cheaply).
+
+    Works in float32 or float64 depending on s_list.dtype:
+      - complex128 (default) → float64, CPU, best accuracy
+      - complex64            → float32, stays on s_list.device, GPU-differentiable
 
     Parameters
     ----------
@@ -123,13 +127,13 @@ def laplace_inverse_tik(U_hat, s_list, dt, Nt, alpha_t, lam, rule='trap'):
     s_list : (K,) complex Tensor
     dt     : float
     Nt     : int   – number of time steps to reconstruct
-    alpha_t: float or scalar Tensor – temporal-smoothness weight
-    lam    : float or scalar Tensor – ridge weight
+    alpha_t: float – temporal-smoothness weight
+    lam    : float – ridge weight (use > 0 when K < Nt to avoid singularity)
     rule   : 'rect' | 'trap'  – must match forward
 
     Returns
     -------
-    V_rec : (Nnodes, Nt) real Tensor
+    V_rec : (Nnodes, Nt) real Tensor  (same device as s_list)
     """
     if not isinstance(U_hat, torch.Tensor):
         U_hat = torch.tensor(U_hat, dtype=torch.complex128)
@@ -137,33 +141,30 @@ def laplace_inverse_tik(U_hat, s_list, dt, Nt, alpha_t, lam, rule='trap'):
         s_list = torch.tensor(s_list, dtype=torch.complex128)
 
     device = s_list.device
-    U_hat = U_hat.to(device=device)
-    t = torch.arange(Nt, dtype=torch.float64, device=device) * dt
+    cdtype = s_list.dtype                                    # complex64 or complex128
+    rdtype = torch.float32 if cdtype == torch.complex64 else torch.float64
 
-    w = torch.ones(Nt, dtype=torch.float64, device=device)
+    U_hat = U_hat.to(device=device, dtype=cdtype)
+    t = torch.arange(Nt, dtype=rdtype, device=device) * dt
+    w = torch.ones(Nt, dtype=rdtype, device=device)
     if rule == 'trap':
-        w[0] = 0.5
-        w[-1] = 0.5
+        w[0] = 0.5; w[-1] = 0.5
 
-    # Conjugate extension for Im(s) > 0 frequencies
-    c_mask = s_list.imag > 0
-    s_full = torch.cat([s_list, torch.conj(s_list[c_mask])])
+    # Conjugate extension: Im(s) > 0 → add conjugate pair
+    c_mask     = s_list.imag > 0
+    s_full     = torch.cat([s_list, torch.conj(s_list[c_mask])])
     U_hat_full = torch.cat([U_hat, torch.conj(U_hat[:, c_mask])], dim=1)  # (Nnodes, K_full)
 
-    # F_full[k, t] = dt * w[t] * exp(-s_full[k] * t)   (K_full, Nt) complex
+    # F_full[k, t] = dt * w[t] * exp(-s_full[k] * t)   (K_full, Nt)
     F_full = dt * w[None, :] * torch.exp(-s_full[:, None] * t[None, :])
-    FH = torch.conj(F_full).T                          # (Nt, K_full)
-    FtF = torch.real(FH @ F_full)                      # (Nt, Nt)
+    FH     = torch.conj(F_full).T                           # (Nt, K_full)
+    FtF    = torch.real(FH @ F_full)                        # (Nt, Nt) rdtype
 
-    # Temporal-smoothness penalty: D_t^T D_t
-    Dt = (torch.diag(torch.ones(Nt - 1, dtype=torch.float64, device=device), 1)
-          - torch.eye(Nt, dtype=torch.float64, device=device))[:Nt - 1, :]
+    Dt    = (torch.diag(torch.ones(Nt - 1, dtype=rdtype, device=device), 1)
+             - torch.eye(Nt, dtype=rdtype, device=device))[:Nt - 1, :]
     DtTDt = Dt.T @ Dt
 
-    A = FtF + alpha_t * DtTDt + lam * torch.eye(Nt, dtype=torch.float64, device=device)
+    A   = FtF + alpha_t * DtTDt + lam * torch.eye(Nt, dtype=rdtype, device=device)
+    RHS = torch.real(U_hat_full @ torch.conj(F_full))       # (Nnodes, Nt)
 
-    # RHS[n, t] = Re( sum_k U_hat_full[n,k] * conj(F_full[k,t]) )
-    RHS = torch.real(U_hat_full @ torch.conj(F_full))  # (Nnodes, Nt)
-
-    # Solve A @ V_rec.T = RHS.T   (differentiable through linalg.solve)
-    return torch.linalg.solve(A, RHS.T).T              # (Nnodes, Nt)
+    return torch.linalg.solve(A, RHS.T).T                   # (Nnodes, Nt) rdtype

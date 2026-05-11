@@ -64,7 +64,7 @@ class SinusoidalFreqEncoding(nn.Module):
 
 class LaplaceEncoder(nn.Module):
     """
-    U → z, conditionné sur freq_ratio = k / N_half ∈ [0, 1].
+    U → z, conditionné sur freq_ratio = k / K ∈ [0, 1].
 
     U : (B, 2, N, N)  champ spatial complexe (Re, Im), normalisé
     """
@@ -112,7 +112,7 @@ class LaplaceEncoder(nn.Module):
 
 class LaplaceDecoder(nn.Module):
     """
-    z → Û (complexe, normalisé), conditionné sur freq_ratio = k / N_half ∈ [0, 1].
+    z → Û (complexe, normalisé), conditionné sur freq_ratio = k / K ∈ [0, 1].
 
     z : (B, latent_dim)
     retourne : (B, 2, N, N)  — canaux Re et Im
@@ -180,7 +180,7 @@ class LaplaceDecoder(nn.Module):
 
 class LaplaceAE(BaseAutoEncoder):
     """
-    Autoencoder déterministe conditionné sur la fréquence de Laplace k/N_half.
+    Autoencoder déterministe conditionné sur la fréquence de Laplace k/K.
 
     Paramètres
     ----------
@@ -236,7 +236,7 @@ class LaplaceAE(BaseAutoEncoder):
 
 class LaplaceLatentSurrogate(nn.Module):
     """
-    MLP θ → z → Û, conditionné sur freq_ratio = k / N_half.
+    MLP θ → z → Û, conditionné sur freq_ratio = k / K.
 
     Le décodeur partagé reçoit freq_ratio à chaque appel forward.
     """
@@ -276,7 +276,7 @@ class LaplaceLatentSurrogate(nn.Module):
 class LaplaceLatentModel(LaplaceModel):
     """
     Modèle complet AE :
-      - N_half LaplaceLatentSurrogate (MLP θ→z, un par fréquence)
+      - K LaplaceLatentSurrogate (MLP θ→z, un par fréquence)
       - un unique shared_decoder (LaplaceDecoder gelé, partagé par référence)
 
     Pipeline en 2 étapes :
@@ -284,7 +284,7 @@ class LaplaceLatentModel(LaplaceModel):
       2. Pour chaque fréquence k, entraîner LaplaceLatentSurrogate.proj
     """
 
-    def __init__(self, N_freq: int, N_half: int, N: int,
+    def __init__(self, K: int, Nt: int, N: int,
                  theta_dim: int = 4, latent_dim: int = 64, freq_L: int = 8,
                  k_max: int | None = None, hidden_dim: int = 256):
         BaseDecoder.__init__(self)
@@ -292,25 +292,26 @@ class LaplaceLatentModel(LaplaceModel):
             LaplaceLatentSurrogate(
                 latent_dim=latent_dim,
                 theta_dim=theta_dim,
-                freq_ratio=k / max(N_half - 1, 1),
+                freq_ratio=k / max(K - 1, 1),
                 hidden_dim=hidden_dim,
             )
-            for k in range(N_half)
+            for k in range(K)
         ])
         self.shared_decoder = LaplaceDecoder(N=N, latent_dim=latent_dim, freq_L=freq_L)
         self.shared_decoder.requires_grad_(False)
         self._inject_decoder()
 
-        self.N_freq     = N_freq
-        self.N_half     = N_half
+        self.K          = K
+        self.Nt         = Nt
         self.N          = N
         self.theta_dim  = theta_dim
         self.latent_dim = latent_dim
-        # Fréquences k > k_max → prédiction = moyenne (0 normalisé → target_mean après dénorm)
         self.k_max      = k_max
         self.hidden_dim = hidden_dim
-        self.register_buffer('target_mean', torch.zeros(N_half, 2, N, N))
-        self.register_buffer('target_std',  torch.ones(N_half,  2, N, N))
+        self.register_buffer('target_mean', torch.zeros(K, 2, N, N))
+        self.register_buffer('target_std',  torch.ones(K,  2, N, N))
+        self.register_buffer('s_real', torch.zeros(K, dtype=torch.float64))
+        self.register_buffer('s_imag', torch.zeros(K, dtype=torch.float64))
 
     def _inject_decoder(self):
         for s in self.surrogates:
@@ -328,7 +329,7 @@ class LaplaceLatentModel(LaplaceModel):
         self._inject_decoder()
         return result
 
-    def _forward_half_diff(self, theta_norm: torch.Tensor, n_active: int) -> torch.Tensor:
+    def _forward_k_diff(self, theta_norm: torch.Tensor, n_active: int) -> torch.Tensor:
         """
         Override optimisé : toutes les projections θ→z en n_active appels MLP,
         puis UN SEUL appel au shared_decoder batché.
@@ -360,7 +361,7 @@ class LaplaceLatentModel(LaplaceModel):
         )
 
     def __repr__(self) -> str:
-        return (f"LaplaceLatentModel(N_freq={self.N_freq}, N_half={self.N_half}, "
+        return (f"LaplaceLatentModel(K={self.K}, Nt={self.Nt}, "
                 f"N={self.N}, theta_dim={self.theta_dim}, latent_dim={self.latent_dim})\n"
                 f"Shared decoder : {self.shared_decoder.__class__.__name__}\n"
                 f"Surrogate par fréquence : {self.surrogates[0].__repr__()}")

@@ -150,17 +150,17 @@ class CorrectedPipeline(LaplaceLatentModel):
             self._modules[name] = mod
         for name, buf in surrogate._buffers.items():
             self._buffers[name] = buf
-        for attr in ('N_freq', 'N_half', 'N', 'theta_dim',
+        for attr in ('K', 'Nt', 'N', 'theta_dim',
                      'latent_dim', 'k_max', 'hidden_dim'):
             setattr(self, attr, getattr(surrogate, attr))
 
         self.correction_ae = correction_ae
 
     def _generate(self, theta_norm: torch.Tensor,
-                  dt: float = 1.0, gamma: float = 0.0,
+                  dt: float = 1.0, alpha_t: float = 0.0, lam: float = 1e-6,
                   rule: str = 'trap', k_max=None,
                   correction_chunk: int = 64) -> torch.Tensor:
-        U_pred = super()._generate(theta_norm, dt=dt, gamma=gamma, rule=rule, k_max=k_max)
+        U_pred = super()._generate(theta_norm, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, k_max=k_max)
         B, Nt, N, _ = U_pred.shape
         frames = U_pred.reshape(B * Nt, N, N)
         chunks = [self.correction_ae(frames[i:i + correction_chunk])
@@ -170,6 +170,6 @@ class CorrectedPipeline(LaplaceLatentModel):
     def __repr__(self) -> str:
         n_surr = sum(p.numel() for p in self.surrogates.parameters())
         n_ae   = sum(p.numel() for p in self.correction_ae.parameters())
-        return (f"CorrectedPipeline(N={self.N}, N_half={self.N_half})\n"
+        return (f"CorrectedPipeline(N={self.N}, K={self.K})\n"
                 f"  surrogate : {n_surr:,} params\n"
                 f"  correction: {n_ae:,} params")
