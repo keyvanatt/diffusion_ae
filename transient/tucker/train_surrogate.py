@@ -48,14 +48,15 @@ def train(
     nf_eff = G.shape[1]
     print(f"ns={ns}  nf_eff={nf_eff}  theta_dim={theta_dim}")
 
-    # Splits
+    # Split test fixe, val aléatoire sur le reste
+    _split   = np.load('dataset/split.npz')
+    test_idx = torch.from_numpy(_split['test_idx'].astype(np.int64))
+    non_test = [i for i in range(ns) if i not in set(test_idx.tolist())]
     torch.manual_seed(seed)
-    idx     = torch.randperm(ns, generator=torch.Generator().manual_seed(seed))
-    n_train = int(0.8 * ns)
-    n_val   = int(0.1 * ns)
-    train_idx = idx[:n_train]
-    val_idx   = idx[n_train:n_train + n_val]
-    test_idx  = idx[n_train + n_val:]
+    perm      = torch.randperm(len(non_test))
+    n_train   = int(0.8 * len(non_test))
+    train_idx = torch.tensor([non_test[i] for i in perm[:n_train].tolist()])
+    val_idx   = torch.tensor([non_test[i] for i in perm[n_train:].tolist()])
 
     dataset.fit(train_idx.tolist())
 

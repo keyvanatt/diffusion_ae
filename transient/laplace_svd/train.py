@@ -241,14 +241,15 @@ if __name__ == '__main__':
     N_half    = dataset.Nt_half
     theta_dim = dataset.theta_dim
 
-    # Split 80/10/10
-    rng     = np.random.default_rng(42)
-    idx     = rng.permutation(ns)
-    n_train = int(0.8 * ns)
-    n_val   = int(0.1 * ns)
-    train_idx = idx[:n_train].tolist()
-    val_idx   = idx[n_train:n_train + n_val].tolist()
-    test_idx  = idx[n_train + n_val:].tolist()
+    # Split test fixe, val aléatoire sur le reste
+    _split    = np.load('dataset/split.npz')
+    test_idx  = _split['test_idx'].tolist()
+    non_test  = np.array([i for i in range(ns) if i not in set(test_idx)])
+    rng       = np.random.default_rng(42)
+    perm      = rng.permutation(len(non_test))
+    n_train   = int(0.8 * len(non_test))
+    train_idx = non_test[perm[:n_train]].tolist()
+    val_idx   = non_test[perm[n_train:]].tolist()
     dataset.fit(train_idx)
 
     # Theta normalisé pour tous les samples

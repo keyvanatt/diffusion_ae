@@ -292,13 +292,15 @@ def main(
     dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
                                interp_size=interp_size, dt=dt)
 
-    torch.manual_seed(seed)
     torch.backends.cudnn.benchmark = True
-    idx       = torch.randperm(len(dataset))
-    n_train   = int(0.8 * len(dataset))
-    n_val     = int(0.1 * len(dataset))
-    train_idx = idx[:n_train].tolist()
-    val_idx   = idx[n_train:n_train + n_val].tolist()
+    _split   = np.load('dataset/split.npz')
+    test_idx = _split['test_idx']
+    non_test = [i for i in range(len(dataset)) if i not in set(test_idx.tolist())]
+    torch.manual_seed(seed)
+    perm     = torch.randperm(len(non_test))
+    n_train  = int(0.8 * len(non_test))
+    train_idx = [non_test[i] for i in perm[:n_train].tolist()]
+    val_idx   = [non_test[i] for i in perm[n_train:].tolist()]
 
     dataset.fit(train_idx)
     print("Chargement en RAM...", end=' ', flush=True)

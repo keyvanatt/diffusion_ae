@@ -373,16 +373,13 @@ if __name__ == "__main__":
     dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
                                interp_size=interp_size, dt=dt)
 
-    # Récupérer test_idx depuis LaplaceLatentModel.pt pour garder le même split.
-    _surr_ckpt = torch.load(model_ckpt, map_location='cpu', weights_only=False)
-    test_idx   = _surr_ckpt['test_idx']
-    test_set   = set(test_idx.tolist())
-    non_test   = [i for i in range(len(dataset)) if i not in test_set]
-
+    _split   = np.load('dataset/split.npz')
+    test_idx = _split['test_idx']
+    non_test = [i for i in range(len(dataset)) if i not in set(test_idx.tolist())]
     torch.manual_seed(seed)
     torch.backends.cudnn.benchmark = True
-    perm      = torch.randperm(len(non_test))
-    n_train   = int(0.8 * len(non_test))
+    perm     = torch.randperm(len(non_test))
+    n_train  = int(0.8 * len(non_test))
     train_idx = [non_test[i] for i in perm[:n_train].tolist()]
     val_idx   = [non_test[i] for i in perm[n_train:].tolist()]
 

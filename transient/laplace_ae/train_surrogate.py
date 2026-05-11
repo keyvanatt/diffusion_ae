@@ -446,13 +446,14 @@ if __name__ == '__main__':
     dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
                                interp_size=interp_size, dt=dt)
 
+    _split   = np.load('dataset/split.npz')
+    test_idx = _split['test_idx']
+    non_test = [i for i in range(len(dataset)) if i not in set(test_idx.tolist())]
     torch.manual_seed(seed)
-    idx       = torch.randperm(len(dataset))
-    n_train   = int(0.8 * len(dataset))
-    n_val     = int(0.1 * len(dataset))
-    train_idx = idx[:n_train].tolist()
-    val_idx   = idx[n_train:n_train + n_val].tolist()
-    test_idx  = idx[n_train + n_val:].numpy()
+    perm     = torch.randperm(len(non_test))
+    n_train  = int(0.8 * len(non_test))
+    train_idx = [non_test[i] for i in perm[:n_train].tolist()]
+    val_idx   = [non_test[i] for i in perm[n_train:].tolist()]
 
     dataset.fit(train_idx)
     print(f"Dataset : {tuple(dataset.U_laplace.shape)}  (Nt_half={dataset.Nt_half}/{dataset.Nt})")
