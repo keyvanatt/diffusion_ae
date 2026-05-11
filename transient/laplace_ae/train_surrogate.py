@@ -245,6 +245,7 @@ def train_all(
     ae          = None,
     k_max       = None,   # fréquences k > k_max → pas d'entraînement, prédiction = moyenne
     hidden_dim  = 256,
+    freq_L      = 8,
 ):
     """
     Entraîne un surrogate par fréquence de Laplace, séquentiellement.
@@ -359,11 +360,11 @@ def train_all(
     print(f"\nEntraînement terminé — val loss  mean={np.mean(best_vals):.3e}"
           f"  max={np.max(best_vals):.3e}  min={np.min(best_vals):.3e}")
 
-    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), ae=ae, k_max=k_max, hidden_dim=hidden_dim)
+    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), ae=ae, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L)
     return best_vals
 
 
-def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', ae=None, k_max=None, hidden_dim=256):
+def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', ae=None, k_max=None, hidden_dim=256, freq_L=8):
     """
     Charge les checkpoints individuels et assemble LaplaceModel ou LaplaceLatentModel.
     Sauvegarde dans <save_dir>/LaplaceModel.pt ou LaplaceLatentModel.pt.
@@ -377,7 +378,7 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
         _ckpt0 = torch.load(os.path.join(ckpt_dir, 'LatentSurrogate_freq000.pt'), map_location='cpu', weights_only=False)
         hidden_dim = _ckpt0.get('hidden_dim', hidden_dim)
         model      = LaplaceLatentModel(K=K, Nt=Nt, N=N,
-                                        theta_dim=theta_dim, latent_dim=ae.latent_dim, k_max=k_max, hidden_dim=hidden_dim)
+                                        theta_dim=theta_dim, latent_dim=ae.latent_dim, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L)
         model.set_ae_decoder(ae)
         prefix     = 'LatentSurrogate'
         model_type = 'LaplaceLatentModel'
@@ -416,6 +417,7 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
         'test_idx':    np.asarray(test_idx),
         'k_max':       k_max,
         'hidden_dim':  hidden_dim,
+        'freq_L':      freq_L,
         **extra,
     }, out_path)
     print(f"{model_type} assemblé → {out_path}")

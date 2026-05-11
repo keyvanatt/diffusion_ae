@@ -34,7 +34,7 @@ class TransientDataset(Dataset):
     def __init__(self, data_path: str, laplace: bool = False,
                  s_list=None, rule: str = 'trap', dt: float = 1.0,
                  doe_path: str | None = None, interp_size: int | None = None,
-                 cache_dir: str = '/Data/KAT'):
+                 cache_dir: str = '/Data/KAT', ns_max: int | None = None):
         if data_path.endswith('.npy'):
             # Données boris : ch4_rotated.npy + doe_rotated.npy
             # Gardé en mmap — pas de matérialisation en RAM
@@ -43,6 +43,9 @@ class TransientDataset(Dataset):
                 doe_path = str(Path(data_path).parent / 'doe_rotated.npy')
             doe = np.load(doe_path)                                    # structured (ns,)
             theta_np = np.stack([doe['k'], doe['A'], doe['C']], axis=1).astype(np.float32)
+            if ns_max is not None:
+                U_raw    = U_raw[:ns_max]
+                theta_np = theta_np[:ns_max]
             self.theta = torch.tensor(theta_np, dtype=torch.float32)  # (ns, 3)
             self.dt    = dt
             ns, Nt, H, W = U_raw.shape

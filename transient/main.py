@@ -51,6 +51,7 @@ def load_model(ckpt_path: str, device: torch.device):
             latent_dim = ckpt['latent_dim'],
             hidden_dim = ckpt['hidden_dim'],
             k_max      = ckpt.get('k_max'),
+            freq_L     = ckpt.get('freq_L', 8),
         ).to(device)
 
     elif model_type == 'LaplaceSVDModel':

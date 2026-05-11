@@ -138,6 +138,7 @@ def finetune(
         K=ckpt['K'], Nt=ckpt['Nt'], N=ckpt['N'],
         theta_dim=ckpt['theta_dim'], latent_dim=ckpt['latent_dim'],
         hidden_dim=ckpt['hidden_dim'], k_max=ckpt.get('k_max'),
+        freq_L=ckpt.get('freq_L', 8),
     )
     model.load_state_dict(ckpt['model_state'])
     model.to(device)
@@ -322,6 +323,7 @@ def finetune(
                 'latent_dim':  ckpt['latent_dim'],
                 'hidden_dim':  ckpt['hidden_dim'],
                 'k_max':       ckpt.get('k_max'),
+                'freq_L':      ckpt.get('freq_L', 8),
                 'dt':          dt,
                 'alpha_t':     alpha_t,
                 'lam':         lam,

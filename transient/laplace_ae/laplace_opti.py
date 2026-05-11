@@ -25,6 +25,7 @@ _eye_Nt = None
 t       = None
 H_sub   = None
 W_sub   = None
+_dt     = None   # alias global pour le pas de temps dt
 
 
 def path_bromwich(K, gamma=0.0, Nt=150, dt=1.0):
@@ -44,7 +45,7 @@ def _compute_laplace_matrices(s_list, alpha_t, lam, w):
     """
     c_mask = (s_list.imag > 0)
     s_full = torch.cat([s_list, torch.conj(s_list[c_mask])])
-    F_full = dt * w[None, :] * torch.exp(-s_full[:, None] * t)   # (K_full, Nt)
+    F_full = _dt * w[None, :] * torch.exp(-s_full[:, None] * t)   # (K_full, Nt)
     FH     = torch.conj(F_full).T                                  # (Nt, K_full)
     FtF    = torch.real(FH @ F_full)                               # (Nt, Nt)
     A      = FtF + alpha_t * _DtTDt + lam * _eye_Nt
@@ -126,8 +127,8 @@ def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
     is accumulated over spatial chunks — memory = n_cases * sp_chunk * K * 8 B.
     """
     s_exp = torch.exp(-s_list[:, None] * t)          # (K, Nt)
-    F_re  = (dt * w[None, :] * s_exp.real)            # (K, Nt)
-    F_im  = (dt * w[None, :] * s_exp.imag)
+    F_re  = (_dt * w[None, :] * s_exp.real)            # (K, Nt)
+    F_im  = (_dt * w[None, :] * s_exp.imag)
 
     n_cases, N_spatial, _ = V_tensor.shape
     K = s_list.shape[0]
@@ -234,6 +235,7 @@ def optimize_laplace_path(
     gamma_min=-0.05, lr=5e-3, n_epochs=500,
     case_chunk=10, sp_chunk=2000, seed=42,
     data_path=None, log_wandb=True,
+    indices=None,   # si fourni, échantillonne uniquement parmi ces indices
 ):
     """
     Optimize s-points for Laplace inversion path.
@@ -244,7 +246,7 @@ def optimize_laplace_path(
     lam_opt  : float
     alpha_t_opt : float
     """
-    global _DtTDt, _eye_Nt, t, H_sub, W_sub
+    global _DtTDt, _eye_Nt, t, H_sub, W_sub, _dt
 
     if data_path is None:
         data_path = os.path.join("dataset", "CH4.npy")
@@ -252,6 +254,7 @@ def optimize_laplace_path(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Initialize module-level globals used by _fused_chunk and _compute_laplace_matrices
+    _dt     = dt
     t       = torch.arange(Nt, dtype=torch.float64, device=device) * dt
     _Dt     = (torch.diag(torch.ones(Nt - 1), 1) - torch.eye(Nt, dtype=torch.float64))[:Nt - 1, :]
     _DtTDt  = (_Dt.T @ _Dt).to(device)
@@ -263,7 +266,8 @@ def optimize_laplace_path(
     C_full   = np.load(data_path, mmap_mode='r')
     n_total  = C_full.shape[0]
     np.random.seed(seed)
-    cases_idx = np.random.choice(n_total, size=n_cases, replace=False)
+    pool      = np.asarray(indices) if indices is not None else np.arange(n_total)
+    cases_idx = pool[np.random.choice(len(pool), size=min(n_cases, len(pool)), replace=False)]
     C_cases   = C_full[cases_idx, :, ::step, ::step].copy().astype(np.float64)
     n_cases_, Nt_, H_sub, W_sub = C_cases.shape
     N_spatial = H_sub * W_sub
