@@ -5,20 +5,38 @@
 ## Structure
 
 ```
-models/               — architectures PyTorch
-  base.py             — BaseAutoEncoder, BaseDecoder
+models/                        — architectures PyTorch
+  base.py                      — BaseAutoEncoder, BaseDecoder
   variationalAutoEncoder.py
-  direct_decoder.py   — DirectDecoder, DirectDecoderDenseOut
-  laplace_surrogate.py         — LaplaceModel (Pipeline 2)
-  laplace_ae_surrogate.py      — LaplaceLatentModel (Pipeline 3)
-  svd_surrogate.py             — SVDSurrogate (Pipeline 1)
-  correction_ae.py             — CorrectionAE, CorrectedPipeline (Pipeline 4)
+  direct_decoder.py            — DirectDecoder, DirectDecoderDenseOut
+  laplace_surrogate.py         — LaplaceModel (pipeline 3)
+  laplace_svd_surrogate.py     — LaplaceSVDModel (pipeline 2)
+  laplace_ae_surrogate.py      — LaplaceLatentModel (pipeline 4)
+  svd_surrogate.py             — SVDSurrogate (pipeline 1)
+  correction_ae.py             — CorrectionAE, CorrectedPipeline (pipeline 5)
 
-stationary/           — champ stationnaire (θ → U)
-transient/            — champs transitoires (θ → U(t))
-utils/                — solveur FEM, génération dataset, SVD, Laplace, animations
-dataset/              — données brutes (.npy / .npz)
-checkpoints/          — modèles sauvegardés (.pt)
+stationary/                    — champ stationnaire (θ → U)
+
+transient/                     — champs transitoires (θ → U(t))
+  dataset.py                   — TransientDataset
+  main.py                      — load_model, run_inference
+  app.py                       — Streamlit
+  benchmark.py
+  tucker/                      — pipeline 1 : Tucker POD (domaine temporel)
+    learn_svd.py
+    train_surrogate.py
+  laplace_svd/                 — pipeline 2 : SVD linéaire par fréquence
+    train.py
+  laplace_ae/                  — pipelines 3-5 : AE Laplace + surrogate + correction
+    train_ae.py
+    train_surrogate.py
+    finetune.py
+    train_correction.py
+
+utils/                         — solveur FEM, SVD, Laplace, animations
+scripts/                       — analyses, visualisation, one-off
+dataset/                       — données brutes (.npy / .npz)
+checkpoints/                   — modèles sauvegardés (.pt)
 ```
 
 ## Partie 1 — Stationnaire
@@ -37,34 +55,40 @@ Prédit le champ stationnaire de convection-diffusion 2D depuis θ = (D, bx, by,
 Prédit les champs CH4 transitoires U(t) depuis θ = (k, A, C).
 Dataset principal : `dataset/ch4_rotated.npy` (8 100 sims × 150 pas × 200×200).
 
-### Pipeline 1 — SVD Tucker
+### Pipeline 1 — Tucker POD (domaine temporel)
 
 ```bash
-.conda/bin/python transient/learn_svd.py
-.conda/bin/python transient/train_surrogate_svd.py
+.conda/bin/python transient/tucker/learn_svd.py
+.conda/bin/python transient/tucker/train_surrogate.py
 ```
 
-### Pipeline 2 — Surrogate Laplace
+### Pipeline 2 — SVD linéaire par fréquence Laplace
 
 ```bash
-.conda/bin/python transient/train_laplace.py
+.conda/bin/python transient/laplace_svd/train.py
 ```
 
-### Pipeline 3 — AE latent Laplace (3 étapes)
+### Pipeline 3 — Surrogate direct dans l'espace de Laplace
 
 ```bash
-.conda/bin/python transient/train_ae_laplace.py
-.conda/bin/python transient/train_laplace.py      # mode LaplaceLatentSurrogate
-.conda/bin/python transient/finetune_decoder_laplace.py
+.conda/bin/python transient/laplace_ae/train_surrogate.py
 ```
 
-### Pipeline 4 — CorrectionAE (post-traitement)
+### Pipeline 4 — AE latent Laplace (3 étapes)
+
+```bash
+.conda/bin/python transient/laplace_ae/train_ae.py
+.conda/bin/python transient/laplace_ae/train_surrogate.py  # mode LaplaceLatentSurrogate
+.conda/bin/python transient/laplace_ae/finetune.py
+```
+
+### Pipeline 5 — CorrectionAE (post-traitement)
 
 Corrige les artefacts oscillatoires du surrogate frame-par-frame via un UNet résiduel.
 Pré-calcule les paires (U_pred, U_true) une seule fois, puis entraîne le UNet.
 
 ```bash
-.conda/bin/python transient/train_correction_ae.py
+.conda/bin/python transient/laplace_ae/train_correction.py
 ```
 
 Inférence via `CorrectedPipeline` (surrogate + correction enchaînés) :

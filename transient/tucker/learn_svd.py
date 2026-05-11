@@ -1,6 +1,6 @@
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from tqdm import tqdm
 import numpy as np
 from utils.SVD_Amine_3D import svd_3d_gpu, svd_inverse_3d

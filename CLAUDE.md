@@ -124,29 +124,41 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 
 **Principe :** décomposer les champs via Tucker SVD pour extraire des coefficients `G` par simulation, puis apprendre θ → G.
 
-**Étape 1 — Décomposition Tucker SVD** (`transient/learn_svd.py`) :
+**Étape 1 — Décomposition Tucker SVD** (`transient/tucker/learn_svd.py`) :
 - Sous-échantillonnage spatial (défaut `step=5`), reshape en `HH (nr, ns, Nt)`
 - `svd_3d_gpu` de `utils/SVD_Amine_3D.py` décompose HH en `F (nr, nf_eff)`, `G (ns, nf_eff)`, `P (Nt, nf_eff)`, `alph (nf_eff,)`
 - Sauvegarde `dataset/svd_train_diff.npz` ; GIF de comparaison dans `plots/`
 
-**Étape 2 — Entraînement surrogate** (`transient/train_surrogate_svd.py`) :
+**Étape 2 — Entraînement surrogate** (`transient/tucker/train_surrogate.py`) :
 - Utilise `TransientDataset` pour theta et ses stats de normalisation
 - Sauvegarde `checkpoints/SVDSurrogate_best.pt` avec `model_state` (inclut les buffers F, P, alph, G_mean, G_std), `theta_mean/std`, `test_idx`
 
 **Note d'implémentation SVD :** dans `svd_3d_gpu`, les dénominateurs doivent être recalculés séquentiellement après chaque mise à jour R/S/T pour éviter la divergence NaN.
 
 ```bash
-.conda/bin/python transient/learn_svd.py
-.conda/bin/python transient/train_surrogate_svd.py
+.conda/bin/python transient/tucker/learn_svd.py
+.conda/bin/python transient/tucker/train_surrogate.py
 ```
 
-## Pipeline 2 — Surrogate dans l'espace de Laplace
+## Pipeline 2 — SVD linéaire dans l'espace de Laplace
+
+**Principe :** SVD tronquée par fréquence sur les champs Laplace, puis MLP θ → coefficients SVD pour chaque fréquence.
+
+**Fichier clé :** `transient/laplace_svd/train.py` — pour chaque fréquence k : SVD tronquée (`torch.svd_lowrank`) sur Re_k et Im_k du train set, puis entraîne un `LaplaceSVDSurrogate` par composante.
+
+**Checkpoint :** `checkpoints/LaplaceSVDModel.pt`
+
+```bash
+.conda/bin/python transient/laplace_svd/train.py
+```
+
+## Pipeline 3 — Surrogate direct dans l'espace de Laplace
 
 **Principe :** prédire la transformée de Laplace numérique $\hat{U}(s_k)$ pour chaque fréquence $s_k = \gamma + i\omega_k$, puis reconstruire U(t) par transformée inverse.
 
 **Fichiers clés :**
 - `utils/laplace.py` — `laplace_forward` et `laplace_inverse`
-- `transient/train_laplace.py` — trois fonctions :
+- `transient/laplace_ae/train_surrogate.py` — trois fonctions :
   - `train_one(k, s_k, ...)` → entraîne un `LaplaceSurrogate` (ou `LaplaceLatentSurrogate` si `vae` fourni) pour la fréquence k, sauvegarde dans `checkpoints/laplace/LaplaceSurrogate_freq{k:03d}.pt`
   - `train_all(dataset, train_idx, val_idx, test_idx, ...)` → boucle sur toutes les fréquences, puis appelle `assemble_model`
   - `assemble_model(dataset, ckpt_dir, test_idx, save_dir)` → charge les N checkpoints individuels, assemble un `LaplaceModel` unique, sauvegarde dans `save_dir/LaplaceModel.pt`
@@ -158,24 +170,24 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 **Symétrie conjuguée :** seules les `Nt_half = Nt//2 + 1` premières fréquences sont entraînées. Le spectre complet est reconstruit par `M[Nt-k] = conj(M[k])`.
 
 ```bash
-.conda/bin/python transient/train_laplace.py
+.conda/bin/python transient/laplace_ae/train_surrogate.py
 ```
 
-## Pipeline 3 — AE latent dans l'espace de Laplace (3 étapes)
+## Pipeline 4 — AE latent dans l'espace de Laplace (3 étapes)
 
 **Principe :** entraîner d'abord un autoencoder `LaplaceAE` sur tous les champs Laplace (conditionné sur la fréquence via FiLM), puis apprendre θ → z (espace latent) pour chaque fréquence avec le décodeur gelé, et enfin finetuner end-to-end.
 
-**Étape 1 — Entraînement de l'AE** (`transient/train_ae_laplace.py`) :
+**Étape 1 — Entraînement de l'AE** (`transient/laplace_ae/train_ae.py`) :
 - Dataset aplati `(simulation, fréquence)` : chaque paire est un échantillon.
 - `_LaplaceFlatDataset` : ordre sim-first, `reshuffle()` à chaque epoch pour mélanger les sims.
 - Sauvegarde `checkpoints/LaplaceAE_best.pt` avec `model_state`, `N`, `latent_dim`, `val_loss`.
 
-**Étape 2 — Entraînement des surrogates θ→z** (`transient/train_laplace.py` avec `vae` fourni) :
+**Étape 2 — Entraînement des surrogates θ→z** (`transient/laplace_ae/train_surrogate.py` avec `vae` fourni) :
 - Utilise `train_one(..., vae=ae)` : crée un `LaplaceLatentSurrogate`, injecte le décodeur gelé, entraîne seulement `proj` (MLP θ→z).
 - Sauvegarde `checkpoints/laplace_latent/LatentSurrogate_freq{k:03d}.pt` par fréquence.
 - `assemble_model(...)` assemble l'ensemble en `LaplaceLatentModel`, sauvegarde `checkpoints/LaplaceLatentModel.pt`.
 
-**Étape 3 — Finetune end-to-end** (`transient/finetune_decoder_laplace.py`) :
+**Étape 3 — Finetune end-to-end** (`transient/laplace_ae/finetune.py`) :
 - Charge `LaplaceLatentModel.pt`, dégèle le `shared_decoder`.
 - `_FinetuneDataset` : ordre freq-first → 1 seule fréquence par batch → forward batché rapide (1 proj + 1 decoder call).
 - LR différentiel : `lr_surrogate > lr_decoder` (typiquement 5e-5 / 1e-5).
@@ -189,12 +201,13 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 - `checkpoints/LaplaceLatentModel_finetuned.pt` — modèle finetuné end-to-end
 
 ```bash
-.conda/bin/python transient/train_ae_laplace.py
-# puis modifier train_laplace.py pour utiliser le mode LaplaceLatentSurrogate (vae fourni)
-.conda/bin/python transient/finetune_decoder_laplace.py
+.conda/bin/python transient/laplace_ae/train_ae.py
+# puis modifier train_surrogate.py pour utiliser le mode LaplaceLatentSurrogate (vae fourni)
+.conda/bin/python transient/laplace_ae/train_surrogate.py
+.conda/bin/python transient/laplace_ae/finetune.py
 ```
 
-## Pipeline 4 — CorrectionAE (post-traitement frame-par-frame)
+## Pipeline 5 — CorrectionAE (post-traitement frame-par-frame)
 
 **Principe :** corriger les artefacts oscillatoires du surrogate en appliquant un UNet résiduel frame-par-frame. Pré-calcul unique des paires (U_pred, U_true) sous forme de memmaps, puis entraînement du UNet sans appel au surrogate.
 
@@ -202,7 +215,7 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 - `models/correction_ae.py` :
   - `CorrectionAE(N, base_ch)` — UNet résiduel (encodeur 3 niveaux + bottleneck + décodeur skip). `out_conv` zero-init → identité au démarrage. `forward()` normalise chaque frame per-sample avant le UNet et rescale le résidu en sortie (Option B). `loss(U_corr, U_true, U_pred)` porte sur le résidu normalisé par son écart-type (Option A) + terme gradient spatial.
   - `CorrectedPipeline(surrogate, correction_ae)` — hérite de `LaplaceLatentModel`. Partage les modules du surrogate par référence (pas de duplication mémoire). Surcharge `_generate()` : appelle `super()._generate()` puis applique la correction par chunks de 64 frames.
-- `transient/train_correction_ae.py` :
+- `transient/laplace_ae/train_correction.py` :
   - `precompute()` — génère des memmaps `(ns, kt, N, N) × 2` dans `cache_dir`. Libère le surrogate GPU (`del surrogate; torch.cuda.empty_cache()`) avant l'entraînement.
   - `_FrameDataset` — lit directement depuis les memmaps, `num_workers=4`.
   - `train()` — deux barres tqdm (epoch + batch), wandb avec images toutes les 5 epochs.
@@ -215,7 +228,7 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
 - `checkpoints/CorrectionAE_best.pt` — contient `model_state`, `model_type='CorrectionAE'`, `N`, `base_ch`, `surrogate_ckpt` (chemin vers le surrogate associé), `test_idx`.
 
 ```bash
-.conda/bin/python transient/train_correction_ae.py
+.conda/bin/python transient/laplace_ae/train_correction.py
 ```
 
 ## Inférence transitoire
