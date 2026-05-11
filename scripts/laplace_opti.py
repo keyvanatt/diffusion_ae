@@ -19,8 +19,15 @@ import torch.utils.checkpoint as checkpoint
 import wandb
 from tqdm import tqdm
 
+# Module-level globals set by optimize_laplace_path (needed by checkpoint-wrapped _fused_chunk)
+_DtTDt  = None
+_eye_Nt = None
+t       = None
+H_sub   = None
+W_sub   = None
 
-def path_bromwich(K, gamma=0.0):
+
+def path_bromwich(K, gamma=0.0, Nt=150, dt=1.0):
     """Bromwich: horizontal line at Re(s)=gamma, linearly spaced omega."""
     omega = 2 * np.pi * np.fft.rfftfreq(Nt, d=dt)[:K]
     return torch.tensor(gamma) + 1j * torch.tensor(omega)
@@ -91,27 +98,22 @@ def _fused_chunk(V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask):
     diff_t = err_c[:, :, 1:] - err_c[:, :, :-1]
 
     # Différence spatiale
-    # On redimensionne l'erreur pour retrouver la topologie 2D (cc, H, W, Nt)
     err_2d = err_c.reshape(cc, H_sub, W_sub, -1)
-    
-    # Gradients spatiaux via différences finies
     diff_x = err_2d[:, 1:, :, :] - err_2d[:, :-1, :, :]
     diff_y = err_2d[:, :, 1:, :] - err_2d[:, :, :-1, :]
 
     # Normes
     norm_err    = torch.norm(err_c,  dim=(1, 2))
     norm_diff_t = torch.norm(diff_t, dim=(1, 2))
-    
-    # Norme de Frobenius des gradients spatiaux (somme des normes partielles)
     norm_diff_x = diff_x.flatten(1).norm(dim=1)
     norm_diff_y = diff_y.flatten(1).norm(dim=1)
-    norm_diff_s = norm_diff_x + norm_diff_y # Approximation robuste de ||∇(err)||
+    norm_diff_s = norm_diff_x + norm_diff_y
 
     norm_v = torch.norm(V_c, dim=(1, 2))
 
-    return (torch.sum(norm_err), 
-            torch.sum(norm_diff_t), 
-            torch.sum(norm_diff_s), 
+    return (torch.sum(norm_err),
+            torch.sum(norm_diff_t),
+            torch.sum(norm_diff_s),
             torch.sum(norm_err / norm_v))
 
 
@@ -136,19 +138,15 @@ def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
         V_sp   = V_tensor[:, sp:sp + sp_chunk, :]    # (n_cases, sp_size, Nt)
         U_re_sp = V_sp @ F_re.T                       # (n_cases, sp_size, K)
         U_im_sp = V_sp @ F_im.T
-        # G[k, i, j] += einsum over spatial: U_re[i,sp,k]*U_re[j,sp,k] + U_im[...]
         G += (torch.einsum('isk,jsk->kij', U_re_sp, U_re_sp) +
               torch.einsum('isk,jsk->kij', U_im_sp, U_im_sp))
 
     G_global = G.sum(dim=0)                          # (n_cases, n_cases)
 
-    #  On fait une seule diagonalisation
     ev      = torch.linalg.eigvalsh(G_global)        # (n_cases,)
     n       = ev.shape[-1]
     r       = min(n_latent, n)
-    
-    # On coupe la queue globale et on calcule l'erreur
-    tail_sq = ev[:n - r].sum()                       # Scalaire
+    tail_sq = ev[:n - r].sum()
     error   = torch.sqrt(tail_sq.clamp(min=1e-20) / n)
     return error
 
@@ -172,7 +170,7 @@ def reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=2):
     F_re, F_im   = F_base.real, F_base.imag
     FH_re, FH_im = FH.real, FH.imag
 
-    n_cases, N_spatial, _ = V_tensor.shape
+    n_cases, N_spatial, Nt_ = V_tensor.shape
     K_full = F_full.shape[0]
     chunks = []
 
@@ -186,7 +184,7 @@ def reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=2):
         U_flat_re = U_re_full.reshape(cc * N_spatial, K_full)
         U_flat_im = U_im_full.reshape(cc * N_spatial, K_full)
         RHS = FH_re @ U_flat_re.T - FH_im @ U_flat_im.T
-        V_recon_c = torch.linalg.lu_solve(LU, pivots, RHS).T.reshape(cc, N_spatial, Nt)
+        V_recon_c = torch.linalg.lu_solve(LU, pivots, RHS).T.reshape(cc, N_spatial, Nt_)
         chunks.append(V_recon_c)
 
     return torch.cat(chunks, dim=0)
@@ -206,7 +204,7 @@ def _log_s_scatter(s_cur, s_ref, epoch):
                s=80, marker='*', zorder=4, label='current')
     ax.axhline(0, color='gray', lw=0.5); ax.axvline(0, color='gray', lw=0.5)
     ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
-    ax.grid(True, alpha=0.3);
+    ax.grid(True, alpha=0.3)
     ax.set_xscale('symlog', linthresh=1e-3)
     ax.set_title(f's-points  epoch {epoch}'); ax.legend(fontsize=7)
     fig.tight_layout()
@@ -218,234 +216,269 @@ def _log_s_text(s_list):
     s_str = ", ".join(f"{z.real:.4f}+{z.imag:.4f}j" for z in s_list.detach().cpu().numpy().tolist())
     return wandb.Html(f"<pre style='font-family: monospace; white-space: pre-wrap;'>[{s_str}]</pre>")
 
-def path_log_reel(K,T,dt, eps_im = 1e-3):
+def path_log_reel(K, T, dt, eps_im=1e-3):
     """Path logarithmique parallèle à l'axe réel, avec espacement log entre eps et 1/dt."""
     s_max = 10.0 / dt
-    s_min = 1.0/T
+    s_min = 1.0 / T
     return torch.logspace(np.log10(s_min), np.log10(s_max), K, dtype=torch.float64) + eps_im * 1j
 
 
-
 # ---------------------------------------------------------------------------
-# Parameters
+# Main optimization function
 # ---------------------------------------------------------------------------
-Nt      = 150
-dt      = 1.0
-K       = 20
-gamma   = 0.0
-lambda_diff = 0.5
-lambda_x = 0.5
-step     = 1
-t_frame  = 50
-seed = 42
-n_cases = 100
-n_latent = 64
-lambda_ae = 1.25
-gamma_min = -0.05
-lr = 5e-3
-n_epochs = 500
-case_chunk = 10   # cases per checkpoint call
-sp_chunk   = 2000  # spatial points per Gram-accumulation step
-initial_s = path_bromwich(K, gamma=gamma)  # (K,) complex64 tensor
-print(f"Initial s points: {', '.join(f'{z:.4f}' for z in initial_s)}")
 
-device  = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-t       = torch.arange(Nt, dtype=torch.float64, device=device) * dt
-_Dt     = (torch.diag(torch.ones(Nt - 1), 1) - torch.eye(Nt, dtype=torch.float64))[:Nt - 1, :]
-_DtTDt  = (_Dt.T @ _Dt).to(device)
-_eye_Nt = torch.eye(Nt, dtype=torch.float64, device=device)
+def optimize_laplace_path(
+    Nt=150, dt=1.0, K=20, gamma=0.0,
+    lambda_diff=0.5, lambda_x=0.5,
+    step=1, n_cases=100, n_latent=64, lambda_ae=1.25,
+    gamma_min=-0.05, lr=5e-3, n_epochs=500,
+    case_chunk=10, sp_chunk=2000, seed=42,
+    data_path=None, log_wandb=True,
+):
+    """
+    Optimize s-points for Laplace inversion path.
 
-wandb.init(
-    project="convdiff",
-    name="laplace_opti_s",
-    config=dict(K=K, Nt=Nt, dt=dt, gamma=gamma, lambda_diff=lambda_diff, lambda_x=lambda_x,
-                step=step, n_cases=n_cases, n_latent=n_latent, lambda_ae=lambda_ae,
-                gamma_min=gamma_min, lr_init=lr, n_epochs=n_epochs, seed=seed,
-                case_chunk=case_chunk, sp_chunk=sp_chunk,
-                alpha_x=0, bias_formula="mean_abs"), 
-)
+    Returns
+    -------
+    s_opt    : torch.Tensor, complex128, shape (K,), CPU
+    lam_opt  : float
+    alpha_t_opt : float
+    """
+    global _DtTDt, _eye_Nt, t, H_sub, W_sub
 
-s_list  = initial_s.detach().clone().to(device).requires_grad_(True).type(torch.complex128)
-lam     = torch.tensor(1e-3, dtype=torch.float64,  device=device).requires_grad_(True)
-alpha_t = torch.tensor(1e-3, dtype=torch.float64,  device=device).requires_grad_(True)
+    if data_path is None:
+        data_path = os.path.join("dataset", "CH4.npy")
 
-data_path = os.path.join("dataset", "CH4.npy")
-C_full = np.load(data_path, mmap_mode='r')
-n_total = C_full.shape[0]
-np.random.seed(seed)
-cases_idx = np.random.choice(n_total, size=n_cases, replace=False)
-C_cases = C_full[cases_idx, :, ::step, ::step].copy().astype(np.float64)
-n_cases_, Nt_, H_sub, W_sub = C_cases.shape
-N_spatial = H_sub * W_sub
-V = C_cases.transpose(0, 2, 3, 1).reshape(n_cases, N_spatial, Nt)
-V_tensor = torch.tensor(V, dtype=torch.float64, device=device)
-print(f"Loaded {n_cases} cases: V {V_tensor.shape}  device={device}  (N_spatial={N_spatial})")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-torch.manual_seed(seed)
-optimizer = torch.optim.AdamW([s_list, lam, alpha_t], lr=lr, weight_decay=1e-4)
-w = torch.ones(Nt, dtype=torch.float64, device=device); w[0] = 0.5; w[-1] = 0.5
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    # Initialize module-level globals used by _fused_chunk and _compute_laplace_matrices
+    t       = torch.arange(Nt, dtype=torch.float64, device=device) * dt
+    _Dt     = (torch.diag(torch.ones(Nt - 1), 1) - torch.eye(Nt, dtype=torch.float64))[:Nt - 1, :]
+    _DtTDt  = (_Dt.T @ _Dt).to(device)
+    _eye_Nt = torch.eye(Nt, dtype=torch.float64, device=device)
 
-norm_V_tensor  = torch.norm(V_tensor)   # kept for baseline logging only
+    initial_s = path_bromwich(K, gamma=gamma, Nt=Nt, dt=dt)
+    print(f"Initial s points: {', '.join(f'{z:.4f}' for z in initial_s)}")
 
-# ── Baseline avant optimisation ───────────────────────────────────────────────
-s_init = s_list.detach().clone()
-with torch.no_grad():
-    V_recon0 = reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=case_chunk)
-    l2rel_init = (
-        torch.norm(V_recon0 - V_tensor, dim=(1, 2))
-        / torch.norm(V_tensor, dim=(1, 2))
-    ).cpu().numpy()
-    node   = N_spatial // 2
-    v_init = V_recon0[0, node].cpu().numpy()
-    del V_recon0
-    torch.cuda.empty_cache()
+    C_full   = np.load(data_path, mmap_mode='r')
+    n_total  = C_full.shape[0]
+    np.random.seed(seed)
+    cases_idx = np.random.choice(n_total, size=n_cases, replace=False)
+    C_cases   = C_full[cases_idx, :, ::step, ::step].copy().astype(np.float64)
+    n_cases_, Nt_, H_sub, W_sub = C_cases.shape
+    N_spatial = H_sub * W_sub
+    V         = C_cases.transpose(0, 2, 3, 1).reshape(n_cases, N_spatial, Nt)
+    V_tensor  = torch.tensor(V, dtype=torch.float64, device=device)
+    print(f"Loaded {n_cases} cases: V {V_tensor.shape}  device={device}  (N_spatial={N_spatial})")
 
-# ── Boucle d'optimisation ─────────────────────────────────────────────────────
-pbar = tqdm(range(n_epochs), desc="Optim s-points", unit="epoch")
-for epoch in pbar:
-    optimizer.zero_grad()
+    if log_wandb:
+        wandb.init(
+            project="convdiff",
+            name="laplace_opti_s",
+            config=dict(K=K, Nt=Nt, dt=dt, gamma=gamma, lambda_diff=lambda_diff,
+                        lambda_x=lambda_x, step=step, n_cases=n_cases, n_latent=n_latent,
+                        lambda_ae=lambda_ae, gamma_min=gamma_min, lr_init=lr,
+                        n_epochs=n_epochs, seed=seed, case_chunk=case_chunk,
+                        sp_chunk=sp_chunk, alpha_x=0, bias_formula="mean_abs"),
+        )
 
-    # Pre-compute Nt×Nt matrices once per epoch (tiny memory, ~Nt^2 = 22 500 doubles)
-    c_mask, F_full, FH, LU, pivots = _compute_laplace_matrices(s_list, alpha_t, lam, w)
-    K_      = s_list.shape[0]
-    F_base  = F_full[:K_]                      # (K, Nt) complex
-    F_re, F_im   = F_base.real, F_base.imag
-    FH_re, FH_im = FH.real, FH.imag
+    torch.manual_seed(seed)
+    s_list  = initial_s.detach().clone().to(device).requires_grad_(True).type(torch.complex128)
+    lam     = torch.tensor(1e-3, dtype=torch.float64, device=device).requires_grad_(True)
+    alpha_t = torch.tensor(1e-3, dtype=torch.float64, device=device).requires_grad_(True)
 
-    sum_norm_err  = torch.zeros(1, dtype=torch.float64, device=device)
-    sum_norm_diff = torch.zeros(1, dtype=torch.float64, device=device)
-    sum_l2rel     = torch.zeros(1, dtype=torch.float64, device=device)
-    sum_norm_diff_x = torch.zeros(1, dtype=torch.float64, device=device)
+    optimizer = torch.optim.AdamW([s_list, lam, alpha_t], lr=lr, weight_decay=1e-4)
+    w = torch.ones(Nt, dtype=torch.float64, device=device); w[0] = 0.5; w[-1] = 0.5
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
-    for i in range(0, n_cases, case_chunk):
-        V_c = V_tensor[i:i + case_chunk]   # no grad — only s_list/lam/alpha_t require grad
-        ne, nd, nx, l2r = checkpoint.checkpoint(
-            _fused_chunk,
-            V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask,
-            use_reentrant=False,
-        ) # type: ignore
-        sum_norm_err  = sum_norm_err  + ne
-        sum_norm_diff = sum_norm_diff + nd
-        sum_l2rel     = sum_l2rel     + l2r
-        sum_norm_diff_x = sum_norm_diff_x + nx
+    # Baseline before optimization
+    s_init = s_list.detach().clone()
+    with torch.no_grad():
+        V_recon0 = reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=case_chunk)
+        l2rel_init = (
+            torch.norm(V_recon0 - V_tensor, dim=(1, 2))
+            / torch.norm(V_tensor, dim=(1, 2))
+        ).cpu().numpy()
+        node   = N_spatial // 2
+        v_init = V_recon0[0, node].cpu().numpy()
+        del V_recon0
+        torch.cuda.empty_cache()
 
-    # L_bias = (1/n) Σ_c ‖A^{-1} L_reg v_c‖  (brouillon §4, absolu)
-    biais_loss_l2   = sum_norm_err  / n_cases
-    biais_loss_diff = sum_norm_diff / n_cases
-    biais_loss_diff_x = sum_norm_diff_x / n_cases
+    # Optimization loop
+    pbar = tqdm(range(n_epochs), desc="Optim s-points", unit="epoch")
+    for epoch in pbar:
+        optimizer.zero_grad()
 
-    amp     = amplification_factor(LU, pivots, F_full)
-    ae      = ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=sp_chunk)
-    var_los = amp * ae / lambda_ae
-    loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff + lambda_x * biais_loss_diff_x)/(1 + lambda_diff + lambda_x) + var_los
-    loss.backward()
+        c_mask, F_full, FH, LU, pivots = _compute_laplace_matrices(s_list, alpha_t, lam, w)
+        K_      = s_list.shape[0]
+        F_base  = F_full[:K_]
+        F_re, F_im   = F_base.real, F_base.imag
+        FH_re, FH_im = FH.real, FH.imag
 
-    torch.nn.utils.clip_grad_norm_([s_list, lam, alpha_t], max_norm=1.0)
-    optimizer.step()
-    scheduler.step(loss.detach())
+        sum_norm_err    = torch.zeros(1, dtype=torch.float64, device=device)
+        sum_norm_diff   = torch.zeros(1, dtype=torch.float64, device=device)
+        sum_l2rel       = torch.zeros(1, dtype=torch.float64, device=device)
+        sum_norm_diff_x = torch.zeros(1, dtype=torch.float64, device=device)
+
+        for i in range(0, n_cases, case_chunk):
+            V_c = V_tensor[i:i + case_chunk]
+            ne, nd, nx, l2r = checkpoint.checkpoint(
+                _fused_chunk,
+                V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask,
+                use_reentrant=False,
+            )  # type: ignore
+            sum_norm_err    = sum_norm_err    + ne
+            sum_norm_diff   = sum_norm_diff   + nd
+            sum_l2rel       = sum_l2rel       + l2r
+            sum_norm_diff_x = sum_norm_diff_x + nx
+
+        biais_loss_l2     = sum_norm_err    / n_cases
+        biais_loss_diff   = sum_norm_diff   / n_cases
+        biais_loss_diff_x = sum_norm_diff_x / n_cases
+
+        amp     = amplification_factor(LU, pivots, F_full)
+        ae      = ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=sp_chunk)
+        var_los = amp * ae / lambda_ae
+        loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff + lambda_x * biais_loss_diff_x) / (1 + lambda_diff + lambda_x) + var_los
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_([s_list, lam, alpha_t], max_norm=1.0)
+        optimizer.step()
+        scheduler.step(loss.detach())
+
+        with torch.no_grad():
+            s_list.real.clamp_(min=gamma_min)
+            lam.clamp_(min=1e-6, max=1.0)
+            alpha_t.clamp_(min=1e-6, max=1.0)
+            s_list.imag.clamp_(min=0)
+
+        l2rel_val = (sum_l2rel / n_cases).item()
+        cur_lr    = optimizer.param_groups[0]['lr']
+
+        pbar.set_postfix(
+            loss=f"{loss.item():.3e}",
+            l2rel=f"{l2rel_val:.4f}",
+        )
+
+        if log_wandb:
+            log = {
+                "loss/total":        loss.item(),
+                "loss/biais_l2":     biais_loss_l2.item(),
+                "loss/biais_diff":   biais_loss_diff.item(),
+                "loss/biais_diff_x": biais_loss_diff_x.item(),
+                "loss/var":          var_los.item(),
+                "metrics/l2rel":     l2rel_val,
+                "metrics/amp":       amp.item(),
+                "metrics/ae":        ae.item(),
+                "optim/lr":          cur_lr,
+                "params/lam":        lam.item(),
+                "params/alpha_t":    alpha_t.item(),
+            }
+            log["s_points/text"] = _log_s_text(s_list)
+            if epoch % 10 == 0 or epoch == n_epochs - 1:
+                log["s_points/scatter"] = _log_s_scatter(s_list, s_init, epoch)
+            wandb.log(log, step=epoch)
+
+    # Final results
+    s_opt = s_list.detach().cpu().clone()
 
     with torch.no_grad():
-        s_list.real.clamp_(min=gamma_min)
-        lam.clamp_(min=1e-6, max=1.0)
-        alpha_t.clamp_(min=1e-6, max=1.0)
-        s_list.imag.clamp_(min=0)
+        V_recon_opt = reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=case_chunk)
+        l2rel_opt = (
+            torch.norm(V_recon_opt - V_tensor, dim=(1, 2))
+            / torch.norm(V_tensor, dim=(1, 2))
+        ).cpu().numpy()
 
-    l2rel_val = (sum_l2rel / n_cases).item()
-    cur_lr    = optimizer.param_groups[0]['lr']
+    print("Optimized s points:", ", ".join(
+        f"{z.real:.4f}+{z.imag:.4f}j" for z in s_opt.numpy().tolist()))
+    print("Optimized lam: ", lam.item())
+    print("Optimized alpha_t: ", alpha_t.item())
 
-    pbar.set_postfix(
-        loss=f"{loss.item():.3e}",
-        l2rel=f"{l2rel_val:.4f}",
+    if log_wandb:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        si, so = s_init.detach().cpu().numpy(), s_opt.numpy()
+        cmap = plt.cm.plasma
+        for k, (a, b) in enumerate(zip(si, so)):
+            col = cmap(k / max(K - 1, 1))
+            ax.annotate('', xy=(b.real, b.imag), xytext=(a.real, a.imag),
+                        arrowprops=dict(arrowstyle='->', color=col, lw=1.2))
+        sc0 = ax.scatter(si.real, si.imag, c=np.arange(K), cmap='plasma',
+                         s=60, marker='o', zorder=3, label='Initial')
+        sc1 = ax.scatter(so.real, so.imag, c=np.arange(K), cmap='plasma',
+                         s=100, marker='*', zorder=4, label='Optimized')
+        plt.colorbar(sc1, ax=ax, label='k')
+        ax.axhline(0, color='gray', lw=0.5); ax.axvline(0, color='gray', lw=0.5)
+        ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
+        ax.set_title('s-points: initial → optimized'); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        wandb.log({"final/s_points_trajectory": wandb.Image(fig)}, step=n_epochs)
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.hist(l2rel_init, bins=30, alpha=0.6, color='steelblue',
+                label=f'Initial    med={np.median(l2rel_init):.2%}')
+        ax.hist(l2rel_opt,  bins=30, alpha=0.6, color='tomato',
+                label=f'Optimized  med={np.median(l2rel_opt):.2%}')
+        ax.set_xlabel('L2 relative error'); ax.set_ylabel('Count')
+        ax.set_title('L2rel distribution: initial vs optimized')
+        ax.legend(); ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        wandb.log({"final/l2rel_histogram": wandb.Image(fig)}, step=n_epochs)
+        plt.close(fig)
+
+        t_ax    = np.arange(Nt) * dt
+        v_true  = V_tensor[0, node].cpu().numpy()
+        v_final = V_recon_opt[0, node].detach().cpu().numpy()
+        e_i = np.linalg.norm(v_init  - v_true) / (np.linalg.norm(v_true) + 1e-12)
+        e_f = np.linalg.norm(v_final - v_true) / (np.linalg.norm(v_true) + 1e-12)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        axes[0].plot(t_ax, v_true,  'k',         lw=1.5, label='True')
+        axes[0].plot(t_ax, v_init,  'steelblue', lw=1.2, ls='--', label=f'Initial   L2={e_i:.2%}')
+        axes[0].plot(t_ax, v_final, 'tomato',    lw=1.2, ls='--', label=f'Optimized L2={e_f:.2%}')
+        axes[0].set_xlabel('t'); axes[0].set_ylabel('CH4')
+        axes[0].set_title('Time series'); axes[0].legend(fontsize=8); axes[0].grid(True, alpha=0.3)
+        axes[1].plot(t_ax, v_true - v_init,  'steelblue', lw=1.2,
+                     label=f'Initial residual   rms={np.std(v_true - v_init):.2e}')
+        axes[1].plot(t_ax, v_true - v_final, 'tomato',    lw=1.2,
+                     label=f'Optimized residual rms={np.std(v_true - v_final):.2e}')
+        axes[1].axhline(0, color='gray', lw=0.5)
+        axes[1].set_xlabel('t'); axes[1].set_ylabel('Residual')
+        axes[1].set_title('Temporal residuals'); axes[1].legend(fontsize=8); axes[1].grid(True, alpha=0.3)
+        fig.tight_layout()
+        wandb.log({"final/reconstruction": wandb.Image(fig)}, step=n_epochs)
+        plt.close(fig)
+
+        wandb.finish()
+        print("wandb run finished.")
+
+    return s_opt, lam.item(), alpha_t.item()
+
+
+# ---------------------------------------------------------------------------
+if __name__ == '__main__':
+    Nt          = 150
+    dt          = 1.0
+    K           = 20
+    gamma       = 0.0
+    lambda_diff = 0.5
+    lambda_x    = 0.5
+    step        = 1
+    n_cases     = 100
+    n_latent    = 64
+    lambda_ae   = 1.25
+    gamma_min   = -0.05
+    lr          = 5e-3
+    n_epochs    = 500
+    case_chunk  = 10
+    sp_chunk    = 2000
+    seed        = 42
+    data_path   = os.path.join("dataset", "CH4.npy")
+
+    s_opt, lam_opt, alpha_t_opt = optimize_laplace_path(
+        Nt=Nt, dt=dt, K=K, gamma=gamma,
+        lambda_diff=lambda_diff, lambda_x=lambda_x,
+        step=step, n_cases=n_cases, n_latent=n_latent, lambda_ae=lambda_ae,
+        gamma_min=gamma_min, lr=lr, n_epochs=n_epochs,
+        case_chunk=case_chunk, sp_chunk=sp_chunk, seed=seed,
+        data_path=data_path, log_wandb=True,
     )
-
-    log = {
-        "loss/total":      loss.item(),
-        "loss/biais_l2":   biais_loss_l2.item(),
-        "loss/biais_diff": biais_loss_diff.item(),
-        "loss/biais_diff_x": biais_loss_diff_x.item(),
-        "loss/var":        var_los.item(),
-        "metrics/l2rel":   l2rel_val,
-        "metrics/amp":     amp.item(),
-        "metrics/ae":      ae.item(),
-        "optim/lr":        cur_lr,
-        "params/lam":      lam.item(),
-        "params/alpha_t":  alpha_t.item(),
-    }
-    log["s_points/text"] = _log_s_text(s_list)
-
-    if epoch % 10 == 0 or epoch == n_epochs - 1:
-        log["s_points/scatter"] = _log_s_scatter(s_list, s_init, epoch)
-
-    wandb.log(log, step=epoch)
-
-# ── Résultats finaux ──────────────────────────────────────────────────────────
-s_opt = s_list.detach().clone()
-with torch.no_grad():
-    V_recon_opt = reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=case_chunk)
-    l2rel_opt = (
-        torch.norm(V_recon_opt - V_tensor, dim=(1, 2))
-        / torch.norm(V_tensor, dim=(1, 2))
-    ).cpu().numpy()
-
-print("Optimized s points:", ", ".join(
-    f"{z.real:.4f}+{z.imag:.4f}j" for z in s_opt.detach().cpu().numpy().tolist()))
-print("Optimized lam: ", lam.item())
-print("Optimized alpha_t: ", alpha_t.item())
-
-# ── Figures finales loggées sur wandb ─────────────────────────────────────────
-fig, ax = plt.subplots(figsize=(7, 5))
-si, so = s_init.detach().cpu().numpy(), s_opt.detach().cpu().numpy()
-cmap = plt.cm.plasma
-for k, (a, b) in enumerate(zip(si, so)):
-    col = cmap(k / max(K - 1, 1))
-    ax.annotate('', xy=(b.real, b.imag), xytext=(a.real, a.imag),
-                arrowprops=dict(arrowstyle='->', color=col, lw=1.2))
-sc0 = ax.scatter(si.real, si.imag, c=np.arange(K), cmap='plasma',
-                 s=60, marker='o', zorder=3, label='Initial')
-sc1 = ax.scatter(so.real, so.imag, c=np.arange(K), cmap='plasma',
-                 s=100, marker='*', zorder=4, label='Optimized')
-plt.colorbar(sc1, ax=ax, label='k')
-ax.axhline(0, color='gray', lw=0.5); ax.axvline(0, color='gray', lw=0.5)
-ax.set_xlabel('Re(s)'); ax.set_ylabel('Im(s)')
-ax.set_title('s-points: initial → optimized'); ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
-fig.tight_layout()
-wandb.log({"final/s_points_trajectory": wandb.Image(fig)}, step=n_epochs)
-plt.close(fig)
-
-fig, ax = plt.subplots(figsize=(6, 4))
-ax.hist(l2rel_init, bins=30, alpha=0.6, color='steelblue',
-        label=f'Initial    med={np.median(l2rel_init):.2%}')
-ax.hist(l2rel_opt,  bins=30, alpha=0.6, color='tomato',
-        label=f'Optimized  med={np.median(l2rel_opt):.2%}')
-ax.set_xlabel('L2 relative error'); ax.set_ylabel('Count')
-ax.set_title('L2rel distribution: initial vs optimized')
-ax.legend(); ax.grid(True, alpha=0.3)
-fig.tight_layout()
-wandb.log({"final/l2rel_histogram": wandb.Image(fig)}, step=n_epochs)
-plt.close(fig)
-
-t_ax    = np.arange(Nt) * dt
-v_true  = V_tensor[0, node].cpu().numpy()
-v_final = V_recon_opt[0, node].detach().cpu().numpy()
-e_i = np.linalg.norm(v_init  - v_true) / (np.linalg.norm(v_true) + 1e-12)
-e_f = np.linalg.norm(v_final - v_true) / (np.linalg.norm(v_true) + 1e-12)
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-axes[0].plot(t_ax, v_true,  'k',         lw=1.5, label='True')
-axes[0].plot(t_ax, v_init,  'steelblue', lw=1.2, ls='--', label=f'Initial   L2={e_i:.2%}')
-axes[0].plot(t_ax, v_final, 'tomato',    lw=1.2, ls='--', label=f'Optimized L2={e_f:.2%}')
-axes[0].set_xlabel('t'); axes[0].set_ylabel('CH4')
-axes[0].set_title('Time series'); axes[0].legend(fontsize=8); axes[0].grid(True, alpha=0.3)
-axes[1].plot(t_ax, v_true - v_init,  'steelblue', lw=1.2,
-             label=f'Initial residual   rms={np.std(v_true - v_init):.2e}')
-axes[1].plot(t_ax, v_true - v_final, 'tomato',    lw=1.2,
-             label=f'Optimized residual rms={np.std(v_true - v_final):.2e}')
-axes[1].axhline(0, color='gray', lw=0.5)
-axes[1].set_xlabel('t'); axes[1].set_ylabel('Residual')
-axes[1].set_title('Temporal residuals'); axes[1].legend(fontsize=8); axes[1].grid(True, alpha=0.3)
-fig.tight_layout()
-wandb.log({"final/reconstruction": wandb.Image(fig)}, step=n_epochs)
-plt.close(fig)
-
-wandb.finish()
-print("wandb run finished.")
