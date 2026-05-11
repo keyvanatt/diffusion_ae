@@ -372,8 +372,6 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
     N         = dataset.N
     Nt        = dataset.Nt
     theta_dim = dataset.theta_dim
-    gamma     = float(dataset.s[0].real) if hasattr(dataset, 's') else 0.0
-
     if ae is not None:
         # Lire hidden_dim depuis le checkpoint pour éviter les mismatches
         _ckpt0 = torch.load(os.path.join(ckpt_dir, 'LatentSurrogate_freq000.pt'), map_location='cpu', weights_only=False)

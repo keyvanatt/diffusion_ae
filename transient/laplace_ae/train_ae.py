@@ -275,7 +275,6 @@ def main(
     ckpt_dir    = "checkpoints",
     latent_dim  = 64,
     seed        = 42,
-    gamma       = 0.0,
     rule        = 'trap',
     epochs      = 100,
     batch_size  = 256,
@@ -289,7 +288,14 @@ def main(
     k_max       = 20,
 ):
 
-    dataset = TransientDataset(data_path, laplace=True, gamma=gamma, rule=rule,
+    # Nt_data déduit depuis un chargement léger (shape du mmap)
+    _u_tmp  = np.load(data_path, mmap_mode='r') if data_path.endswith('.npy') else None
+    Nt_data = _u_tmp.shape[1] if _u_tmp is not None else np.load(data_path)['U'].shape[1]
+    del _u_tmp
+    K_total = k_max if k_max is not None else (Nt_data // 2 + 1)
+    s_list  = (1j * 2 * np.pi * np.fft.rfftfreq(Nt_data, d=dt))[:K_total]
+
+    dataset = TransientDataset(data_path, laplace=True, s_list=s_list, rule=rule,
                                interp_size=interp_size, dt=dt)
 
     torch.backends.cudnn.benchmark = True

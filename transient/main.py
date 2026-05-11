@@ -77,11 +77,12 @@ def load_model(ckpt_path: str, device: torch.device):
 
         surr_model, surr_ckpt = load_model(ckpt['surrogate_ckpt'], device)
         model = CorrectedPipeline(surr_model, ae).to(device)
-        # Expose les infos du surrogate pour run_inference (theta_mean/std, dt, gamma)
+        # Expose les infos du surrogate pour run_inference (theta_mean/std, dt, alpha_t, lam)
         ckpt['theta_mean'] = surr_ckpt['theta_mean']
         ckpt['theta_std']  = surr_ckpt['theta_std']
         ckpt['dt']         = surr_ckpt.get('dt', 1.0)
-        ckpt['gamma']      = surr_ckpt.get('gamma', 0.0)
+        ckpt['alpha_t']    = surr_ckpt.get('alpha_t', 0.0)
+        ckpt['lam']        = surr_ckpt.get('lam', 1e-6)
         model.eval()
         return model, ckpt
 
@@ -279,7 +280,8 @@ def main(
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,
-    gamma     = 0.0,
+    alpha_t   = 0.0,
+    lam       = 1e-6,
     rule      = 'trap',
     step      = 2,
     out       = None,
@@ -299,10 +301,10 @@ def main(
             U_data     = data['U']
             theta_data = data['theta'].astype(np.float32)
         evaluate(U_data, theta_data, ckpt_path,
-                 dt=dt, gamma=gamma, rule=rule, step=step, k_max=k_max)
+                 dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, step=step, k_max=k_max)
         return
 
-    U_pred = predict(theta, ckpt_path, dt=dt, gamma=gamma, rule=rule, k_max=k_max)[0]  # (Nt, N, N)
+    U_pred = predict(theta, ckpt_path, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, k_max=k_max)[0]  # (Nt, N, N)
     print(f"Prédiction : shape={U_pred.shape}  min={U_pred.min():.4f}  max={U_pred.max():.4f}")
 
     if out:

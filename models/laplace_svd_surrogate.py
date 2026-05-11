@@ -71,7 +71,7 @@ class LaplaceSVDModel(BaseDecoder):
     La symétrie conjuguée reconstruit les k dernières fréquences du spectre complet.
 
     Interface compatible avec transient/main.py :
-      model.generate(theta_norm, dt=..., gamma=..., rule=...) → (B, Nt, N, N)
+      model.generate(theta_norm, dt=..., alpha_t=..., lam=..., rule=...) → (B, Nt, N, N)
     """
 
     def __init__(self, k_freq: int, K: int, Nt: int, N: int,

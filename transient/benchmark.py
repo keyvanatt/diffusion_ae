@@ -26,7 +26,8 @@ def benchmark(
     checkpoints: dict[str, str],
     data_path: str = '/Data/KAT/ch4_rotated.npy',
     dt: float | None = None,
-    gamma: float = 0.0,
+    alpha_t: float = 0.0,
+    lam: float = 1e-6,
     rule: str = 'trap',
     batch_size: int = 32,
     device_str: str = 'auto',
@@ -41,7 +42,7 @@ def benchmark(
     checkpoints  : dict {label → ckpt_path}
                    ex. {'LaplaceModel': 'checkpoints/LaplaceModel.pt', ...}
     data_path    : chemin vers ch4_rotated.npy
-    dt, gamma, rule, k_max : paramètres d'inférence
+    dt, alpha_t, lam, rule, k_max : paramètres d'inférence
     batch_size   : nombre de sims par batch
     device_str   : 'auto', 'cpu' ou 'cuda'
     output_path  : où sauver le violin plot
@@ -99,7 +100,7 @@ def benchmark(
             # Prédiction
             U_pred_b = run_inference(
                 theta_arr[idx_batch], model, ckpt, device,
-                dt=dt, gamma=gamma, rule=rule, k_max=k_max
+                dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, k_max=k_max
             )  # (B, Nt, H_pred, W_pred)
 
             # Vérité terrain
