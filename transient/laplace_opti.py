@@ -243,7 +243,7 @@ n_latent = 64
 lambda_ae = 1.25
 gamma_min = -0.05
 lr = 5e-3
-n_epochs = 200
+n_epochs = 500
 case_chunk = 10   # cases per checkpoint call
 sp_chunk   = 2000  # spatial points per Gram-accumulation step
 initial_s = path_bromwich(K, gamma=gamma)  # (K,) complex64 tensor
