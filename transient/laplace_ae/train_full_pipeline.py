@@ -17,6 +17,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+import gc
 import time
 import numpy as np
 import torch
@@ -131,7 +132,14 @@ def main(
     # Stage 1 — Optimisation du chemin de Laplace
     # -----------------------------------------------------------------------
     print("\n=== Stage 1 : Optimisation du chemin de Laplace ===")
-    _Nt_data = int(np.load(data_path, mmap_mode='r').shape[1])
+    _data = np.load(data_path, mmap_mode='r')
+    _Nt_data = int(_data.shape[1])
+    # Filtre sur A = 0 dans le DOE
+    _doe_path = os.path.join(os.path.dirname(data_path), 'doe_rotated.npy')
+    _doe = np.load(_doe_path)
+    _A_vals = _doe['A'] if ns_max is None else _doe['A'][:ns_max]
+    _opti_indices = [i for i in train_idx if _A_vals[i] == 0]
+    print(f"  Indices pour opti (A=0) : {len(_opti_indices)} / {len(train_idx)} train")
     s_opt, _lam_opt, _alpha_t_opt = optimize_laplace_path(
         Nt=_Nt_data, dt=dt, K=K, gamma=gamma,
         lambda_diff=lambda_diff, lambda_x=lambda_x,
@@ -140,13 +148,15 @@ def main(
         lr=lr_opti, n_epochs=n_epochs_opti,
         case_chunk=case_chunk, sp_chunk=sp_chunk,
         seed=seed, data_path=data_path, log_wandb=True,
-        indices=train_idx,
+        indices=_opti_indices,
     )
     # s_opt est complex128 CPU, shape (K,)
     s_list = s_opt.numpy().astype(np.complex128)
     if k_max is not None:
         s_list = s_list[:k_max + 1]
     print(f"s_list ({len(s_list)} points) — lam={_lam_opt:.3e}  alpha_t={_alpha_t_opt:.3e}")
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # -----------------------------------------------------------------------
     # Stage 2 — Entraînement du LaplaceAE
@@ -187,6 +197,9 @@ def main(
         ae=ae, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L,
     )
     assembled_ckpt = os.path.join(ckpt_dir, 'LaplaceLatentModel.pt')
+    del ae
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # -----------------------------------------------------------------------
     # Stage 4 — Finetune end-to-end
@@ -201,6 +214,8 @@ def main(
         dt=dt, rule=rule, alpha_t=alpha_t, lam=lam,
     )
     finetuned_ckpt = os.path.join(ckpt_dir, 'LaplaceLatentModel_finetuned.pt')
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # -----------------------------------------------------------------------
     # Stage 5 — CorrectionAE

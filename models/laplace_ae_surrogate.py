@@ -222,10 +222,10 @@ class LaplaceAE(BaseAutoEncoder):
         self,
         U     : torch.Tensor,
         U_hat : torch.Tensor,
-        z     : torch.Tensor,          # non utilisé ici, gardé pour compatibilité
+        z     : torch.Tensor,          
     ) -> tuple[torch.Tensor, dict]:
         recon_loss = F.mse_loss(U_hat, U)
-        ridge      = U_hat.pow(2).mean()   # régularisation L2 sur les sorties
+        ridge      = z.pow(2).mean()   # régularisation L2 sur le latent
         total      = recon_loss + self.beta * ridge
         return total, {
             'recon_loss': recon_loss.detach(),

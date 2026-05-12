@@ -11,6 +11,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+import gc
 import time
 
 import numpy as np
@@ -202,6 +203,9 @@ def train_one(
 
     if wandb.run is not None:
         wandb.run.summary[f'best_val/freq_{k:03d}'] = best_val
+    del model, optimizer, scheduler, scaler
+    gc.collect()
+    torch.cuda.empty_cache()
     return best_val, epoch
 
 

@@ -267,11 +267,14 @@ def train_ae(
     print(f"AE entraîné — best val : {best_val:.4e}  → {ckpt_path}")
 
     model.load_state_dict(best_state)
+    del optimizer, scheduler, scaler
+    torch.cuda.empty_cache()
     return model
 
 
 def main(
     data_path   = os.path.join("dataset", "ch4_rotated.npy"),
+    s_list     = None,  # None pour toutes les fréquences, ou liste de fréquences à utiliser
     ckpt_dir    = "checkpoints",
     latent_dim  = 64,
     seed        = 42,
@@ -287,13 +290,13 @@ def main(
     dt          = 1.0,
     k_max       = 20,
 ):
-
-    # Nt_data déduit depuis un chargement léger (shape du mmap)
-    _u_tmp  = np.load(data_path, mmap_mode='r') if data_path.endswith('.npy') else None
-    Nt_data = _u_tmp.shape[1] if _u_tmp is not None else np.load(data_path)['U'].shape[1]
-    del _u_tmp
-    K_total = k_max if k_max is not None else (Nt_data // 2 + 1)
-    s_list  = (1j * 2 * np.pi * np.fft.rfftfreq(Nt_data, d=dt))[:K_total]
+    if s_list is None:
+        # Nt_data déduit depuis un chargement léger (shape du mmap)
+        _u_tmp  = np.load(data_path, mmap_mode='r') if data_path.endswith('.npy') else None
+        Nt_data = _u_tmp.shape[1] if _u_tmp is not None else np.load(data_path)['U'].shape[1]
+        del _u_tmp
+        K_total = k_max if k_max is not None else (Nt_data // 2 + 1)
+        s_list  = (1j * 2 * np.pi * np.fft.rfftfreq(Nt_data, d=dt))[:K_total]
 
     dataset = TransientDataset(data_path, laplace=True, s_list=s_list, rule=rule,
                                interp_size=interp_size, dt=dt)
