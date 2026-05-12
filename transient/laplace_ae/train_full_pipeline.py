@@ -98,8 +98,10 @@ def main(
     lr_surrogate   = 5e-5,
     lr_decoder     = 1e-5,
     patience_ft    = 15,
-    alpha_t        = 0.0,
-    lam            = 1e-6,
+    # Valeurs optimales de l'inverseur Laplace (sorties de Stage 1).
+    # À renseigner explicitement quand resume_from >= 2.
+    alpha_t        = 0.092214,
+    lam            = 0.32193,
 
     # --- Stage 5 : CorrectionAE ---
     epochs_corr    = 100,
@@ -113,6 +115,10 @@ def main(
     # --- Dirs ---
     ckpt_dir       = 'checkpoints',
     surr_ckpt_dir  = os.path.join('checkpoints', 'laplace_latent'),
+
+    # --- Reprise ---
+    # 1 = pipeline complet, 2 = depuis AE, 3 = depuis surrogates, 4 = depuis finetune, 5 = depuis correction
+    resume_from    = 1,
 ):
     t_pipeline = time.perf_counter()
 
@@ -122,106 +128,135 @@ def main(
     print("=== Splits ===")
     train_idx, val_idx, test_idx = _make_splits(split_path, seed)
     if ns_max is not None:
-        # Tronquer les splits pour le smoke test (indices valides < ns_max)
         train_idx = [i for i in train_idx if i < ns_max]
         val_idx   = [i for i in val_idx   if i < ns_max]
         test_idx  = [i for i in test_idx  if i < ns_max]
     print(f"  train={len(train_idx)}  val={len(val_idx)}  test={len(test_idx)}")
 
+    assembled_ckpt = os.path.join(ckpt_dir, 'LaplaceLatentModel.pt')
+    finetuned_ckpt = os.path.join(ckpt_dir, 'LaplaceLatentModel_finetuned.pt')
+    ae         = None   # initialisé dans stage 2 ou 3
+    dataset_ae = None   # initialisé si resume_from <= 4
+
     # -----------------------------------------------------------------------
-    # Stage 1 — Optimisation du chemin de Laplace
+    # Stage 1 — Optimisation du chemin de Laplace (ou chargement depuis ckpt)
     # -----------------------------------------------------------------------
-    print("\n=== Stage 1 : Optimisation du chemin de Laplace ===")
-    _data = np.load(data_path, mmap_mode='r')
-    _Nt_data = int(_data.shape[1])
-    # Filtre sur A = 0 dans le DOE
-    _doe_path = os.path.join(os.path.dirname(data_path), 'doe_rotated.npy')
-    _doe = np.load(_doe_path)
-    _A_vals = _doe['A'] if ns_max is None else _doe['A'][:ns_max]
-    _opti_indices = [i for i in train_idx if _A_vals[i] == 0]
-    print(f"  Indices pour opti (A=0) : {len(_opti_indices)} / {len(train_idx)} train")
-    s_opt, _lam_opt, _alpha_t_opt = optimize_laplace_path(
-        Nt=_Nt_data, dt=dt, K=K, gamma=gamma,
-        lambda_diff=lambda_diff, lambda_x=lambda_x,
-        step=step, n_cases=n_cases_opti, n_latent=n_latent,
-        lambda_ae=lambda_ae_o, gamma_min=gamma_min,
-        lr=lr_opti, n_epochs=n_epochs_opti,
-        case_chunk=case_chunk, sp_chunk=sp_chunk,
-        seed=seed, data_path=data_path, log_wandb=True,
-        indices=_opti_indices,
-    )
-    # s_opt est complex128 CPU, shape (K,)
-    s_list = s_opt.numpy().astype(np.complex128)
-    if k_max is not None:
-        s_list = s_list[:k_max + 1]
-    print(f"s_list ({len(s_list)} points) — lam={_lam_opt:.3e}  alpha_t={_alpha_t_opt:.3e}")
-    gc.collect()
-    torch.cuda.empty_cache()
+    if resume_from <= 1:
+        print("\n=== Stage 1 : Optimisation du chemin de Laplace ===")
+        _data    = np.load(data_path, mmap_mode='r')
+        _Nt_data = int(_data.shape[1])
+        _doe_path    = os.path.join(os.path.dirname(data_path), 'doe_rotated.npy')
+        _doe         = np.load(_doe_path)
+        _A_vals      = _doe['A'] if ns_max is None else _doe['A'][:ns_max]
+        _opti_indices = [i for i in train_idx if _A_vals[i] == 0]
+        print(f"  Indices pour opti (A=0) : {len(_opti_indices)} / {len(train_idx)} train")
+        s_opt, _lam_opt, _alpha_t_opt = optimize_laplace_path(
+            Nt=_Nt_data, dt=dt, K=K, gamma=gamma,
+            lambda_diff=lambda_diff, lambda_x=lambda_x,
+            step=step, n_cases=n_cases_opti, n_latent=n_latent,
+            lambda_ae=lambda_ae_o, gamma_min=gamma_min,
+            lr=lr_opti, n_epochs=n_epochs_opti,
+            case_chunk=case_chunk, sp_chunk=sp_chunk,
+            seed=seed, data_path=data_path, log_wandb=True,
+            indices=_opti_indices,
+        )
+        s_list = s_opt.numpy().astype(np.complex128)
+        if k_max is not None:
+            s_list = s_list[:k_max + 1]
+        print(f"s_list ({len(s_list)} pts) — lam={_lam_opt:.5f}  alpha_t={_alpha_t_opt:.6f}")
+        gc.collect()
+        torch.cuda.empty_cache()
+    else:
+        print(f"\n=== Stage 1 ignoré (resume_from={resume_from}) ===")
+        _ref   = torch.load(assembled_ckpt, map_location='cpu', weights_only=False)
+        _sr    = _ref['model_state']['s_real'].numpy()
+        _si    = _ref['model_state']['s_imag'].numpy()
+        s_list = (_sr + 1j * _si).astype(np.complex128)
+        _lam_opt     = float(lam)
+        _alpha_t_opt = float(alpha_t)
+        del _ref
+        print(f"  s_list ({len(s_list)} pts) chargé depuis {assembled_ckpt}")
+        print(f"  lam={_lam_opt:.5f}  alpha_t={_alpha_t_opt:.6f}")
+
+    # -----------------------------------------------------------------------
+    # Dataset Laplace (stages 2-4) — cache disque, rapide si déjà calculé
+    # -----------------------------------------------------------------------
+    if resume_from <= 4:
+        print("\nChargement dataset Laplace...", end=' ', flush=True)
+        dataset_ae = TransientDataset(
+            data_path, laplace=True, s_list=s_list,
+            rule=rule, interp_size=interp_size, dt=dt, cache_dir=cache_dir,
+            ns_max=ns_max,
+        )
+        dataset_ae.fit(train_idx)
+        print("Chargement en RAM...", end=' ', flush=True)
+        t0    = time.perf_counter()
+        U_lap = np.ascontiguousarray(dataset_ae.U_laplace)
+        dataset_ae.U_laplace = U_lap
+        print(f"OK — {U_lap.nbytes/1e9:.1f} Go, {time.perf_counter()-t0:.1f}s")
+        os.makedirs(ckpt_dir, exist_ok=True)
 
     # -----------------------------------------------------------------------
     # Stage 2 — Entraînement du LaplaceAE
     # -----------------------------------------------------------------------
-    print("\n=== Stage 2 : Entraînement LaplaceAE ===")
-    dataset_ae = TransientDataset(
-        data_path, laplace=True, s_list=s_list,
-        rule=rule, interp_size=interp_size, dt=dt, cache_dir=cache_dir,
-        ns_max=ns_max,
-    )
-    dataset_ae.fit(train_idx)
-    print("Chargement Laplace en RAM...", end=' ', flush=True)
-    t0 = time.perf_counter()
-    U_lap = np.ascontiguousarray(dataset_ae.U_laplace)
-    dataset_ae.U_laplace = U_lap
-    print(f"OK — {U_lap.nbytes/1e9:.1f} Go, {time.perf_counter()-t0:.1f}s")
-    os.makedirs(ckpt_dir, exist_ok=True)
-
-    ae = train_ae(
-        dataset_ae, train_idx, val_idx,
-        latent_dim=latent_dim,
-        epochs=epochs_ae, batch_size=batch_size_ae,
-        lr=lr_ae, beta=beta, patience=patience_ae,
-        freq_L=freq_L, k_max=k_max,
-        ckpt_dir=ckpt_dir, project=project,
-    )
+    if resume_from <= 2:
+        print("\n=== Stage 2 : Entraînement LaplaceAE ===")
+        ae = train_ae(
+            dataset_ae, train_idx, val_idx,
+            latent_dim=latent_dim,
+            epochs=epochs_ae, batch_size=batch_size_ae,
+            lr=lr_ae, beta=beta, patience=patience_ae,
+            freq_L=freq_L, k_max=k_max,
+            ckpt_dir=ckpt_dir, project=project,
+        )
+    elif resume_from == 3:
+        print("\n=== Stage 2 ignoré — chargement LaplaceAE ===")
+        from models.laplace_ae_surrogate import LaplaceAE
+        _ae_ckpt = torch.load(os.path.join(ckpt_dir, 'LaplaceAE_best.pt'),
+                              map_location='cpu', weights_only=False)
+        ae = LaplaceAE(N=interp_size, latent_dim=latent_dim)
+        ae.load_state_dict(_ae_ckpt['model_state'])
+        ae.eval()
+        print(f"  LaplaceAE chargé ({latent_dim=})")
 
     # -----------------------------------------------------------------------
     # Stage 3 — Entraînement des surrogates θ→z
     # -----------------------------------------------------------------------
-    print("\n=== Stage 3 : Entraînement des surrogates θ→z ===")
-    os.makedirs(surr_ckpt_dir, exist_ok=True)
-    train_all(
-        dataset_ae, train_idx, val_idx, test_idx,
-        epochs=epochs_surr, batch_size=batch_size_surr,
-        lr=lr_surr, patience=patience_surr,
-        ckpt_dir=surr_ckpt_dir, project=project,
-        ae=ae, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L,
-    )
-    assembled_ckpt = os.path.join(ckpt_dir, 'LaplaceLatentModel.pt')
-    del ae
-    gc.collect()
-    torch.cuda.empty_cache()
+    if resume_from <= 3:
+        print("\n=== Stage 3 : Entraînement des surrogates θ→z ===")
+        os.makedirs(surr_ckpt_dir, exist_ok=True)
+        train_all(
+            dataset_ae, train_idx, val_idx, test_idx,
+            epochs=epochs_surr, batch_size=batch_size_surr,
+            lr=lr_surr, patience=patience_surr,
+            ckpt_dir=surr_ckpt_dir, project=project,
+            ae=ae, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L,
+            alpha_t=_alpha_t_opt, lam=_lam_opt,
+        )
+        del ae
+        gc.collect()
+        torch.cuda.empty_cache()
 
     # -----------------------------------------------------------------------
     # Stage 4 — Finetune end-to-end
     # -----------------------------------------------------------------------
-    print("\n=== Stage 4 : Finetune end-to-end ===")
-    finetune(
-        dataset_ae, train_idx, val_idx, test_idx,
-        ckpt_path=assembled_ckpt,
-        epochs=epochs_ft, batch_size=batch_size_ft,
-        lr_surrogate=lr_surrogate, lr_decoder=lr_decoder,
-        patience=patience_ft, save_dir=ckpt_dir, project=project,
-        dt=dt, rule=rule, alpha_t=alpha_t, lam=lam,
-    )
-    finetuned_ckpt = os.path.join(ckpt_dir, 'LaplaceLatentModel_finetuned.pt')
-    gc.collect()
-    torch.cuda.empty_cache()
+    if resume_from <= 4:
+        print("\n=== Stage 4 : Finetune end-to-end ===")
+        finetune(
+            dataset_ae, train_idx, val_idx, test_idx,
+            ckpt_path=assembled_ckpt,
+            epochs=epochs_ft, batch_size=batch_size_ft,
+            lr_surrogate=lr_surrogate, lr_decoder=lr_decoder,
+            patience=patience_ft, save_dir=ckpt_dir, project=project,
+            dt=dt, rule=rule, alpha_t=_alpha_t_opt, lam=_lam_opt,
+        )
+        gc.collect()
+        torch.cuda.empty_cache()
 
     # -----------------------------------------------------------------------
     # Stage 5 — CorrectionAE
     # -----------------------------------------------------------------------
     print("\n=== Stage 5 : CorrectionAE ===")
-    # Dataset sans Laplace (U(t) brut) pour la correction frame-par-frame
     dataset_corr = TransientDataset(
         data_path, laplace=False,
         interp_size=interp_size, dt=dt, cache_dir=cache_dir,
@@ -231,7 +266,7 @@ def main(
 
     U_pred, U_true = precompute(
         dataset_corr, finetuned_ckpt, kt=kt, cache_dir=cache_dir,
-        batch_size=32, dt=dt, alpha_t=alpha_t, lam=lam, rule=rule, seed=seed,
+        batch_size=32, dt=dt, alpha_t=_alpha_t_opt, lam=_lam_opt, rule=rule, seed=seed,
     )
     train_correction(
         U_pred, U_true,
@@ -250,4 +285,4 @@ def main(
 
 
 if __name__ == '__main__':
-    main()
+    main(resume_from=4)

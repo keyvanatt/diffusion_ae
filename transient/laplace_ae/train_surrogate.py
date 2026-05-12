@@ -250,6 +250,8 @@ def train_all(
     k_max       = None,   # fréquences k > k_max → pas d'entraînement, prédiction = moyenne
     hidden_dim  = 256,
     freq_L      = 8,
+    alpha_t     = 0.0,
+    lam         = 1e-6,
 ):
     """
     Entraîne un surrogate par fréquence de Laplace, séquentiellement.
@@ -364,11 +366,11 @@ def train_all(
     print(f"\nEntraînement terminé — val loss  mean={np.mean(best_vals):.3e}"
           f"  max={np.max(best_vals):.3e}  min={np.min(best_vals):.3e}")
 
-    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), ae=ae, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L)
+    assemble_model(dataset, ckpt_dir, test_idx, save_dir=os.path.dirname(ckpt_dir), ae=ae, k_max=k_max, hidden_dim=hidden_dim, freq_L=freq_L, alpha_t=alpha_t, lam=lam)
     return best_vals
 
 
-def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', ae=None, k_max=None, hidden_dim=256, freq_L=8):
+def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoints/', ae=None, k_max=None, hidden_dim=256, freq_L=8, alpha_t=0.0, lam=1e-6):
     """
     Charge les checkpoints individuels et assemble LaplaceModel ou LaplaceLatentModel.
     Sauvegarde dans <save_dir>/LaplaceModel.pt ou LaplaceLatentModel.pt.
@@ -422,6 +424,8 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
         'k_max':       k_max,
         'hidden_dim':  hidden_dim,
         'freq_L':      freq_L,
+        'alpha_t':     alpha_t,
+        'lam':         lam,
         **extra,
     }, out_path)
     print(f"{model_type} assemblé → {out_path}")
