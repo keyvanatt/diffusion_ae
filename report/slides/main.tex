@@ -32,7 +32,7 @@
   \useinnertheme{rectangles}
 }
 
-\title[Neural Surrogates for PDE Emulation]{Learning Latent Representations for Neural Surrogate Models of PDEs}
+\title[Offline Laplace Order Reduction]{Offline Laplace-Domain Order Reduction for Complex Convection-Diffusion-Reaction Dynamics}
 \subtitle{From Proper Orthogonal Decomposition to Frequency-Conditioned Autoencoders}
 \author[Keyvan Attarian]{Keyvan Attarian}
 \institute[Ecole polytechnique]{Ecole polytechnique \\ CNRS@CREATE - DesCartes Program}
@@ -464,14 +464,86 @@
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Future Work}
-  \begin{itemize}
-      \item \textbf{Regularization of the Laplace inversion} (rather than truncation + Unet).
-      \item \textbf{Contour discussion:} A purely vertical or horizontal contour seems suboptimal.
-  \end{itemize}
-  \vspace{2em}
+\section{Ongoing \& Future Work}
+
+\begin{frame}{Regularised Inversion \& Bias-Variance Trade-off}
+  \textbf{1. Regularised Inverse Problem}\\
+  Penalize amplitudes and spatio-temporal gradients via $\mathbf{L}_{\mathrm{reg}}$:
+  \vspace{-0.5em}
+  \begin{align*}
+      \hat{\mathbf{v}}^* &= \arg\min_{\mathbf{v}} \|\mathbf{F}_{st}\mathbf{v} - \hat{\mathbf{u}}\|^2 + \mathbf{v}^\top \mathbf{L}_{\mathrm{reg}} \mathbf{v} \\
+      \underbrace{(\mathbf{F}_{st}^H\mathbf{F}_{st} + \mathbf{L}_{\mathrm{reg}})}_{=:\,\mathbf{A}} \hat{\mathbf{v}}^* &= \mathbf{F}_{st}^H \hat{\mathbf{u}}
+  \end{align*}
+  
+  \textbf{2. Exact Error Decomposition}\\
+  Let $\mathbf{u} = \mathbf{F}_{st}\mathbf{v}$ and $\mathbf{v}^* = \mathbf{A}^{-1}\mathbf{F}_{st}^H\mathbf{u}$. The total error splits analytically:
+  \vspace{-0.5em}
+  \[ \mathbf{v} - \hat{\mathbf{v}}^* = \underbrace{\mathbf{A}^{-1}\mathbf{L}_{\mathrm{reg}}\mathbf{v}}_{\text{Regularisation Bias}} \;+\; \underbrace{\mathbf{A}^{-1}\mathbf{F}_{st}^H (\mathbf{u} - \hat{\mathbf{u}})}_{\text{Propagated Variance}} \]
+  
+  \textbf{3. Bias-Variance Bound}\\
+  \vspace{-0.5em}
+  \[ \|\mathbf{v} - \hat{\mathbf{v}}^*\| \leq \|\mathbf{v} - \mathbf{v}^*\| + \underbrace{\|\mathbf{A}^{-1}\mathbf{F}_{st}^H\|}_{\text{Condition number}} \cdot \underbrace{\|\mathbf{u} - \hat{\mathbf{u}}\|}_{\text{Surrogate error}} \]
+\end{frame}
+
+\begin{frame}{Contour Optimization via SVD Proxy Objective}
+  \textbf{1. Surrogate Error Approximation}\\
+  Evaluating $\|\mathbf{u}-\hat{\mathbf{u}}\|$ requires training an AE for each contour $\mathbf{s}$. We approximate it via the mean SVD residual (optimal linear surrogate of rank $r$):
+  \vspace{-0.5em}
+  \[ \epsilon_{\mathrm{AE}}(\mathbf{s}) \;\approx\; \mathcal{E}_{\mathrm{SVD}}(\mathbf{s}) \;=\; \sqrt{ \frac{1}{|\Theta|} \sum_{s_i \in \mathbf{s}} \sum_{j > r} \bigl(\sigma_j^{(s_i)}\bigr)^2 } \]
+  
+  \textbf{2. Final Differentiable Proxy Objective}\\
+  Jointly optimize $\mathbf{s}$ and regularisation parameters $(\lambda, \alpha)$ using the scaled proxy:
+  \vspace{-0.5em}
+  \begin{align*}
+      \mathcal{L}^{\mathrm{proxy}}(\mathbf{s}, \lambda, \alpha) \;&=\; \underbrace{\frac{1}{|\Theta|} \sum_{\theta \in \Theta} \|\mathbf{v}(\theta) - \mathbf{v}^*(\theta)\|}_{\text{Expected Bias}}
+      \quad + \underbrace{\frac{1}{\lambda_{\mathrm{AE}}} \|\mathbf{A}^{-1}\mathbf{F}_{st}^H\| \cdot \mathcal{E}_{\mathrm{SVD}}(\mathbf{s})}_{\text{Expected Variance Proxy}} \\
+      &\quad + \underbrace{\lambda_x \|\nabla (\mathbf{v}^* -\mathbf{v})\| + \lambda_t \|\partial_t (\mathbf{v}^* -\mathbf{v})\|}_{\text{Artifact heuristics}}
+  \end{align*}
+\end{frame}
+
+\begin{frame}{Differentiable Contour Optimization}
+  \begin{columns}[c]
+      \column{0.35\textwidth}
+      \textbf{Optimization framework:}
+      \begin{itemize}
+          \item \textbf{PyTorch} proxy $\mathcal{L}^{\mathrm{proxy}}$
+          \item \textbf{Auto-diff} w.r.t $\mathbf{s \in \mathbb{C}}$
+          \item \textbf{AdamW} optimizer
+          \item With $L_{reg}$ = $\lambda I$ + $\alpha_t D_t$, the problem is separable in x : we optimize pixel par pixel (memory efficient)
+      \end{itemize}
+      \column{0.65\textwidth}
+      \centering
+      \begin{minipage}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{loss_s_opti.png}\\
+          \footnotesize Total Proxy Loss
+      \end{minipage}
+      \hfill
+      \begin{minipage}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{l2_s_opti.png}\\
+          \footnotesize Regularisation Bias
+      \end{minipage}
+      
+      \vspace{0.4em}
+      
+      \begin{minipage}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{var_s_opti.png}\\
+          \footnotesize SVD Variance
+      \end{minipage}
+      \hfill
+      \begin{minipage}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{media_images_final_s_points_trajectory_499_8ad3c2193cf53a6872e9.png}\\
+          \footnotesize Contour Trajectory
+      \end{minipage}
+  \end{columns}
+\end{frame}
+
+\begin{frame}
   \begin{center}
-      \textbf{Thank you!}
+      \Huge \textbf{Thank you!}
   \end{center}
 \end{frame}
 
