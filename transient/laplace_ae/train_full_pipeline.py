@@ -81,7 +81,7 @@ def main(
     epochs_ae    = 100,
     batch_size_ae = 256,
     lr_ae        = 5e-4,
-    beta         = 1e-3,
+    beta         = 0,
     patience_ae  = 30,
     k_max        = None,   # None → toutes les K fréquences optimisées
 
@@ -168,13 +168,10 @@ def main(
         torch.cuda.empty_cache()
     else:
         print(f"\n=== Stage 1 ignoré (resume_from={resume_from}) ===")
-        _ref   = torch.load(assembled_ckpt, map_location='cpu', weights_only=False)
-        _sr    = _ref['model_state']['s_real'].numpy()
-        _si    = _ref['model_state']['s_imag'].numpy()
-        s_list = (_sr + 1j * _si).astype(np.complex128)
+
+        s_list = (1j * 2 * np.pi * np.fft.rfftfreq(150, d=dt))[:20]
         _lam_opt     = float(lam)
         _alpha_t_opt = float(alpha_t)
-        del _ref
         print(f"  s_list ({len(s_list)} pts) chargé depuis {assembled_ckpt}")
         print(f"  lam={_lam_opt:.5f}  alpha_t={_alpha_t_opt:.6f}")
 
@@ -285,4 +282,4 @@ def main(
 
 
 if __name__ == '__main__':
-    main(resume_from=4)
+    main(resume_from=2)

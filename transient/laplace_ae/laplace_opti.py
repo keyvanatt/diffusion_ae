@@ -347,13 +347,15 @@ def optimize_laplace_path(
             sum_l2rel       = sum_l2rel       + l2r
             sum_norm_diff_x = sum_norm_diff_x + nx
 
-        biais_loss_l2     = sum_norm_err    / n_cases
-        biais_loss_diff   = sum_norm_diff   / n_cases
-        biais_loss_diff_x = sum_norm_diff_x / n_cases
+        norm_st = (N_spatial * Nt) ** 0.5
+        biais_loss_l2     = sum_norm_err    / n_cases / norm_st
+        biais_loss_diff   = sum_norm_diff   / n_cases / norm_st
+        biais_loss_diff_x = sum_norm_diff_x / n_cases / norm_st
 
         amp     = amplification_factor(LU, pivots, F_full)
         ae      = ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=sp_chunk)
-        var_los = amp * ae / lambda_ae
+        ae_norm = ae / (K_ * 2 * N_spatial) ** 0.5
+        var_los = amp * ae_norm / lambda_ae
         loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff + lambda_x * biais_loss_diff_x) / (1 + lambda_diff + lambda_x) + var_los
         loss.backward()
 
@@ -384,7 +386,7 @@ def optimize_laplace_path(
                 "loss/var":          var_los.item(),
                 "metrics/l2rel":     l2rel_val,
                 "metrics/amp":       amp.item(),
-                "metrics/ae":        ae.item(),
+                "metrics/ae":        ae_norm.item(),
                 "optim/lr":          cur_lr,
                 "params/lam":        lam.item(),
                 "params/alpha_t":    alpha_t.item(),
