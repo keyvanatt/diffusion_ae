@@ -150,35 +150,54 @@ class TransientDataset(Dataset):
 
         if self.laplace:
             if isinstance(self.U_laplace, np.ndarray):
-                # Clé de cache : hash des indices + paramètres du dataset
-                idx_hash  = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
-                stem      = Path(self._data_path).stem
-                stats_path = self._cache_dir / f"{stem}_stats_N{self.N}_s{self._s_hash}_idx{idx_hash}_perpix.pt"
+                idx_hash   = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
+                stem       = Path(self._data_path).stem
+                stats_path = self._cache_dir / f"{stem}_stats_N{self.N}_s{self._s_hash}_idx{idx_hash}_vnorm.pt"
 
                 if stats_path.exists():
-                    print(f"Cache stats Laplace trouvé : {stats_path}")
+                    print(f"Cache stats trouvé : {stats_path}")
                     saved = torch.load(str(stats_path), weights_only=True)
                     self.target_mean = saved['target_mean']
                     self.target_std  = saved['target_std']
                     return
 
-                # Mmap : calcul par fréquence pour éviter de tout charger
-                means, stds = [], []
-                for k in tqdm(range(self.K), desc="Stats Laplace", leave=False):
-                    chunk = torch.from_numpy(self.U_laplace[train_indices, k].copy())  # (n_train, 2, N, N)
+                # target_mean : moyenne de U_laplace sur le train (par linéarité = F(V_mean))
+                means = []
+                for k in tqdm(range(self.K), desc="Laplace mean", leave=False):
+                    chunk = torch.from_numpy(self.U_laplace[train_indices, k].copy())
                     means.append(chunk.mean(dim=0))          # (2, N, N)
-                    stds.append(chunk.std(dim=0) + 1e-8)
-                self.target_mean = torch.stack(means)  # (K, 2, N, N)
-                self.target_std  = torch.stack(stds)
+                self.target_mean = torch.stack(means)        # (K, 2, N, N)
+
+                # target_std : std de V par pixel sur (n_train × Nt), broadcasté sur (K, 2, N, N)
+                sum_   = torch.zeros(self.N, self.N, dtype=torch.float64)
+                sum_sq = torch.zeros(self.N, self.N, dtype=torch.float64)
+                count  = 0
+                for i in tqdm(train_indices, desc="V std", leave=False):
+                    V_i = torch.from_numpy(self._U_raw[i].copy()).float()  # (Nt, H, W)
+                    if self.interp_size is not None:
+                        V_i = F.interpolate(
+                            V_i.unsqueeze(0), size=(self.N, self.N),
+                            mode='bilinear', align_corners=False,
+                        ).squeeze(0)
+                    V_i = V_i.double()
+                    sum_   += V_i.sum(0)
+                    sum_sq += (V_i ** 2).sum(0)
+                    count  += V_i.shape[0]
+                V_std_px = ((sum_sq / count - (sum_ / count) ** 2).clamp(min=0).sqrt() + 1e-8).float()
+                self.target_std = V_std_px[None, None].expand(self.K, 2, self.N, self.N).clone()
 
                 torch.save({'target_mean': self.target_mean,
                             'target_std':  self.target_std}, str(stats_path))
-                print(f"Cache stats Laplace sauvegardé : {stats_path}")
+                print(f"Cache stats sauvegardé : {stats_path}")
             else:
-                # Tensor en mémoire : calcul global direct
-                target_train = self.U_laplace[train_indices]  # (n_train, K, 2, N, N)
-                self.target_mean = target_train.mean(dim=0)        # (K, 2, N, N)
-                self.target_std  = target_train.std(dim=0) + 1e-8
+                # Tensor en mémoire : calcul direct depuis U (champ temporel)
+                target_train     = self.U_laplace[train_indices]          # (n_train, K, 2, N, N)
+                self.target_mean = target_train.mean(dim=0)               # (K, 2, N, N)
+                V_train          = self.U[train_indices]                  # (n_train, Nt, N, N)
+                n_train, Nt_     = V_train.shape[:2]
+                V_std_px = (V_train.reshape(n_train * Nt_, self.N, self.N)
+                            .double().std(dim=0) + 1e-8).float()          # (N, N)
+                self.target_std = V_std_px[None, None].expand(self.K, 2, self.N, self.N).clone()
 
     # ------------------------------------------------------------------
     # Dataset interface

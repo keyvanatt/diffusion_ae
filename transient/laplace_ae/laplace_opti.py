@@ -120,35 +120,38 @@ def _fused_chunk(V_c, F_re, F_im, FH_re, FH_im, LU, pivots, c_mask):
 
 def ae_error_lowmem(s_list, V_tensor, w, n_latent, sp_chunk=2000):
     """
-    Computes the ae_error (truncated-SVD variance ratio in Laplace space) without
-    materializing U_hat for all cases at once.
+    Computes E_SVD(s) = sqrt( (1/n) * sum_k sum_{j>r} sigma_j(U_k)^2 )
+    per the bias-variance document formula (per-frequency independent SVD residuals).
 
-    Gram matrix G[k, i, j] = sum_spatial Re(U[i,sp,k] * conj(U[j,sp,k]))
-    is accumulated over spatial chunks — memory = n_cases * sp_chunk * K * 8 B.
+    G[k, i, j] = sum_spatial Re(U_k[i,sp] * conj(U_k[j,sp])) accumulated over
+    spatial chunks — eigenvalues of G[k] are sigma_j(U_k)^2.
+    Memory = K * n_cases^2 * 8 B (K small Gram matrices, not one global one).
     """
     s_exp = torch.exp(-s_list[:, None] * t)          # (K, Nt)
-    F_re  = (_dt * w[None, :] * s_exp.real)            # (K, Nt)
+    F_re  = (_dt * w[None, :] * s_exp.real)           # (K, Nt)
     F_im  = (_dt * w[None, :] * s_exp.imag)
 
     n_cases, N_spatial, _ = V_tensor.shape
     K = s_list.shape[0]
+    n = n_cases
+    r = min(n_latent, n)
 
     G = torch.zeros(K, n_cases, n_cases, dtype=torch.float64, device=s_list.device)
 
     for sp in range(0, N_spatial, sp_chunk):
-        V_sp   = V_tensor[:, sp:sp + sp_chunk, :]    # (n_cases, sp_size, Nt)
-        U_re_sp = V_sp @ F_re.T                       # (n_cases, sp_size, K)
+        V_sp    = V_tensor[:, sp:sp + sp_chunk, :]    # (n_cases, sp_size, Nt)
+        U_re_sp = V_sp @ F_re.T                        # (n_cases, sp_size, K)
         U_im_sp = V_sp @ F_im.T
         G += (torch.einsum('isk,jsk->kij', U_re_sp, U_re_sp) +
               torch.einsum('isk,jsk->kij', U_im_sp, U_im_sp))
 
-    G_global = G.sum(dim=0)                          # (n_cases, n_cases)
+    # Per-frequency SVD residuals — formula: E_SVD(s)^2 = (1/n) * sum_k tail_sq_k
+    total_tail = torch.zeros(1, dtype=torch.float64, device=s_list.device)
+    for k in range(K):
+        ev_k       = torch.linalg.eigvalsh(G[k])      # ascending, shape (n,)
+        total_tail = total_tail + ev_k[:n - r].sum()
 
-    ev      = torch.linalg.eigvalsh(G_global)        # (n_cases,)
-    n       = ev.shape[-1]
-    r       = min(n_latent, n)
-    tail_sq = ev[:n - r].sum()
-    error   = torch.sqrt(tail_sq.clamp(min=1e-20) / n)
+    error = torch.sqrt(total_tail.clamp(min=1e-20) / n)
     return error
 
 
@@ -273,6 +276,14 @@ def optimize_laplace_path(
     N_spatial = H_sub * W_sub
     V         = C_cases.transpose(0, 2, 3, 1).reshape(n_cases, N_spatial, Nt)
     V_tensor  = torch.tensor(V, dtype=torch.float64, device=device)
+
+    # Normalisation cohérente avec dataset.py :
+    # - mean sur les cases uniquement (garde le profil temporel) → F(V_mean) = target_mean par linéarité
+    # - std  sur cases × Nt (scalaire par pixel) → division cohérente avec target_std du dataset
+    V_mean   = V_tensor.mean(dim=0, keepdim=True)                               # (1, N_spatial, Nt)
+    V_std    = V_tensor.std(dim=(0, 2), keepdim=True).clamp(min=1e-8)           # (1, N_spatial, 1)
+    V_tensor = (V_tensor - V_mean) / V_std
+
     print(f"Loaded {n_cases} cases: V {V_tensor.shape}  device={device}  (N_spatial={N_spatial})")
 
     if log_wandb:
