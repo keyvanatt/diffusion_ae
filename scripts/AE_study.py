@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from transient.dataset import TransientDataset
 from models.laplace_ae_surrogate import LaplaceAE
-from utils.laplace import laplace_inverse
+from utils.laplace import laplace_inverse_tik
 from utils.animate import animate_comparaison
 
 # ============================================================
@@ -28,33 +28,68 @@ torch.manual_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 data_path = "/Data/KAT/ch4_rotated.npy"
-ae_path = "checkpoints/LaplaceAE_best.pt"
+ae_path   = "checkpoints/LaplaceAE_best.pt"
 
-N = 128
+N         = 128
 latent_dim = 64
-beta = 1e-3
-n_samples = 64  # Nombre de samples pour l'analyse
+beta       = 1e-3
+n_samples  = 64   # Nombre de samples pour l'analyse
+
+# ============================================================
+# Paramètres de la transformée de Laplace
+# Copier depuis les logs wandb du Stage 1 du pipeline.
+# ============================================================
+
+alpha_t = 0.0068868
+lam     = 0.000029221
+rule    = 'trap'
+dt      = 1.0
+
+# s_list : array 1D complex128 issu du Stage 1.
+# Si None → rfftfreq tronqué à k_max (cas simple, non optimisé).
+k_max  = 20
+s_list = np.array([
+    0.0100+0.0000j, 0.0085+0.0414j, 0.0085+0.0827j, 0.0086+0.1236j,
+    0.0088+0.1650j, 0.0087+0.2062j, 0.0088+0.2476j, 0.0089+0.2894j,
+    0.0092+0.3325j, 0.0095+0.3780j, 0.0097+0.4269j, 0.0096+0.4785j,
+    0.0099+0.5317j, 0.0101+0.5858j, 0.0102+0.6423j, 0.0102+0.7009j,
+    0.0103+0.7606j, 0.0103+0.8212j, 0.0104+0.8815j, 0.0099+0.9353j,
+], dtype=np.complex128)
+# Pour utiliser rfftfreq simple à la place, décommenter :
+# _u_tmp = np.load(data_path, mmap_mode='r'); Nt_data = _u_tmp.shape[1]; del _u_tmp
+# s_list = (1j * 2 * np.pi * np.fft.rfftfreq(Nt_data, d=dt))[:k_max + 1]
+
+K = len(s_list)
+print(f"K={K}  alpha_t={alpha_t:.6f}  lam={lam:.5f}  rule={rule}")
 
 # ============================================================
 # Charger le dataset
 # ============================================================
 
 print("Chargement du dataset...")
-dataset = TransientDataset(data_path, laplace=True, gamma=0, rule="trap",
-                          interp_size=N, dt=1)
+dataset = TransientDataset(data_path, laplace=True, s_list=s_list, rule=rule,
+                           interp_size=N, dt=dt)
 
-# Créer les indices
-idx = torch.randperm(len(dataset))
-n_train = int(0.8 * len(dataset))
-n_val = int(0.1 * len(dataset))
-train_idx = idx[:n_train].tolist()
-test_idx = idx[n_train + n_val:].numpy()
+# Créer les indices (alignés sur le split du pipeline si dispo)
+_split_path = "dataset/split.npz"
+import os as _os
+if _os.path.exists(_split_path):
+    _split   = np.load(_split_path)
+    test_idx = _split['test_idx']
+    non_test = [i for i in range(len(dataset)) if i not in set(test_idx.tolist())]
+    perm     = torch.randperm(len(non_test))
+    n_train  = int(0.8 * len(non_test))
+    train_idx = [non_test[i] for i in perm[:n_train].tolist()]
+else:
+    idx       = torch.randperm(len(dataset))
+    n_train   = int(0.8 * len(dataset))
+    n_val     = int(0.1 * len(dataset))
+    train_idx = idx[:n_train].tolist()
+    test_idx  = idx[n_train + n_val:].numpy()
 
 dataset.fit(train_idx)
 
-K = dataset.K
-k_max = 20  # L'AE a été entraîné avec k_max=20
-print(f"Dataset: ns={len(dataset)}, K={K}, N={N}, k_max={k_max}")
+print(f"Dataset: ns={len(dataset)}, K={K}, N={N}")
 
 # ============================================================
 # Charger l'autoencoder
@@ -78,12 +113,12 @@ print(f"\nUtilisation de {n_samples} samples de test")
 # Calcul de l'erreur AE fréquence par fréquence
 # ============================================================
 
-print(f"\nCalcul de l'erreur AE fréquence par fréquence (k ≤ {k_max})...")
+print(f"\nCalcul de l'erreur AE fréquence par fréquence (K={K})...")
 U_all = dataset[batch_idx][1].float().to(device)  # (B, K, 2, N, N)
 
 ae_l2rel_losses_re = []
 ae_l2rel_losses_im = []
-for k in tqdm(range(k_max + 1)):
+for k in tqdm(range(K)):
     U = U_all[:, k]  # (B, 2, N, N)
     freq_ratio = torch.full((U.shape[0],), k / (K - 1), device=device)
 
@@ -121,13 +156,11 @@ print(f"AE (Imaginary) — Mean L2rel: {ae_l2rel_losses_im.mean():.2%}  Std: {ae
 # ============================================================
 # Calcul de l'erreur L2rel dans le domaine temporel (reconstruction complète)
 # ============================================================
-# Pour k ≤ k_max : prédiction AE (dénormalisée).
-# Pour k > k_max : target_mean[k] pixel par pixel — MÊME comportement que le surrogate
-#                  (0 normalisé → target_mean physique, shape (2, N, N) par fréquence).
-# Référence     : spectre vrai complet inverti (cohérent avec la grille 128×128 de l'AE).
+# Prédiction AE sur toutes les K fréquences (dénormalisée).
+# Référence : spectre vrai → laplace_inverse_tik avec la s_list optimale.
 # ============================================================
 
-print(f"\nReconstruction temporelle : AE (k≤{k_max}) + mean pixel/freq (k>{k_max})...")
+print(f"\nReconstruction temporelle via laplace_inverse_tik (K={K}, alpha_t={alpha_t:.4f}, lam={lam:.4f})...")
 
 Nt = dataset.Nt   # 150
 B  = n_samples
@@ -136,11 +169,11 @@ NN = N * N
 target_std_cpu  = dataset.target_std.cpu()   # (K, 2, N, N)
 target_mean_cpu = dataset.target_mean.cpu()  # (K, 2, N, N)
 
-M_half_pred = np.zeros((B, NN, K), dtype=np.complex64)
-M_half_true = np.zeros((B, NN, K), dtype=np.complex64)
+M_pred = np.zeros((B, NN, K), dtype=np.complex64)
+M_true = np.zeros((B, NN, K), dtype=np.complex64)
 
-# k ≤ k_max : prédiction AE batchée par fréquence
-for k in tqdm(range(k_max + 1), desc="AE forward (k≤k_max)"):
+# Prédiction AE sur toutes les K fréquences + dénormalisation
+for k in tqdm(range(K), desc="AE forward"):
     U_k = U_all[:, k]   # (B, 2, N, N) normalisé
     freq_ratio = torch.full((B,), k / (K - 1), device=device)
     with torch.no_grad():
@@ -148,45 +181,34 @@ for k in tqdm(range(k_max + 1), desc="AE forward (k≤k_max)"):
     tm_k = target_mean_cpu[k]   # (2, N, N)
     ts_k = target_std_cpu[k]
     U_k_phys = (U_k_pred.cpu() * ts_k[None] + tm_k[None]).numpy()   # (B, 2, N, N)
-    M_half_pred[:, :, k] = (U_k_phys[:, 0] + 1j * U_k_phys[:, 1]).reshape(B, NN)
+    M_pred[:, :, k] = (U_k_phys[:, 0] + 1j * U_k_phys[:, 1]).reshape(B, NN)
 
-# k > k_max : mean pixel par pixel par fréquence (même comportement que le surrogate)
-for k in range(k_max + 1, K):
-    tm_k = target_mean_cpu[k].numpy()   # (2, N, N)
-    M_k_mean = (tm_k[0] + 1j * tm_k[1]).reshape(NN)   # (N²,)
-    M_half_pred[:, :, k] = M_k_mean[None]   # broadcast sur B
-
-# Spectre de référence : spectre vrai complet dénormalisé
+# Spectre de référence dénormalisé
 U_all_np = U_all.cpu().numpy()   # (B, K, 2, N, N)
 for k in range(K):
     tm_k = target_mean_cpu[k].numpy()   # (2, N, N)
     ts_k = target_std_cpu[k].numpy()
     U_k_true = U_all_np[:, k]   # (B, 2, N, N) normalisé
     U_k_phys = U_k_true * ts_k[None] + tm_k[None]   # (B, 2, N, N)
-    M_half_true[:, :, k] = (U_k_phys[:, 0] + 1j * U_k_phys[:, 1]).reshape(B, NN)
+    M_true[:, :, k] = (U_k_phys[:, 0] + 1j * U_k_phys[:, 1]).reshape(B, NN)
 
-# Symétrie conjuguée → spectre complet (B, N², Nt)
-n_tail = Nt - K
+# Inversion Laplace via laplace_inverse_tik (gère la symétrie conjuguée)
+s_torch = torch.tensor(s_list, dtype=torch.complex128)
 
-def _to_full(M_h):
-    M_f = np.zeros((B, NN, Nt), dtype=np.complex64)
-    M_f[:, :, :K] = M_h
-    if n_tail > 0:
-        M_f[:, :, K:] = np.conj(M_h[:, :, 1:n_tail + 1])[:, :, ::-1]
-    return M_f
-
-M_full_pred = _to_full(M_half_pred)
-M_full_true = _to_full(M_half_true)
-
-# Inversion Laplace + calcul L2rel dans le domaine temporel
 anim_indices = set(np.random.choice(B, size=3, replace=False).tolist())
 saved_pred_t = {}
 saved_true_t = {}
 
 l2rel_temporal_list = []
 for b in tqdm(range(B), desc="Inversion Laplace"):
-    U_pred_t, _ = laplace_inverse(M_full_pred[b], dt=1, Nt=Nt, rule='trap', gamma=0)
-    U_true_t, _ = laplace_inverse(M_full_true[b], dt=1, Nt=Nt, rule='trap', gamma=0)
+    U_pred_t = laplace_inverse_tik(
+        torch.tensor(M_pred[b], dtype=torch.complex128),
+        s_torch, dt=dt, Nt=Nt, alpha_t=alpha_t, lam=lam, rule=rule,
+    ).numpy()   # (N², Nt)
+    U_true_t = laplace_inverse_tik(
+        torch.tensor(M_true[b], dtype=torch.complex128),
+        s_torch, dt=dt, Nt=Nt, alpha_t=alpha_t, lam=lam, rule=rule,
+    ).numpy()
     # (N², Nt) → (Nt, N, N)
     U_pred_t = U_pred_t.reshape(N, N, Nt).transpose(2, 0, 1)
     U_true_t = U_true_t.reshape(N, N, Nt).transpose(2, 0, 1)
@@ -198,7 +220,7 @@ for b in tqdm(range(B), desc="Inversion Laplace"):
         saved_true_t[b] = U_true_t.copy()
 
 l2rel_temporal_array = np.array(l2rel_temporal_list)
-print(f"Reconstruction temporelle (AE k≤{k_max} + mean pixel/freq k>{k_max}):")
+print(f"Reconstruction temporelle (AE k≤{k_max}, laplace_inverse_tik):")
 print(f"  Mean L2rel    : {l2rel_temporal_array.mean():.2%}")
 print(f"  Median L2rel  : {np.median(l2rel_temporal_array):.2%}")
 print(f"  Std L2rel     : {l2rel_temporal_array.std():.2%}")
@@ -210,7 +232,7 @@ print(f"  Min / Max     : {l2rel_temporal_array.min():.2%} / {l2rel_temporal_arr
 
 fig, ax = plt.subplots(figsize=(12, 5))
 
-k_freq = np.arange(k_max + 1)
+k_freq = np.arange(K)
 ax.plot(k_freq, ae_l2rel_losses_re * 100, 'o-', label='Re(Û_k) reconstruction error', linewidth=2, markersize=6, color='steelblue')
 ax.plot(k_freq, ae_l2rel_losses_im * 100, 's-', label='Im(Û_k) reconstruction error', linewidth=2, markersize=6, color='coral')
 
@@ -237,7 +259,7 @@ ax.set_xlabel('L2 Relative Error (%)', fontsize=12)
 ax.set_ylabel('Count', fontsize=12)
 ax.set_title(
     f'AE reconstruction error — temporal domain\n'
-    f'(AE for k≤{k_max}, pixel-wise mean for k>{k_max},  '
+    f'(K={K}, alpha_t={alpha_t:.4f}, lam={lam:.4f},  '
     f'mean={l2rel_temporal_array.mean()*100:.2f}%)',
     fontsize=13, fontweight='bold',
 )
@@ -254,7 +276,7 @@ plt.close()
 # Figure 2-6 : Visualisations de quelques fréquences
 # ============================================================
 
-selected_freqs = [0, 5, 10, 15, 20]  # Fréquences uniformément réparties dans [0, k_max]
+selected_freqs = np.linspace(0, K - 1, min(5, K), dtype=int).tolist()
 
 for k in selected_freqs:
     sample_idx = 0  # Premier sample
@@ -315,49 +337,42 @@ for k in selected_freqs:
 # ============================================================
 
 print("\n" + "="*70)
-print("RÉSUMÉ — AUTOENCODER LAPLACE (k ≤ 20)")
+print(f"RÉSUMÉ — AUTOENCODER LAPLACE  K={K}  alpha_t={alpha_t:.4f}  lam={lam:.4f}")
 print("="*70)
 
-print(f"\nErroreurs par fréquence — REAL PART (k_max={k_max}):")
+print(f"\nErreurs par fréquence — REAL PART:")
 print(f"  Mean L2rel    : {ae_l2rel_losses_re.mean():.2%}")
 print(f"  Median L2rel  : {np.median(ae_l2rel_losses_re):.2%}")
 print(f"  Std L2rel     : {ae_l2rel_losses_re.std():.2%}")
 print(f"  Min L2rel     : {ae_l2rel_losses_re.min():.2%}  (freq k={ae_l2rel_losses_re.argmin()})")
 print(f"  Max L2rel     : {ae_l2rel_losses_re.max():.2%}  (freq k={ae_l2rel_losses_re.argmax()})")
 
-print(f"\nErroreurs par fréquence — IMAGINARY PART (k_max={k_max}):")
+print(f"\nErreurs par fréquence — IMAGINARY PART:")
 print(f"  Mean L2rel    : {ae_l2rel_losses_im.mean():.2%}")
 print(f"  Median L2rel  : {np.median(ae_l2rel_losses_im):.2%}")
 print(f"  Std L2rel     : {ae_l2rel_losses_im.std():.2%}")
 print(f"  Min L2rel     : {ae_l2rel_losses_im.min():.2%}  (freq k={ae_l2rel_losses_im.argmin()})")
 print(f"  Max L2rel     : {ae_l2rel_losses_im.max():.2%}  (freq k={ae_l2rel_losses_im.argmax()})")
 
-# Regrouper par bandes de fréquence
-low_freq_re = ae_l2rel_losses_re[:7]    # k=0-6
-mid_freq_re = ae_l2rel_losses_re[7:14]  # k=7-13
-high_freq_re = ae_l2rel_losses_re[14:]  # k=14-20
-
-low_freq_im = ae_l2rel_losses_im[:7]    # k=0-6
-mid_freq_im = ae_l2rel_losses_im[7:14]  # k=7-13
-high_freq_im = ae_l2rel_losses_im[14:]  # k=14-20
-
+# Regrouper par tiers de fréquence
+t1, t2 = K // 3, 2 * K // 3
 print(f"\nPar bande de fréquence (Real):")
-print(f"  Basses (k<7)      : mean={low_freq_re.mean():.2%}")
-print(f"  Moyennes (7≤k<14) : mean={mid_freq_re.mean():.2%}")
-print(f"  Hautes (k≥14)     : mean={high_freq_re.mean():.2%}")
+print(f"  Basses  (k<{t1})      : mean={ae_l2rel_losses_re[:t1].mean():.2%}")
+print(f"  Moyennes ({t1}≤k<{t2}) : mean={ae_l2rel_losses_re[t1:t2].mean():.2%}")
+print(f"  Hautes  (k≥{t2})      : mean={ae_l2rel_losses_re[t2:].mean():.2%}")
 
 print(f"\nPar bande de fréquence (Imaginary):")
-print(f"  Basses (k<7)      : mean={low_freq_im.mean():.2%}")
-print(f"  Moyennes (7≤k<14) : mean={mid_freq_im.mean():.2%}")
-print(f"  Hautes (k≥14)     : mean={high_freq_im.mean():.2%}")
+print(f"  Basses  (k<{t1})      : mean={ae_l2rel_losses_im[:t1].mean():.2%}")
+print(f"  Moyennes ({t1}≤k<{t2}) : mean={ae_l2rel_losses_im[t1:t2].mean():.2%}")
+print(f"  Hautes  (k≥{t2})      : mean={ae_l2rel_losses_im[t2:].mean():.2%}")
 
-print(f"\nERREUR DE RECONSTRUCTION TEMPORELLE (AE k≤{k_max} + mean pixel/freq k>{k_max}):")
+print(f"\nERREUR DE RECONSTRUCTION TEMPORELLE (K={K}, laplace_inverse_tik):")
 print(f"  Mean L2rel      : {l2rel_temporal_array.mean():.2%}")
 print(f"  Median L2rel    : {np.median(l2rel_temporal_array):.2%}")
 print(f"  Std L2rel       : {l2rel_temporal_array.std():.2%}")
 print(f"  Min L2rel       : {l2rel_temporal_array.min():.2%}")
 print(f"  Max L2rel       : {l2rel_temporal_array.max():.2%}")
-print(f"  (Référence : spectre vrai complet → inverse Laplace, sur grille {N}×{N})")
+print(f"  (Référence : spectre vrai → laplace_inverse_tik, grille {N}×{N})")
 
 # ============================================================
 # Animations de comparaison (3 samples)
