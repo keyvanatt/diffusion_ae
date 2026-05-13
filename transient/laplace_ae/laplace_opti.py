@@ -304,7 +304,12 @@ def optimize_laplace_path(
     lam     = torch.tensor(1e-3, dtype=torch.float64, device=device).requires_grad_(True)
     alpha_t = torch.tensor(1e-3, dtype=torch.float64, device=device).requires_grad_(True)
 
-    optimizer = torch.optim.AdamW([s_list, lam, alpha_t], lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(
+        [
+            {"params": [s_list],       "lr": lr},
+            {"params": [lam, alpha_t], "lr": lr * 0.1},
+        ]
+    )
     w = torch.ones(Nt, dtype=torch.float64, device=device); w[0] = 0.5; w[-1] = 0.5
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
@@ -367,7 +372,8 @@ def optimize_laplace_path(
         loss    = (biais_loss_l2 + lambda_diff * biais_loss_diff + lambda_x * biais_loss_diff_x) / (1 + lambda_diff + lambda_x) + var_los
         loss.backward()
 
-        torch.nn.utils.clip_grad_norm_([s_list, lam, alpha_t], max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_([s_list], max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_([lam, alpha_t], max_norm=0.1)
         optimizer.step()
         scheduler.step(loss.detach())
 

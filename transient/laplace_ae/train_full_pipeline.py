@@ -72,6 +72,7 @@ def main(
     gamma_min    = -0.05,
     lr_opti      = 5e-3,
     n_epochs_opti = 500,
+    patience_opti = 50,
     case_chunk   = 10,
     sp_chunk     = 2000,
 
@@ -81,7 +82,7 @@ def main(
     epochs_ae    = 100,
     batch_size_ae = 256,
     lr_ae        = 5e-4,
-    beta         = 0,
+    beta         = 1e-4,
     patience_ae  = 30,
     k_max        = None,   # None → toutes les K fréquences optimisées
 
@@ -155,7 +156,7 @@ def main(
             lambda_diff=lambda_diff, lambda_x=lambda_x,
             step=step, n_cases=n_cases_opti, n_latent=n_latent,
             lambda_ae=lambda_ae_o, gamma_min=gamma_min,
-            lr=lr_opti, n_epochs=n_epochs_opti,
+            lr=lr_opti, n_epochs=n_epochs_opti, patience=patience_opti,
             case_chunk=case_chunk, sp_chunk=sp_chunk,
             seed=seed, data_path=data_path, log_wandb=True,
             indices=_opti_indices,
@@ -282,4 +283,4 @@ def main(
 
 
 if __name__ == '__main__':
-    main(resume_from=2)
+    main(resume_from=1)
