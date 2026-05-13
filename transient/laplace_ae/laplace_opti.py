@@ -236,6 +236,7 @@ def optimize_laplace_path(
     lambda_diff=0.5, lambda_x=0.5,
     step=1, n_cases=100, n_latent=64, lambda_ae=1.25,
     gamma_min=-0.05, lr=5e-3, n_epochs=500,
+    patience=50,
     case_chunk=10, sp_chunk=2000, seed=42,
     data_path=None, log_wandb=True,
     indices=None,   # si fourni, échantillonne uniquement parmi ces indices
@@ -293,8 +294,9 @@ def optimize_laplace_path(
             config=dict(K=K, Nt=Nt, dt=dt, gamma=gamma, lambda_diff=lambda_diff,
                         lambda_x=lambda_x, step=step, n_cases=n_cases, n_latent=n_latent,
                         lambda_ae=lambda_ae, gamma_min=gamma_min, lr_init=lr,
-                        n_epochs=n_epochs, seed=seed, case_chunk=case_chunk,
-                        sp_chunk=sp_chunk, alpha_x=0, bias_formula="mean_abs"),
+                        n_epochs=n_epochs, patience=patience, seed=seed,
+                        case_chunk=case_chunk, sp_chunk=sp_chunk,
+                        alpha_x=0, bias_formula="mean_abs"),
         )
 
     torch.manual_seed(seed)
@@ -318,6 +320,12 @@ def optimize_laplace_path(
         v_init = V_recon0[0, node].cpu().numpy()
         del V_recon0
         torch.cuda.empty_cache()
+
+    best_loss      = float('inf')
+    patience_count = 0
+    best_s         = s_list.detach().clone()
+    best_lam       = lam.item()
+    best_alpha_t   = alpha_t.item()
 
     # Optimization loop
     pbar = tqdm(range(n_epochs), desc="Optim s-points", unit="epoch")
@@ -369,13 +377,29 @@ def optimize_laplace_path(
             alpha_t.clamp_(min=1e-6, max=1.0)
             s_list.imag.clamp_(min=0)
 
-        l2rel_val = (sum_l2rel / n_cases).item()
-        cur_lr    = optimizer.param_groups[0]['lr']
+        l2rel_val  = (sum_l2rel / n_cases).item()
+        cur_lr     = optimizer.param_groups[0]['lr']
+        loss_val   = loss.item()
+
+        if loss_val < best_loss:
+            best_loss    = loss_val
+            best_s       = s_list.detach().clone()
+            best_lam     = lam.item()
+            best_alpha_t = alpha_t.item()
+            patience_count = 0
+        else:
+            patience_count += 1
 
         pbar.set_postfix(
-            loss=f"{loss.item():.3e}",
+            loss=f"{loss_val:.3e}",
+            best=f"{best_loss:.3e}",
             l2rel=f"{l2rel_val:.4f}",
+            pat=f"{patience_count}/{patience}",
         )
+
+        if patience_count >= patience:
+            pbar.write(f"Early stopping à l'époque {epoch}  (best loss={best_loss:.4e})")
+            break
 
         if log_wandb:
             log = {
@@ -394,10 +418,16 @@ def optimize_laplace_path(
             log["s_points/text"] = _log_s_text(s_list)
             if epoch % 10 == 0 or epoch == n_epochs - 1:
                 log["s_points/scatter"] = _log_s_scatter(s_list, s_init, epoch)
+            log["early_stop/patience_count"] = patience_count
             wandb.log(log, step=epoch)
 
-    # Final results
-    s_opt = s_list.detach().cpu().clone()
+    # Restaure les meilleurs paramètres
+    with torch.no_grad():
+        s_list.copy_(best_s.to(device))
+        lam.fill_(best_lam)
+        alpha_t.fill_(best_alpha_t)
+
+    s_opt = best_s.cpu().clone()
 
     with torch.no_grad():
         V_recon_opt = reconstruct_lowmem(s_list, V_tensor, alpha_t, lam, w, case_chunk=case_chunk)
@@ -408,8 +438,8 @@ def optimize_laplace_path(
 
     print("Optimized s points:", ", ".join(
         f"{z.real:.4f}+{z.imag:.4f}j" for z in s_opt.numpy().tolist()))
-    print("Optimized lam: ", lam.item())
-    print("Optimized alpha_t: ", alpha_t.item())
+    print("Optimized lam: ", best_lam)
+    print("Optimized alpha_t: ", best_alpha_t)
 
     if log_wandb:
         fig, ax = plt.subplots(figsize=(7, 5))
@@ -468,7 +498,7 @@ def optimize_laplace_path(
         wandb.finish()
         print("wandb run finished.")
 
-    return s_opt, lam.item(), alpha_t.item()
+    return s_opt, best_lam, best_alpha_t
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +516,7 @@ if __name__ == '__main__':
     gamma_min   = -0.05
     lr          = 5e-3
     n_epochs    = 500
+    patience    = 50
     case_chunk  = 10
     sp_chunk    = 2000
     seed        = 42
@@ -495,7 +526,7 @@ if __name__ == '__main__':
         Nt=Nt, dt=dt, K=K, gamma=gamma,
         lambda_diff=lambda_diff, lambda_x=lambda_x,
         step=step, n_cases=n_cases, n_latent=n_latent, lambda_ae=lambda_ae,
-        gamma_min=gamma_min, lr=lr, n_epochs=n_epochs,
+        gamma_min=gamma_min, lr=lr, n_epochs=n_epochs, patience=patience,
         case_chunk=case_chunk, sp_chunk=sp_chunk, seed=seed,
         data_path=data_path, log_wandb=True,
     )
