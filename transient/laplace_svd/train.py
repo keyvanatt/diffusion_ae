@@ -187,7 +187,7 @@ def train_one_freq(k, k_svd, theta_dim, N,
 
 def assemble_and_save(model, train_idx, val_idx, test_idx,
                       dataset, N, Nt, K, theta_dim,
-                      k_freq, k_svd, dt, rule, save_path):
+                      k_freq, k_svd, dt, alpha_t, lam, rule, save_path):
     """Sauvegarde le LaplaceSVDModel avec toutes les métadonnées."""
     model.set_s_list(dataset.s)
     ckpt = {
@@ -202,6 +202,8 @@ def assemble_and_save(model, train_idx, val_idx, test_idx,
         'theta_mean':  dataset.theta_mean.numpy(),
         'theta_std':   dataset.theta_std.numpy(),
         'dt':          dt,
+        'alpha_t':     alpha_t,
+        'lam':         lam,
         'rule':        rule,
         'test_idx':    test_idx,
     }
@@ -218,21 +220,24 @@ if __name__ == '__main__':
     # ── Hyperparamètres ──────────────────────────────────────────────────────
     data_path  = '/Data/KAT/ch4_rotated.npy'
     doe_path   = '/Data/KAT/doe_rotated.npy'
-    dt         = 1      # pas de temps
-    rule       = 'trap'       # règle de quadrature
-    k_freq     = 20           # fréquences à modéliser
-    k_svd      = 100           # composantes SVD par (fréquence, composante)
+    Nt_data    = 150          # nombre de pas de temps du dataset ch4_rotated
+    dt         = 1.0          # pas de temps
+    rule       = 'trap'       # règle de quadrature (forward et inverse)
+    k_svd      = 100          # composantes SVD par (fréquence, composante)
+    alpha_t        = 0.092214
+    lam            = 0.32193
     n_epochs   = 200
     lr         = 1e-3
     batch_size = 128
     save_path  = 'checkpoints/LaplaceSVDModel.pt'
     device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    s_list = [0.0233+0.0000j, 0.0233+0.0435j, 0.0234+0.0913j, 0.0247+0.1426j, 0.0245+0.1971j, 0.0254+0.2533j, 0.0260+0.3107j, 0.0261+0.3697j, 0.0265+0.4298j, 0.0270+0.4911j, 0.0273+0.5534j, 0.0276+0.6163j, 0.0280+0.6800j, 0.0284+0.7446j, 0.0287+0.8095j, 0.0291+0.8744j, 0.0295+0.9397j, 0.0298+1.0054j, 0.0296+1.0689j, 0.0309+1.1200j]
+    s_list = np.array(s_list)
     # ─────────────────────────────────────────────────────────────────────────
 
+    k_freq = len(s_list)
     wandb.init(project='convdiff', name=f'LaplaceSVD_kf{k_freq}_ks{k_svd}')
-
-    # Points s : k_freq premières fréquences FFT (Nt=150 pour ch4_rotated)
-    s_list = (1j * 2 * np.pi * np.fft.rfftfreq(150, d=dt))[:k_freq]
 
     # Dataset avec transformée de Laplace (calcule/charge le cache)
     dataset = TransientDataset(data_path, doe_path=doe_path,
@@ -330,6 +335,6 @@ if __name__ == '__main__':
     # ── Sauvegarde ───────────────────────────────────────────────────────────
     assemble_and_save(model, train_idx, val_idx, test_idx,
                       dataset, N, Nt, K, theta_dim,
-                      k_freq, k_svd, dt, rule, save_path)
+                      k_freq, k_svd, dt, alpha_t, lam, rule, save_path)
 
     wandb.finish()
