@@ -28,6 +28,7 @@
   \setbeamercolor{titlelike}{parent=palette primary,bg=white,fg=polybleu}
   \setbeamercolor{item}{fg=polyrouge}
   \setbeamertemplate{navigation symbols}{}
+  \setbeamertemplate{caption}[numbered]
   
   \useinnertheme{rectangles}
 }
@@ -77,9 +78,11 @@
       \item \textbf{Format:} Solutions interpolated to a uniform $N \times N$ grid.
   \end{itemize}
   
-  \vspace{0.2em}
-  \centering
-  \includegraphics[width=0.95\textwidth, height=4.2cm, keepaspectratio]{dataset_preview.png}
+  \begin{figure}
+      \centering
+      \includegraphics[width=0.95\textwidth, height=4.2cm, keepaspectratio]{dataset_preview.png}
+      \caption{Stationary convection-diffusion dataset preview}
+  \end{figure}
 \end{frame}
 
 \begin{frame}{Preliminary Study: Latent Surrogate Strategy}
@@ -102,9 +105,11 @@
       \end{itemize}
   \end{columns}
   
-  \vspace{0.5em}
-  \centering
-  \includegraphics[width=0.8\textwidth]{surrogate_l2rel_hist.png}
+  \begin{figure}
+      \centering
+      \includegraphics[width=0.8\textwidth]{surrogate_l2rel_hist.png}
+      \caption{Surrogate L2 relative error}
+  \end{figure}
 \end{frame}
 
 \section{The Transient Challenge}
@@ -115,9 +120,11 @@
       \item 8,100 simulations, 150 snapshots on $200 \times 200$ grid.
       \item Parameters: $\vtheta = (k, A, C)$ (reaction rate, angle, concentration).
   \end{itemize}
-  \vspace{0.5em}
-  \centering
-  \animategraphics[loop,autoplay,width=0.9\textwidth]{10}{frames_ch4_demo/frame_}{0}{74}\\
+  \begin{figure}
+      \centering
+      \animategraphics[loop,autoplay,width=0.9\textwidth]{10}{frames_ch4_demo/frame_}{0}{74}
+      \caption{Methane dispersion demonstration}
+  \end{figure}
   \vspace{0.5em}
   \textbf{Challenge:} High dimensionality $(150 \times 200^2)$ makes direct regression intractable.
 \end{frame}
@@ -132,10 +139,17 @@
           \item \textbf{Performance:} Reaches an irreducible $\sim$10\% reconstruction floor.
       \end{itemize}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=2.8cm]{svd_convergence.png}\\
-      \vspace{0.3em}
-      \includegraphics[height=2.8cm]{SVDSurrogate_l2rel_hist.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=2.5cm]{svd_convergence.png}
+          \caption{SVD convergence}
+      \end{figure}
+      \vspace{-0.5em}
+      \begin{figure}
+          \centering
+          \includegraphics[height=2.5cm]{SVDSurrogate_l2rel_hist.png}
+          \caption{SVD Surrogate Error}
+      \end{figure}
   \end{columns}
 \end{frame}
 
@@ -154,8 +168,11 @@
           \item Differentiable transform: allows processing at \textbf{full spatial resolution}.
       \end{itemize}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[width=0.85\linewidth]{gamma_opti_energy.png}
+      \begin{figure}
+          \centering
+          \includegraphics[width=0.85\linewidth]{gamma_opti_energy.png}
+          \caption{Gamma optimization energy}
+      \end{figure}
   \end{columns}
 \end{frame}
 
@@ -176,9 +193,11 @@
       \end{itemize}
   \end{columns}
   
-  \vspace{0.2em}
-  \centering
-  \includegraphics[height=3.0cm]{LaplaceSVDModel_svd_error_ksvd100.png}
+  \begin{figure}
+      \centering
+      \includegraphics[height=3.0cm]{LaplaceSVDModel_svd_error_ksvd100.png}
+      \caption{Laplace SVD Model error}
+  \end{figure}
 \end{frame}
 
 \section{Latent Space Pipeline}
@@ -206,20 +225,28 @@
 
   \begin{columns}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=3.8cm]{LaplaceAE_l2rel.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{LaplaceAE_l2rel.png}
+          \caption{Laplace AE L2 relative error}
+      \end{figure}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=3.8cm]{ae_study_temporal_error.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{ae_study_temporal_error.png}
+          \caption{Temporal error}
+      \end{figure}
   \end{columns}
 \end{frame}
 
 \begin{frame}{Latent Space: Performance Evaluation per Frequency Index}
   Reconstruction error naturally degrades as we evaluate higher conditioning indices $k$. The model efficiently reconstructs the highly energetic low frequencies, while struggling with the noise-like high-frequency tail.
   \vspace{0.5em}
-  \begin{center}
+  \begin{figure}
+      \centering
       \includegraphics[height=5.5cm]{ae_study_frequency_error.png}
-  \end{center}
+      \caption{AE Frequency error}
+  \end{figure}
 \end{frame}
 
 \begin{frame}{Latent Space: Spatial Truncation Error per Frequency}
@@ -227,21 +254,28 @@
   \vspace{1em}
   \begin{columns}
       \column{0.5\textwidth}
-      \centering
-      \textbf{k=0 (DC)}\\
-      \includegraphics[height=4.5cm]{ae_study_freq_00.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=4.5cm]{ae_study_freq_00.png}
+          \caption{Spatial truncation at $k=0$ (DC)}
+      \end{figure}
       \column{0.5\textwidth}
-      \centering
-      \textbf{k=20 (High)}\\
-      \includegraphics[height=4.5cm]{ae_study_freq_20.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=4.5cm]{ae_study_freq_20.png}
+          \caption{Spatial truncation at $k=20$ (High)}
+      \end{figure}
   \end{columns}
 \end{frame}
 
 \begin{frame}{Demonstration: Latent Space Autoencoder}
   \textbf{Autoencoder Reconstruction over time}\\
   \vspace{0.5em}
-  \centering
-  \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_ae_study_anim_0/frame_}{0}{149}\\
+  \begin{figure}
+      \centering
+      \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_ae_study_anim_0/frame_}{0}{149}
+      \caption{Autoencoder reconstruction over time}
+  \end{figure}
   \vspace{1em}
   \textit{The AE cleanly decodes the temporal trajectory when provided with true frequencies.}
 \end{frame}
@@ -254,11 +288,17 @@
   \vspace{0.5em}
   \begin{columns}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=4.2cm]{LaplaceLatentSurrogate_Nt150_loss.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{LaplaceLatentSurrogate_Nt150_loss.png}
+          \caption{Latent surrogate loss}
+      \end{figure}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=4.2cm]{laplacelatentmodel_l2rel_hist.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{laplacelatentmodel_l2rel_hist.png}
+          \caption{Latent surrogate relative error}
+      \end{figure}
   \end{columns}
 \end{frame}
 
@@ -268,19 +308,28 @@
   \vspace{0.5em}
   \begin{columns}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=4.2cm]{LaplaceLatentModel_finetune_e2e.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{LaplaceLatentModel_finetune_e2e.png}
+          \caption{E2E fine-tuning loss}
+      \end{figure}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=4.2cm]{laplacelatentmodel_finetuned_l2rel_hist.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{laplacelatentmodel_finetuned_l2rel_hist.png}
+          \caption{Fine-tuned physical map error}
+      \end{figure}
   \end{columns}
 \end{frame}
 
 \begin{frame}{Demonstration: Fine-Tuned Physical Map}
   \textbf{End-to-End Surrogate Emulation}\\
   \vspace{0.5em}
-  \centering
-  \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_LaplaceLatentModel_anim_1/frame_}{0}{149}\\
+  \begin{figure}
+      \centering
+      \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_LaplaceLatentModel_anim_1/frame_}{0}{149}
+      \caption{End-to-End surrogate emulation}
+  \end{figure}
   \vspace{1em}
   \textit{After fine-tuning, the surrogate successfully bridges the parameters to the non-linear transport dynamics.}
 \end{frame}
@@ -291,19 +340,28 @@
   \vspace{0.5em}
   \begin{columns}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=4.2cm]{CorrectionAE_l2rel.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{CorrectionAE_l2rel.png}
+          \caption{Residual Corrector error over time}
+      \end{figure}
       \column{0.5\textwidth}
-      \centering
-      \includegraphics[height=4.2cm]{correctionae_unet_l2rel_hist.png}
+      \begin{figure}
+          \centering
+          \includegraphics[height=3.8cm]{correctionae_unet_l2rel_hist.png}
+          \caption{Residual Corrector relative error}
+      \end{figure}
   \end{columns}
 \end{frame}
 
 \begin{frame}{Demonstration: Residual Corrector}
   \textbf{Post-Hoc Gibbs Artifact Suppression}\\
   \vspace{0.5em}
-  \centering
-  \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_CorrectionAE_anim_1/frame_}{0}{149}\\
+  \begin{figure}
+      \centering
+      \animategraphics[loop,autoplay,width=0.8\textwidth]{10}{frames_CorrectionAE_anim_1/frame_}{0}{149}
+      \caption{Gibbs artifact suppression}
+  \end{figure}
   \vspace{1em}
   \textit{The 3D UNet effectively suppresses spatial ripples dynamically over time.}
 \end{frame}
@@ -321,7 +379,8 @@
 \definecolor{bdrD}{RGB}{185,135,55}
 \definecolor{bdrE}{RGB}{125,85,165}
 \definecolor{bdrF}{RGB}{65,140,85}
-\begin{center}
+\begin{figure}
+\centering
 \resizebox{0.95\textwidth}{!}{%
 \begin{tikzpicture}[
   >=Stealth,
@@ -429,7 +488,8 @@
 
 \end{tikzpicture}%
 }
-\end{center}
+\caption{Inference Pipeline Architecture}
+\end{figure}
 \end{frame}
 
 \section{Summary}
@@ -449,9 +509,11 @@
       \end{tabular}}
   \end{table}
   
-  \vspace{0.5em}
-  \centering
-  \includegraphics[height=4.8cm]{benchmark_l2rel.png}
+  \begin{figure}
+      \centering
+      \includegraphics[height=4.8cm]{benchmark_l2rel.png}
+      \caption{Benchmark performance comparison}
+  \end{figure}
 \end{frame}
 
 \begin{frame}{Conclusion}
@@ -485,6 +547,37 @@
   \[ \|\mathbf{v} - \hat{\mathbf{v}}^*\| \leq \|\mathbf{v} - \mathbf{v}^*\| + \underbrace{\|\mathbf{A}^{-1}\mathbf{F}_{st}^H\|}_{\text{Condition number}} \cdot \underbrace{\|\mathbf{u} - \hat{\mathbf{u}}\|}_{\text{Surrogate error}} \]
 \end{frame}
 
+\begin{frame}{SVD Residual as a Proxy Objective}
+  \small
+  \begin{itemize}
+      \item Direct AE error evaluation is computationally intractable.
+      \item \textbf{Method:} We define a grid in the complex Laplace domain ($s_k \in \mathbb{C}$). For each grid point, we train a small AE (1,000 samples) \& compute linear SVD residual.
+  \end{itemize}
+  \vspace{-0.5em}
+  \begin{columns}[T]
+      \column{0.32\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.5cm, keepaspectratio]{error_map.png}
+          \caption{AE Val Error Map}
+      \end{figure}
+      \column{0.32\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.5cm, keepaspectratio]{laplace_svd_residual.png}
+          \caption{SVD Residual Grid}
+      \end{figure}
+      \column{0.32\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.5cm, keepaspectratio]{laplace_error_svd_correlation.png}
+          \caption{Correlation}
+      \end{figure}
+  \end{columns}
+  \vspace{-0.5em}
+  \textbf{Conclusion:} Strong correlation validates the SVD residual as a differentiable proxy objective.
+\end{frame}
+
 \begin{frame}{Contour Optimization via SVD Proxy Objective}
   \textbf{1. Surrogate Error Approximation}\\
   Evaluating $\|\mathbf{u}-\hat{\mathbf{u}}\|$ requires training an AE for each contour $\mathbf{s}$. We approximate it via the mean SVD residual (optimal linear surrogate of rank $r$):
@@ -514,32 +607,166 @@
       \column{0.65\textwidth}
       \centering
       \begin{minipage}{0.48\textwidth}
-          \centering
-          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{loss_s_opti.png}\\
-          \footnotesize Total Proxy Loss
+          \begin{figure}
+              \centering
+              \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{loss_s_opti.png}
+              \caption{Total Proxy Loss}
+          \end{figure}
       \end{minipage}
       \hfill
       \begin{minipage}{0.48\textwidth}
-          \centering
-          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{l2_s_opti.png}\\
-          \footnotesize Regularisation Bias
+          \begin{figure}
+              \centering
+              \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{l2_s_opti.png}
+              \caption{Regularisation Bias}
+          \end{figure}
       \end{minipage}
       
       \vspace{0.4em}
       
       \begin{minipage}{0.48\textwidth}
-          \centering
-          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{var_s_opti.png}\\
-          \footnotesize SVD Variance
+          \begin{figure}
+              \centering
+              \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{var_s_opti.png}
+              \caption{SVD Variance Proxy}
+          \end{figure}
       \end{minipage}
       \hfill
       \begin{minipage}{0.48\textwidth}
-          \centering
-          \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{media_images_final_s_points_trajectory_499_8ad3c2193cf53a6872e9.png}\\
-          \footnotesize Contour Trajectory
+          \begin{figure}
+              \centering
+              \includegraphics[width=\linewidth, height=2.8cm, keepaspectratio]{s_opti.png}
+              \caption{Contour Trajectory}
+          \end{figure}
       \end{minipage}
   \end{columns}
 \end{frame}
+
+\begin{frame}{Impact on Laplace SVD Model}
+  \begin{columns}
+      \column{0.5\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, keepaspectratio]{LaplaceSVDModel_svd_error_ksvd100.png}
+          \caption{Standard SVD error}
+      \end{figure}
+      \column{0.5\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, keepaspectratio]{LaplaceSVDModel_svd_error_ksvd100_optimal.png}
+          \caption{Optimized SVD error}
+      \end{figure}
+  \end{columns}
+  Consequent improvement : using SVD on Laplace maps is now possible. 
+  
+  \textbf{Limitation} : $\theta \to c(\theta)$ is hard to learn.
+\end{frame}
+
+\begin{frame}{Impact on Laplace AE Model}
+  \vspace{-0.5em}
+  \begin{columns}[T]
+      \column{0.5\textwidth}
+      \centering
+      \textbf{Loss Comparison}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=5cm, keepaspectratio]{loss comparison.png}
+          \caption{Proxy Loss vs AE Loss}
+      \end{figure}
+      
+      \column{0.48\textwidth}
+      \centering
+      \textbf{Temporal Error}
+      \vspace{-0.5em}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=2.3cm, keepaspectratio]{ae_study_temporal_error.png}
+          \caption{Standard Contour}
+      \end{figure}
+      \vspace{-1.5em}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=2.3cm, keepaspectratio]{opti_ae_study_temporal_error.png}
+          \caption{Optimized Contour}
+      \end{figure}
+  \end{columns}
+  \vspace{-0.2em}
+  \textbf{Conclusion:} Mean error drops from 9.94\% to 6.50\% ($\sim$30\% improvement).
+\end{frame}
+
+\begin{frame}{Limitations \& Perspectives (1/2): Frequency Error}
+  \begin{itemize}
+      \item \textbf{Frequency Error:} Opti better for $k < 5$, but worse at high frequencies.
+      \item \textbf{Truncation ($k_{\max}=20$):} High tail error despite low energy $\implies$ likely too large.
+  \end{itemize}
+  
+  \vspace{0.5em}
+  \begin{columns}[T]
+      \column{0.48\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.8cm, keepaspectratio]{ae_study_frequency_error.png}
+          \caption{Freq Error (Std)}
+      \end{figure}
+      \column{0.48\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.8cm, keepaspectratio]{opti_ae_study_frequency_error.png}
+          \caption{Freq Error (Opti)}
+      \end{figure}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Limitations \& Perspectives (2/2): Pure Reconstruction}
+  \begin{itemize}
+      \item \textbf{Pure Reconstruction:} Standard FFT ($\gamma = 0$) outperforms optimized Laplace contour.
+      \item \textbf{Next Step:} Should we apply FFT parameterized along a specific optimized path?
+  \end{itemize}
+  
+  \vspace{0.5em}
+  \begin{columns}[T]
+      \column{0.48\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.8cm, keepaspectratio]{l2hist_s_opti.png}
+          \caption{Reconstruction (Opti)}
+      \end{figure}
+      \column{0.48\textwidth}
+      \begin{figure}
+          \centering
+          \includegraphics[width=\linewidth, height=3.8cm, keepaspectratio]{gamma_opti_hist.png}
+          \caption{Reconstruction (FFT)}
+      \end{figure}
+  \end{columns}
+\end{frame}
+\begin{frame}{State of the Art \& Next Work}
+  \begin{itemize}
+      \item \textbf{Laplace Operators (Field-to-Field)}
+      \begin{itemize}
+          \item Unresolved challenge: explicit time management.
+          \item Laplace transform is an interesting approach to this issue (already used, but mainly as an operator).
+      \end{itemize}
+      \vspace{0.5em}
+      \item \textbf{Model Order Reduction}
+      \begin{itemize}
+          \item \textit{Current work:} Classic use of Proper Orthogonal Decomposition (POD) and Autoencoders (AE).
+          \item Laplace reduction is rarer. Time management faces the same issues as above, often handled by treating time simply as an additional variable.
+      \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Related Work: MOR via Contour Integrals}
+  \textbf{Ref:} \textit{Model Order Reduction in Contour Integral Methods for Parametric PDEs}
+  
+  \vspace{1em}
+  \begin{itemize}
+      \item \textbf{Method:} Projection-based MOR using Laplace transform for parametric linear PDEs.
+      \item \textbf{Direct Time Evaluation:} Contour quadrature evaluates solutions at specific instants.
+      \item \textbf{POD Efficiency:} Drastically reduces snapshot count by skipping intermediate time steps.
+      \item \textbf{Main Achievement:} Circumvents slow singular value decay (Kolmogorov $N$-width) for linear advection equations.
+  \end{itemize}
+\end{frame}
+
 
 \begin{frame}
   \begin{center}
