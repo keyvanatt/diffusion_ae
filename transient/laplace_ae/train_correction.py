@@ -23,7 +23,7 @@ import wandb
 
 from transient.dataset import TransientDataset
 from transient.main import load_model
-from models.correction_ae import CorrectionAE
+from models.transient.correction_ae import CorrectionAE
 
 
 # Pré-calcul : (ns, kt, N, N) × 2 memmaps

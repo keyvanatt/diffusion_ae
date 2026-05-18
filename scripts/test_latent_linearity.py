@@ -23,8 +23,9 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
 
-from models.laplace_ae_surrogate import LaplaceAE, LaplaceLatentModel
-from models.correction_ae import CorrectionAE
+from models.transient.laplace_ae import LaplaceAE
+from models.transient.laplace_latent_surrogate import LaplaceLatentModel
+from models.transient.correction_ae import CorrectionAE
 from utils.laplace import laplace_inverse
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

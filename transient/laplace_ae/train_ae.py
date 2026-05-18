@@ -23,7 +23,7 @@ import wandb
 
 from torch.utils.data import Dataset as _Dataset
 
-from models.laplace_ae_surrogate import LaplaceAE
+from models.transient.laplace_ae import LaplaceAE
 from transient.dataset import TransientDataset
 
 

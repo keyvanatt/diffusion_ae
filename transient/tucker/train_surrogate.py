@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, TensorDataset, Subset
 import wandb
 from tqdm import tqdm
 
-from models.svd_surrogate import SVDSurrogate
+from models.transient.svd_surrogate import SVDSurrogate
 from transient.dataset import TransientDataset
 
 

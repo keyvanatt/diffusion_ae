@@ -16,9 +16,9 @@ from torch.utils.data import DataLoader, random_split
 import wandb
 
 from models.base import BaseDecoder
-from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
-from models.variationalAutoEncoder import VAE, IndirectDecoder
-from models.AE_SVD import AutoencoderSVD, IndirectDecoderSVD, compute_fixed_svd_basis
+from models.stationary.direct_decoder import DirectDecoder, DirectDecoderDenseOut
+from models.stationary.vae import VAE, IndirectDecoder
+from models.stationary.ae_svd import AutoencoderSVD, IndirectDecoderSVD, compute_fixed_svd_basis
 from stationary.dataset import ConvDiffDataset
 
 from tqdm import tqdm

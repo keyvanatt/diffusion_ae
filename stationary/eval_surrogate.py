@@ -153,7 +153,7 @@ if __name__ == '__main__':
         print(f'VAE floor chargé depuis cache ({len(vae_l2rel)} samples)')
     else:
         # Recalcul VAE floor
-        from models.variationalAutoEncoder import VAE
+        from models.stationary.vae import VAE
         vae_ckpt  = torch.load('checkpoints/VAE_best.pt', map_location=device)
         state     = vae_ckpt['model_state']
         latent_dim = state['encoder.fc_mu.2.weight'].shape[0]

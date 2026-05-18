@@ -32,7 +32,7 @@ def load_model(ckpt_path: str, device: torch.device):
     model_type = ckpt.get('model_type', 'SVDSurrogate')
 
     if model_type == 'LaplaceModel':
-        from models.laplace_surrogate import LaplaceModel
+        from models.transient.laplace_surrogate import LaplaceModel
         model = LaplaceModel(
             K         = ckpt['K'],
             Nt        = ckpt['Nt'],
@@ -42,7 +42,7 @@ def load_model(ckpt_path: str, device: torch.device):
         ).to(device)
 
     elif model_type == 'LaplaceLatentModel':
-        from models.laplace_ae_surrogate import LaplaceLatentModel
+        from models.transient.laplace_latent_surrogate import LaplaceLatentModel
         model = LaplaceLatentModel(
             K          = ckpt['K'],
             Nt         = ckpt['Nt'],
@@ -55,7 +55,7 @@ def load_model(ckpt_path: str, device: torch.device):
         ).to(device)
 
     elif model_type == 'LaplaceSVDModel':
-        from models.laplace_svd_surrogate import LaplaceSVDModel
+        from models.transient.laplace_svd_surrogate import LaplaceSVDModel
         model = LaplaceSVDModel(
             k_freq    = ckpt['k_freq'],
             K         = ckpt['K'],
@@ -66,12 +66,12 @@ def load_model(ckpt_path: str, device: torch.device):
         ).to(device)
 
     elif model_type == 'SVDSurrogate':
-        from models.svd_surrogate import SVDSurrogate
+        from models.transient.svd_surrogate import SVDSurrogate
 
         model = SVDSurrogate(nr=ckpt['nr'], nt=ckpt['Nt'], nf_eff=ckpt['nf_eff'], theta_dim=ckpt['theta_dim']).to(device)
 
     elif model_type == 'CorrectionAE':
-        from models.correction_ae import CorrectionAE, CorrectedPipeline
+        from models.transient.correction_ae import CorrectionAE, CorrectedPipeline
         ae = CorrectionAE(N=ckpt['N'], base_ch=ckpt['base_ch']).to(device)
         ae.load_state_dict(ckpt['model_state'])
         ae.eval()
@@ -277,7 +277,7 @@ def evaluate(U, theta, ckpt_path: str, test_idx=None,
 
 
 def main(
-    ckpt_path = 'checkpoints/CorrectionAE_best.pt',
+    ckpt_path = 'checkpoints/LaplaceLatentModel_finetuned.pt',
     data_path = '/Data/KAT/ch4_rotated.npy',
     theta     = [[1.0, 0.5, 0.3, 2.0]],
     dt        = None,

@@ -31,7 +31,7 @@ from torch.utils.data import DataLoader, Dataset as _Dataset
 from tqdm import tqdm
 import wandb
 
-from models.laplace_ae_surrogate import LaplaceLatentModel
+from models.transient.laplace_latent_surrogate import LaplaceLatentModel
 from transient.dataset import TransientDataset
 
 

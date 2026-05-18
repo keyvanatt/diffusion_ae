@@ -16,8 +16,8 @@ from torch.utils.data import DataLoader, random_split
 import wandb
 
 from models.base import BaseAutoEncoder
-from models.variationalAutoEncoder import VAE
-from models.AE_SVD import AutoencoderSVD
+from models.stationary.vae import VAE
+from models.stationary.ae_svd import AutoencoderSVD
 from stationary.dataset import ConvDiffDataset
 
 from tqdm import tqdm

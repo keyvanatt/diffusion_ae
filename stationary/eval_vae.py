@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, random_split
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from models.variationalAutoEncoder import VAE
+from models.stationary.vae import VAE
 from stationary.dataset import ConvDiffDataset
 
 

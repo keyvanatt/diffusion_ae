@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from models.base import BaseDecoder
 
-from models.direct_decoder import DirectDecoder, DirectDecoderDenseOut
+from models.stationary.direct_decoder import DirectDecoder, DirectDecoderDenseOut
 
 
 def load_model(ckpt_path: str, device: torch.device):
@@ -33,7 +33,7 @@ def load_model(ckpt_path: str, device: torch.device):
         base   = int((fc_out / 256) ** 0.5)
         model  = DirectDecoderDenseOut(N=base * 32, theta_dim=4).to(device)
     elif model_type == 'IndirectDecoder':
-        from models.variationalAutoEncoder import VAE, IndirectDecoder
+        from models.stationary.vae import VAE, IndirectDecoder
         latent_dim = state['theta_proj.2.weight'].shape[0]
         theta_dim  = state['theta_proj.0.weight'].shape[1]
         N          = int(state['decoder.out_fc.3.weight'].shape[0] ** 0.5)
@@ -41,7 +41,7 @@ def load_model(ckpt_path: str, device: torch.device):
         model      = IndirectDecoder(dummy_vae, N=N, theta_dim=theta_dim,
                                      latent_dim=latent_dim).to(device)
     elif model_type == 'IndirectDecoderSVD':
-        from models.AE_SVD import AutoencoderSVD, IndirectDecoderSVD
+        from models.stationary.ae_svd import AutoencoderSVD, IndirectDecoderSVD
         theta_dim  = state['theta_proj.0.weight'].shape[1]
         latent_dim = state['theta_proj.2.weight'].shape[0]
         N          = int(state['decoder.out_fc.3.weight'].shape[0] ** 0.5)

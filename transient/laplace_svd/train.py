@@ -22,7 +22,7 @@ import wandb
 import matplotlib.pyplot as plt
 
 from transient.dataset import TransientDataset
-from models.laplace_svd_surrogate import LaplaceSVDSurrogate, LaplaceSVDModel
+from models.transient.laplace_svd_surrogate import LaplaceSVDSurrogate, LaplaceSVDModel
 
 
 # ---------------------------------------------------------------------------

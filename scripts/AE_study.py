@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from transient.dataset import TransientDataset
-from models.laplace_ae_surrogate import LaplaceAE
+from models.transient.laplace_ae import LaplaceAE
 from utils.laplace import laplace_inverse_tik
 from utils.animate import animate_comparaison
 
