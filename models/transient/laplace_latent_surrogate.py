@@ -80,8 +80,8 @@ class LaplaceLatentModel(LaplaceModel):
         self.latent_dim = latent_dim
         self.k_max      = k_max
         self.hidden_dim = hidden_dim
-        self.register_buffer('target_mean', torch.zeros(K, 2, N, N))
-        self.register_buffer('target_std',  torch.ones(K,  2, N, N))
+        self.register_buffer('U_mean', torch.zeros(N, N))
+        self.register_buffer('U_std',  torch.ones(N, N))
         self.register_buffer('s_real', torch.zeros(K, dtype=torch.float64))
         self.register_buffer('s_imag', torch.zeros(K, dtype=torch.float64))
 

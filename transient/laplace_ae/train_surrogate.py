@@ -32,8 +32,6 @@ def train_one(
     val_loader,
     theta_mean,
     theta_std,
-    target_mean,
-    target_std,
     N,
     Nt,
     epochs       = 300,
@@ -194,8 +192,6 @@ def train_one(
         'val_loss':    best_val,
         'theta_mean':  theta_mean.numpy(),
         'theta_std':   theta_std.numpy(),
-        'target_mean': target_mean.numpy(),
-        'target_std':  target_std.numpy(),
         'N': N, 'Nt': Nt, 'theta_dim': theta_dim,
         'freq_idx': k, 's_k_real': s_k.real, 's_k_imag': s_k.imag,
         'hidden_dim': hidden_dim,
@@ -209,12 +205,12 @@ def train_one(
     return best_val, epoch
 
 
-def precompute_latents(ae, U_laplace, target_mean, target_std, K, device, batch_size=256):
+def precompute_latents(ae, U_laplace, K, device, batch_size=256):
     """
-    Encode tous les champs Laplace normalisés avec ae.encoder.
+    Encode tous les champs Laplace (déjà normalisés) avec ae.encoder.
     Retourne Z de shape (K, ns, latent_dim) en CPU.
 
-    Z[k, i] = encoder(U_laplace_norm[k, i], freq_ratio=k/(K-1))
+    Z[k, i] = encoder(U_laplace[k, i], freq_ratio=k/(K-1))
     """
     ns      = U_laplace.shape[0]
     encoder = ae.encoder.to(device).eval()
@@ -223,15 +219,13 @@ def precompute_latents(ae, U_laplace, target_mean, target_std, K, device, batch_
     with torch.no_grad():
         for k in tqdm(range(K), desc="Pré-calcul latents", leave=False):
             freq_ratio = k / max(K - 1, 1)
-            tm = target_mean[k].to(device)
-            ts = target_std[k].to(device)
             for start in range(0, ns, batch_size):
                 end = min(start + batch_size, ns)
                 if isinstance(U_laplace, np.ndarray):
                     u = torch.from_numpy(U_laplace[start:end, k].copy()).float().to(device)
                 else:
                     u = U_laplace[start:end, k].to(device)
-                Z[k, start:end] = encoder((u - tm) / ts, freq_ratio).cpu()
+                Z[k, start:end] = encoder(u, freq_ratio).cpu()
     return Z  # (K, ns, latent_dim)
 
 
@@ -297,7 +291,7 @@ def train_all(
     if latent_mode:
         print("Pré-calcul des codes latents (encoder)…")
         Z = precompute_latents(
-            ae, dataset.U_laplace, dataset.target_mean, dataset.target_std,
+            ae, dataset.U_laplace,
             n_train_freqs, device, batch_size=batch_size,
         )
         print(f"Z calculé : {tuple(Z.shape)}  ({Z.nbytes / 1e6:.0f} MB)")
@@ -310,13 +304,12 @@ def train_all(
         s_k        = complex(dataset.s[k])
         freq_ratio = k / max(K - 1, 1)
 
-        # Targets U normalisés (toujours nécessaires : pour la val L2rel en mode latent,
-        # et pour les targets d'entraînement en mode direct)
+        # Targets U — déjà normalisés (Laplace de U normalisé)
         if isinstance(dataset.U_laplace, np.ndarray):
             sl = torch.from_numpy(dataset.U_laplace[:, k].copy()).float()
         else:
             sl = dataset.U_laplace[:, k].float()
-        u_norm = (sl - dataset.target_mean[k]) / dataset.target_std[k]  # (ns, 2, N, N)
+        u_norm = sl  # (ns, 2, N, N), already normalized
 
         if latent_mode:
             assert Z is not None
@@ -342,8 +335,6 @@ def train_all(
             k, s_k, train_loader, val_loader,
             theta_mean   = dataset.theta_mean,
             theta_std    = dataset.theta_std,
-            target_mean  = dataset.target_mean[k],
-            target_std   = dataset.target_std[k],
             N=N, Nt=Nt, epochs=epochs, lr=lr, patience=patience,
             theta_dim=theta_dim, device=device, ckpt_dir=ckpt_dir,
             global_step=global_step, ae=ae, freq_ratio=freq_ratio, val_loader_u=val_loader_u,
@@ -405,7 +396,7 @@ def assemble_model(dataset, ckpt_dir: str, test_idx, save_dir: str = 'checkpoint
     if k_max is not None and k_max < K - 1:
         print(f"  k_max={k_max} : fréquences {k_max+1}..{K-1} → prédiction = moyenne")
 
-    model.set_normalization(dataset.target_mean, dataset.target_std)
+    model.set_normalization(dataset.U_mean, dataset.U_std)
     model.set_s_list(dataset.s)
 
     os.makedirs(save_dir, exist_ok=True)

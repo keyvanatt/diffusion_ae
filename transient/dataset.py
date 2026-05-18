@@ -76,8 +76,11 @@ class TransientDataset(Dataset):
             self._s_hash = hashlib.md5(
                 np.round(s_list, 2).astype(np.complex64).tobytes()
             ).hexdigest()[:8]
-            self.U_laplace, self.s = self._to_laplace(s_list, rule)
-            self.K = len(s_list)
+            self._s_list = s_list
+            self._rule   = rule
+            self.K       = len(s_list)
+            self.s       = s_list
+            self.U_laplace = None   # calculé dans fit() après normalisation
 
         print(f"TransientDataset : ns={self.ns}  Nt={self.Nt}  N={self.N}  "
               f"theta_dim={self.theta_dim}  laplace={laplace}")
@@ -86,118 +89,105 @@ class TransientDataset(Dataset):
     # Transformée de Laplace
     # ------------------------------------------------------------------
 
-    def _to_laplace(self, s_list: np.ndarray, rule: str):
+    def _to_laplace(self, s_list: np.ndarray, rule: str, idx_hash: str):
+        """
+        Calcule la transformée de Laplace sur U normalisé (U - U_mean) / U_std.
+        Doit être appelé après _u_stats (self.U_mean et self.U_std déjà calculés).
+        Le cache inclut idx_hash car la normalisation dépend du train set.
+        """
         ns, Nt, N = self.ns, self.Nt, self.N
         K = len(s_list)
         s_torch = torch.tensor(s_list, dtype=torch.complex128)
+        U_mean = self.U_mean.double()   # (N, N)
+        U_std  = self.U_std.double()    # (N, N)
 
         if self._U_raw is not None:
-            # Gros dataset : écriture dans un memmap sur disque (évite l'OOM)
             stem = Path(self._data_path).stem
             self._cache_dir.mkdir(parents=True, exist_ok=True)
-            fpath = self._cache_dir / f"{stem}_laplace_N{N}_s{self._s_hash}_{rule}.npy"
+            fpath = self._cache_dir / f"{stem}_laplace_N{N}_s{self._s_hash}_{rule}_idx{idx_hash}.npy"
             spath = self._cache_dir / f"{stem}_slist_s{self._s_hash}.npy"
 
             if fpath.exists() and spath.exists():
                 print(f"Cache Laplace trouvé : {fpath}")
-                return np.load(str(fpath), mmap_mode='r'), np.load(str(spath))
+                return np.load(str(fpath), mmap_mode='r')
 
-            print(f"Calcul Laplace → {fpath}  ({ns} samples, N={N}, K={K})")
+            print(f"Calcul Laplace (normalisé) → {fpath}  ({ns} samples, N={N}, K={K})")
             U_mmap = np.lib.format.open_memmap(
                 str(fpath), mode='w+', dtype=np.float32, shape=(ns, K, 2, N, N)
             )
             for i in tqdm(range(ns), desc="Transformée de Laplace"):
-                U_i = torch.from_numpy(self._U_raw[i].copy()).float()  # (Nt, H, W)
+                U_i = torch.from_numpy(self._U_raw[i].copy()).float()
                 if self.interp_size is not None:
                     U_i = F.interpolate(
                         U_i.unsqueeze(0), size=(N, N),
                         mode='bilinear', align_corners=False,
                     ).squeeze(0)
-                C_i   = U_i.double().reshape(Nt, N * N).T            # (N², Nt)
-                U_hat = laplace_forward_tik(C_i, s_torch, dt=self.dt, rule=rule)  # (N², K)
-                Re = U_hat.real.float().T.reshape(K, N, N)           # (K, N, N)
-                Im = U_hat.imag.float().T.reshape(K, N, N)
-                U_mmap[i] = torch.stack([Re, Im], dim=1).numpy()     # (K, 2, N, N)
-            np.save(str(spath), s_list)
-            return np.load(str(fpath), mmap_mode='r'), s_list
-
-        else:
-            # Petit dataset (.npz) : tout en mémoire
-            U_laplace = torch.zeros(ns, K, 2, N, N, dtype=torch.float32)
-            for i in tqdm(range(ns), desc="Transformée de Laplace", leave=False):
-                U_np  = self.U[i].numpy()                            # (Nt, N, N)
-                C_i   = torch.from_numpy(U_np).double().reshape(Nt, N * N).T  # (N², Nt)
-                U_hat = laplace_forward_tik(C_i, s_torch, dt=self.dt, rule=rule)  # (N², K)
+                U_i  = (U_i.double() - U_mean) / U_std              # normalisation
+                C_i  = U_i.reshape(Nt, N * N).T                     # (N², Nt)
+                U_hat = laplace_forward_tik(C_i, s_torch, dt=self.dt, rule=rule)
                 Re = U_hat.real.float().T.reshape(K, N, N)
                 Im = U_hat.imag.float().T.reshape(K, N, N)
-                U_laplace[i] = torch.stack([Re, Im], dim=1)          # (K, 2, N, N)
-            return U_laplace, s_list
+                U_mmap[i] = torch.stack([Re, Im], dim=1).numpy()
+            np.save(str(spath), s_list)
+            return np.load(str(fpath), mmap_mode='r')
+
+        else:
+            U_laplace = torch.zeros(ns, K, 2, N, N, dtype=torch.float32)
+            for i in tqdm(range(ns), desc="Transformée de Laplace", leave=False):
+                U_i  = (self.U[i].double() - U_mean) / U_std        # normalisation
+                C_i  = U_i.reshape(Nt, N * N).T
+                U_hat = laplace_forward_tik(C_i, s_torch, dt=self.dt, rule=rule)
+                Re = U_hat.real.float().T.reshape(K, N, N)
+                Im = U_hat.imag.float().T.reshape(K, N, N)
+                U_laplace[i] = torch.stack([Re, Im], dim=1)
+            return U_laplace
 
     # ------------------------------------------------------------------
     # Normalisation
     # ------------------------------------------------------------------
 
+    def _u_stats(self, train_indices) -> tuple:
+        """
+        Calcule la moyenne et l'écart-type pixel-par-pixel de U sur le train set.
+        Retourne (U_mean, U_std) de shape (N, N) float32.
+        """
+        if self._U_raw is not None:
+            sum_   = torch.zeros(self.N, self.N, dtype=torch.float64)
+            sum_sq = torch.zeros(self.N, self.N, dtype=torch.float64)
+            count  = 0
+            for i in tqdm(train_indices, desc="U stats", leave=False):
+                V_i = torch.from_numpy(self._U_raw[i].copy()).float()
+                if self.interp_size is not None:
+                    V_i = F.interpolate(
+                        V_i.unsqueeze(0), size=(self.N, self.N),
+                        mode='bilinear', align_corners=False,
+                    ).squeeze(0)
+                V_i = V_i.double()
+                sum_   += V_i.sum(0)
+                sum_sq += (V_i ** 2).sum(0)
+                count  += V_i.shape[0]
+            mean = (sum_ / count).float()
+            std  = ((sum_sq / count - (sum_ / count) ** 2).clamp(min=0).sqrt() + 1e-8).float()
+        else:
+            V_train = self.U[train_indices]
+            n, Nt_  = V_train.shape[:2]
+            V_flat  = V_train.reshape(n * Nt_, self.N, self.N).double()
+            mean = V_flat.mean(0).float()
+            std  = (V_flat.std(0) + 1e-8).float()
+        return mean, std
+
     def fit(self, train_indices):
         """
         Calcule les stats de normalisation sur le train set.
-
-        - theta     : z-score global  → theta_mean (theta_dim,), theta_std (theta_dim,)
-        - U_laplace : z-score par fréquence → target_mean (K, 2, N, N),
-                                               target_std  (K, 2, N, N)
+        Toujours : theta_mean/std, U_mean/std (z-score pixel-par-pixel, (N, N)).
+        Si laplace=True : calcule U_laplace sur U normalisé (pas de post-normalisation dans __getitem__).
         """
-        self.theta_mean = self.theta[train_indices].mean(0)        # (theta_dim,)
+        self.theta_mean = self.theta[train_indices].mean(0)
         self.theta_std  = self.theta[train_indices].std(0) + 1e-8
-
+        self.U_mean, self.U_std = self._u_stats(train_indices)
         if self.laplace:
-            if isinstance(self.U_laplace, np.ndarray):
-                idx_hash   = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
-                stem       = Path(self._data_path).stem
-                stats_path = self._cache_dir / f"{stem}_stats_N{self.N}_s{self._s_hash}_idx{idx_hash}_vnorm.pt"
-
-                if stats_path.exists():
-                    print(f"Cache stats trouvé : {stats_path}")
-                    saved = torch.load(str(stats_path), weights_only=True)
-                    self.target_mean = saved['target_mean']
-                    self.target_std  = saved['target_std']
-                    return
-
-                # target_mean : moyenne de U_laplace sur le train (par linéarité = F(V_mean))
-                means = []
-                for k in tqdm(range(self.K), desc="Laplace mean", leave=False):
-                    chunk = torch.from_numpy(self.U_laplace[train_indices, k].copy())
-                    means.append(chunk.mean(dim=0))          # (2, N, N)
-                self.target_mean = torch.stack(means)        # (K, 2, N, N)
-
-                # target_std : std de V par pixel sur (n_train × Nt), broadcasté sur (K, 2, N, N)
-                sum_   = torch.zeros(self.N, self.N, dtype=torch.float64)
-                sum_sq = torch.zeros(self.N, self.N, dtype=torch.float64)
-                count  = 0
-                for i in tqdm(train_indices, desc="V std", leave=False):
-                    V_i = torch.from_numpy(self._U_raw[i].copy()).float()  # (Nt, H, W)
-                    if self.interp_size is not None:
-                        V_i = F.interpolate(
-                            V_i.unsqueeze(0), size=(self.N, self.N),
-                            mode='bilinear', align_corners=False,
-                        ).squeeze(0)
-                    V_i = V_i.double()
-                    sum_   += V_i.sum(0)
-                    sum_sq += (V_i ** 2).sum(0)
-                    count  += V_i.shape[0]
-                V_std_px = ((sum_sq / count - (sum_ / count) ** 2).clamp(min=0).sqrt() + 1e-8).float()
-                self.target_std = V_std_px[None, None].expand(self.K, 2, self.N, self.N).clone()
-
-                torch.save({'target_mean': self.target_mean,
-                            'target_std':  self.target_std}, str(stats_path))
-                print(f"Cache stats sauvegardé : {stats_path}")
-            else:
-                # Tensor en mémoire : calcul direct depuis U (champ temporel)
-                target_train     = self.U_laplace[train_indices]          # (n_train, K, 2, N, N)
-                self.target_mean = target_train.mean(dim=0)               # (K, 2, N, N)
-                V_train          = self.U[train_indices]                  # (n_train, Nt, N, N)
-                n_train, Nt_     = V_train.shape[:2]
-                V_std_px = (V_train.reshape(n_train * Nt_, self.N, self.N)
-                            .double().std(dim=0) + 1e-8).float()          # (N, N)
-                self.target_std = V_std_px[None, None].expand(self.K, 2, self.N, self.N).clone()
+            idx_hash = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
+            self.U_laplace = self._to_laplace(self._s_list, self._rule, idx_hash)
 
     # ------------------------------------------------------------------
     # Dataset interface
@@ -213,16 +203,7 @@ class TransientDataset(Dataset):
                 target = torch.from_numpy(self.U_laplace[idx].copy()).float()
             else:
                 target = self.U_laplace[idx]
-            target_n = (target - self.target_mean) / self.target_std
-            return theta_n, target_n                               # (K, 2, N, N)
+            return theta_n, target                                 # (K, 2, N, N) déjà normalisé
         return theta_n, self.U[idx]                                # (Nt, N, N)
 
-    def denorm_target(self, target_norm: torch.Tensor,
-                      k: int | None = None) -> torch.Tensor:
-        """Dénormalise la sortie du surrogate. Si k fourni, fréquence k uniquement."""
-        if self.laplace:
-            if k is not None:
-                return target_norm * self.target_std[k] + self.target_mean[k]
-            return target_norm * self.target_std + self.target_mean
-        return target_norm
 

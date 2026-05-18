@@ -42,17 +42,15 @@ from transient.dataset import TransientDataset
 
 class _FinetuneDataset(_Dataset):
     """
-    Retourne (theta_norm, U_laplace_norm) où U_laplace_norm est de shape
-    (K, 2, N, N) — toutes les fréquences d'une simulation.
+    Retourne (theta_norm, U_laplace) où U_laplace est de shape
+    (K, 2, N, N) — toutes les fréquences d'une simulation, déjà normalisées.
 
     Chaque item = 1 simulation complète.
     """
-    def __init__(self, U_laplace, theta_norm, target_mean, target_std, indices):
-        self.U_laplace   = U_laplace             # ndarray ou tensor CPU
-        self.theta_norm  = theta_norm.cpu()       # (ns, theta_dim) CPU
-        self.target_mean = target_mean.cpu()      # (K, 2, 1, 1) CPU
-        self.target_std  = target_std.cpu()       # (K, 2, 1, 1) CPU
-        self._indices    = [int(i) for i in indices]
+    def __init__(self, U_laplace, theta_norm, indices):
+        self.U_laplace  = U_laplace             # ndarray ou tensor CPU
+        self.theta_norm = theta_norm.cpu()      # (ns, theta_dim) CPU
+        self._indices   = [int(i) for i in indices]
 
     def __len__(self):
         return len(self._indices)
@@ -64,8 +62,7 @@ class _FinetuneDataset(_Dataset):
             u = torch.from_numpy(self.U_laplace[sim_i].copy()).float()
         else:
             u = self.U_laplace[sim_i].float()
-        u_norm = (u - self.target_mean) / self.target_std
-        return th, u_norm
+        return th, u  # u already normalized
 
 
 # ---------------------------------------------------------------------------
@@ -73,13 +70,13 @@ class _FinetuneDataset(_Dataset):
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def _laplace_to_u(U_laplace_norm, target_mean, target_std, s_list, Nt, dt,
+def _laplace_to_u(U_laplace_norm, U_mean, U_std, s_list, Nt, dt,
                   alpha_t=0.0, lam=1e-6, rule='trap'):
     """
-    Reconstruit U(t) physique depuis les spectres normalisés via laplace_inverse_tik.
-    La symétrie conjuguée est gérée dans laplace_inverse_tik.
+    Reconstruit U(t) physique depuis les spectres de Laplace de U normalisé.
 
-    U_laplace_norm : (B, K, 2, N, N) normalisé
+    U_laplace_norm : (B, K, 2, N, N) — Laplace de (U - U_mean) / U_std
+    U_mean, U_std  : (N, N) — stats spatiales
     s_list         : (K,) complex128 CPU
     → U_true (B, Nt, N, N) float32
     """
@@ -87,20 +84,21 @@ def _laplace_to_u(U_laplace_norm, target_mean, target_std, s_list, Nt, dt,
     B, K, _, N, _ = U_laplace_norm.shape
     NN = N * N
 
-    # Dénorm
-    U_phys = U_laplace_norm * target_std + target_mean  # (B, K, 2, N, N)
-
     # → (B, NN, K) complexe
-    re = U_phys[:, :, 0].reshape(B, K, NN).permute(0, 2, 1)
-    im = U_phys[:, :, 1].reshape(B, K, NN).permute(0, 2, 1)
+    re = U_laplace_norm[:, :, 0].reshape(B, K, NN).permute(0, 2, 1)
+    im = U_laplace_norm[:, :, 1].reshape(B, K, NN).permute(0, 2, 1)
     M  = torch.complex(re, im)  # (B, NN, K) complex64
 
     # CPU float64 inverse (pas de gradient ici)
     M_flat = M.cpu().cdouble().reshape(B * NN, K)
     U_flat = laplace_inverse_tik(M_flat, s_list, dt, Nt, alpha_t, lam, rule)
-    # (B*NN, Nt) float64
+    # (B*NN, Nt) float64, normalized
 
-    return U_flat.float().reshape(B, NN, Nt).permute(0, 2, 1).reshape(B, Nt, N, N)
+    U_norm = U_flat.float().reshape(B, NN, Nt).permute(0, 2, 1).reshape(B, Nt, N, N)
+    # Dénorm spatiale
+    U_mean_cpu = U_mean.cpu() if isinstance(U_mean, torch.Tensor) else torch.tensor(U_mean)
+    U_std_cpu  = U_std.cpu()  if isinstance(U_std,  torch.Tensor) else torch.tensor(U_std)
+    return U_norm * U_std_cpu + U_mean_cpu  # (B, Nt, N, N)
 
 
 # ---------------------------------------------------------------------------
@@ -154,12 +152,8 @@ def finetune(
     theta_norm = (dataset.theta - dataset.theta_mean) / dataset.theta_std   # CPU
 
     # --- Datasets (tout CPU) ---
-    train_ds = _FinetuneDataset(dataset.U_laplace, theta_norm,
-                                dataset.target_mean, dataset.target_std,
-                                train_idx)
-    val_ds   = _FinetuneDataset(dataset.U_laplace, theta_norm,
-                                dataset.target_mean, dataset.target_std,
-                                val_idx)
+    train_ds = _FinetuneDataset(dataset.U_laplace, theta_norm, train_idx)
+    val_ds   = _FinetuneDataset(dataset.U_laplace, theta_norm, val_idx)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
                               num_workers=4, pin_memory=True, persistent_workers=True)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
@@ -221,7 +215,7 @@ def finetune(
             u_laplace_norm = u_laplace_norm.to(device, non_blocking=True)
 
             # Cible U(t) physique
-            u_true = _laplace_to_u(u_laplace_norm, model.target_mean, model.target_std,
+            u_true = _laplace_to_u(u_laplace_norm, model.U_mean, model.U_std,
                                    s_list_cpu, Nt, dt, alpha_t=alpha_t, lam=lam, rule=rule).to(device)
 
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
@@ -275,7 +269,7 @@ def finetune(
                 th             = th.to(device, non_blocking=True)
                 u_laplace_norm = u_laplace_norm.to(device, non_blocking=True)
 
-                u_true = _laplace_to_u(u_laplace_norm, model.target_mean, model.target_std,
+                u_true = _laplace_to_u(u_laplace_norm, model.U_mean, model.U_std,
                                        s_list_cpu, Nt, dt, alpha_t=alpha_t, lam=lam, rule=rule).to(device)
 
                 with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):

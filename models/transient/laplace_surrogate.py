@@ -101,8 +101,8 @@ class LaplaceModel(BaseDecoder):
         self.theta_dim = theta_dim
         self.k_max     = k_max
 
-        self.register_buffer('target_mean', torch.zeros(K, 2, N, N))
-        self.register_buffer('target_std',  torch.ones(K,  2, N, N))
+        self.register_buffer('U_mean', torch.zeros(N, N))
+        self.register_buffer('U_std',  torch.ones(N, N))
         # Points s stockés en deux buffers float64 (complex128 non universel)
         self.register_buffer('s_real', torch.zeros(K, dtype=torch.float64))
         self.register_buffer('s_imag', torch.zeros(K, dtype=torch.float64))
@@ -147,26 +147,16 @@ class LaplaceModel(BaseDecoder):
         M = self._forward_k(theta_norm)            # (B, N*N, K)
         return M.reshape(B, self.N, self.N, self.K).permute(0, 3, 1, 2)
 
-    def set_normalization(self, target_mean, target_std):
-        """Charge les stats de dénormalisation (appelé avant la sauvegarde)."""
+    def set_normalization(self, U_mean, U_std):
+        """Charge les stats spatiales de dénormalisation (appelé avant la sauvegarde)."""
         def _t(x): return x if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)
-        self.target_mean.copy_(_t(target_mean))
-        self.target_std.copy_(_t(target_std))
+        self.U_mean.copy_(_t(U_mean))
+        self.U_std.copy_(_t(U_std))
 
     def loss(self, *args, **kwargs):
         raise NotImplementedError(
             "L'entraînement se fait par fréquence via LaplaceSurrogate.loss()."
         )
-
-    def _denorm_k(self, M: torch.Tensor) -> torch.Tensor:
-        """Dénormalise (B, N*N, K) complexe (modifie en place)."""
-        NN = self.N * self.N
-        for k in range(self.K):
-            tm, ts = self.target_mean[k], self.target_std[k]
-            re = M[:, :, k].real * ts[0].reshape(NN) + tm[0].reshape(NN)
-            im = M[:, :, k].imag * ts[1].reshape(NN) + tm[1].reshape(NN)
-            M[:, :, k] = torch.complex(re, im)
-        return M
 
     def _generate(self, theta_norm: torch.Tensor,
                   dt: float = 1.0, alpha_t: float = 0.0, lam: float = 1e-6,
@@ -174,23 +164,24 @@ class LaplaceModel(BaseDecoder):
         """
         Inférence CPU float64 via laplace_inverse_tik.
         La symétrie conjuguée est gérée dans laplace_inverse_tik.
+        Retourne U en valeurs physiques (après dénorm spatiale U_std/U_mean).
         """
         from utils.laplace import laplace_inverse_tik
         B, NN  = theta_norm.shape[0], self.N ** 2
         device = theta_norm.device
 
-        M = self._forward_k(theta_norm, k_max=k_max)  # (B, NN, K) complex64
-        M = self._denorm_k(M)
+        M = self._forward_k(theta_norm, k_max=k_max)  # (B, NN, K) complex64, Laplace of normalized U
 
         # CPU float64 pour la précision
         M_flat = M.detach().cpu().cdouble().reshape(B * NN, self.K)
         U_flat = laplace_inverse_tik(M_flat, self.s_list, dt, self.Nt, alpha_t, lam, rule)
-        # (B*NN, Nt) float64
+        # (B*NN, Nt) float64, normalized
 
-        return (U_flat.float()
-                .reshape(B, NN, self.Nt).permute(0, 2, 1)
-                .reshape(B, self.Nt, self.N, self.N)
-                .to(device))
+        U_norm = (U_flat.float()
+                  .reshape(B, NN, self.Nt).permute(0, 2, 1)
+                  .reshape(B, self.Nt, self.N, self.N))
+        # Dénorm spatiale
+        return (U_norm * self.U_std + self.U_mean).to(device)
 
     def _generate_diff(self, theta_norm: torch.Tensor,
                        dt: float = 1.0, alpha_t: float = 0.0, lam: float = 1e-6,
@@ -213,24 +204,17 @@ class LaplaceModel(BaseDecoder):
         else:
             M = M_active
 
-        # Dénorm vectorisée (B, NN, K)
-        tm     = self.target_mean.to(device)
-        ts     = self.target_std.to(device)
-        tm_re  = tm[:, 0].reshape(self.K, NN).T.unsqueeze(0)   # (1, NN, K)
-        tm_im  = tm[:, 1].reshape(self.K, NN).T.unsqueeze(0)
-        ts_re  = ts[:, 0].reshape(self.K, NN).T.unsqueeze(0)
-        ts_im  = ts[:, 1].reshape(self.K, NN).T.unsqueeze(0)
-        M = torch.complex(M.real * ts_re + tm_re, M.imag * ts_im + tm_im)
-
         # GPU float32 (différentiable via linalg.solve)
         s = torch.complex(
             self.s_real.to(device=device, dtype=torch.float32),
             self.s_imag.to(device=device, dtype=torch.float32),
         )
         U_flat = laplace_inverse_tik(M.reshape(B * NN, self.K), s, dt, self.Nt, alpha_t, lam, rule)
-        # (B*NN, Nt) float32
+        # (B*NN, Nt) float32, normalized
 
-        return U_flat.reshape(B, NN, self.Nt).permute(0, 2, 1).reshape(B, self.Nt, self.N, self.N)
+        U_norm = U_flat.reshape(B, NN, self.Nt).permute(0, 2, 1).reshape(B, self.Nt, self.N, self.N)
+        # Dénorm spatiale
+        return U_norm * self.U_std.to(device) + self.U_mean.to(device)
 
     def __repr__(self) -> str:
         return (f"LaplaceModel(K={self.K}, Nt={self.Nt}, "
