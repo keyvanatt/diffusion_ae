@@ -1,8 +1,6 @@
 import math
 from typing import Optional
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -25,16 +23,20 @@ class LearnableLaplace(nn.Module):
     appel (A ne change plus dès que les paramètres sont gelés).
     """
 
-    def __init__(self, K: int, dt: float, Nt: int, gamma_init: float = 0.0):
+    def __init__(self, K: int, dt: float, Nt: int, gamma_init: float = 1e-2,
+                 learnable: bool = False):
         super().__init__()
-        self.K   = K
-        self.dt  = dt
-        self.Nt  = Nt
+        self.K         = K
+        self.dt        = dt
+        self.Nt        = Nt
+        self.learnable = learnable
 
-        self.s_re        = nn.Parameter(torch.full((K,), gamma_init))
-        self.s_im        = nn.Parameter(torch.linspace(0.0, math.pi / dt, K))
-        self.log_alpha_t = nn.Parameter(torch.tensor(-2.0))
-        self.log_lam     = nn.Parameter(torch.tensor(-2.0))
+        self.s_re        = nn.Parameter(torch.full((K,), gamma_init),
+                                        requires_grad=learnable)
+        self.s_im        = nn.Parameter(torch.linspace(0.0, math.pi / dt, K),
+                                        requires_grad=learnable)
+        self.log_alpha_t = nn.Parameter(torch.tensor(-2.0), requires_grad=learnable)
+        self.log_lam     = nn.Parameter(torch.tensor(-2.0), requires_grad=learnable)
 
         # DtTDt est entièrement constant (pas de paramètre appris dedans)
         Dt = (torch.diag(torch.ones(Nt - 1), 1) - torch.eye(Nt))[:Nt - 1, :]
@@ -147,12 +149,10 @@ class LearnableLaplace(nn.Module):
     # ------------------------------------------------------------------
 
     def log_scatter(self, epoch: int):
-        """
-        Retourne un wandb.Image du scatter s_k (initial → courant).
-        Importer wandb dans le script appelant ; cette méthode ne l'importe
-        pas au niveau module pour ne pas créer de dépendance obligatoire.
-        """
+        """Retourne un wandb.Image du scatter s_k (initial → courant)."""
         import wandb
+        import numpy as np
+        import matplotlib.pyplot as plt
 
         s_cur = self.s_list.detach().cpu().numpy()
         s_ini = np.vectorize(complex)(

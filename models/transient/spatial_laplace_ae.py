@@ -38,15 +38,16 @@ class SpatialLaplaceAE(BaseAutoEncoder):
 
     def __init__(
         self,
-        N          : int   = 128,
-        Nt         : int   = 150,
-        K          : int   = 32,
-        latent_dim : int   = 64,
-        dt         : float = 1.0,
-        beta       : float = 1e-3,
-        beta_freq  : float = 1.0,
-        freq_L     : int   = 8,
-        gamma_init : float = 0.0,
+        N                 : int   = 128,
+        Nt                : int   = 150,
+        K                 : int   = 32,
+        latent_dim        : int   = 64,
+        dt                : float = 1.0,
+        beta              : float = 1e-3,
+        beta_freq         : float = 1.0,
+        freq_L            : int   = 8,
+        gamma_init        : float = 1e-2,
+        learnable_laplace : bool  = False,
     ):
         super().__init__()
         self.N         = N
@@ -55,7 +56,7 @@ class SpatialLaplaceAE(BaseAutoEncoder):
         self.beta      = beta
         self.beta_freq = beta_freq
 
-        self.laplace = LearnableLaplace(K, dt, Nt, gamma_init)
+        self.laplace = LearnableLaplace(K, dt, Nt, gamma_init, learnable=learnable_laplace)
         self.encoder = ConvEncoder(in_channels=2, N=N, latent_dim=latent_dim, cond_L=freq_L)
         self.decoder = ConvDecoder(out_channels=2, N=N, latent_dim=latent_dim, cond_L=freq_L)
 
