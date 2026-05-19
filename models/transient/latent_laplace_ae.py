@@ -6,104 +6,8 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 from models.base import BaseAutoEncoder
-from models.transient.laplace_ae import SinusoidalFreqEncoding
+from models.transient.conv_ae import ConvEncoder, ConvDecoder
 from models.transient.learnable_laplace import LearnableLaplace
-
-
-# ---------------------------------------------------------------------------
-# Sous-modules
-# ---------------------------------------------------------------------------
-
-class FrameEncoder(nn.Module):
-    """
-    Encodeur spatial conditionné sur t_ratio = t / (Nt-1) ∈ [0, 1] via FiLM.
-    (B, N, N) → (B, latent_dim)
-
-    3 blocs Conv2d stride-2 (÷8 en résolution), FiLM après chaque bloc, puis FC.
-    N doit être multiple de 8.
-    """
-
-    def __init__(self, N: int, latent_dim: int, time_L: int = 8):
-        super().__init__()
-        self.N = N
-
-        self.conv1 = nn.Sequential(nn.Conv2d(1,  16, 4, 2, 1), nn.LeakyReLU(0.2))
-        self.conv2 = nn.Sequential(nn.Conv2d(16, 32, 4, 2, 1), nn.LeakyReLU(0.2))
-        self.conv3 = nn.Sequential(nn.Conv2d(32, 64, 4, 2, 1), nn.LeakyReLU(0.2))
-
-        self.time_enc = SinusoidalFreqEncoding(L=time_L, hidden_dim=64, out_dim=64)
-
-        self.film1 = nn.Linear(64, 2 * 16)
-        self.film2 = nn.Linear(64, 2 * 32)
-        self.film3 = nn.Linear(64, 2 * 64)
-
-        conv_out = 64 * (N // 8) ** 2
-        self.fc = nn.Sequential(
-            nn.Linear(conv_out, 2 * latent_dim), nn.ReLU(),
-            nn.Linear(2 * latent_dim, latent_dim),
-        )
-
-    def _film(self, x: torch.Tensor, proj: nn.Linear, t_emb: torch.Tensor) -> torch.Tensor:
-        gamma, beta = proj(t_emb).chunk(2, dim=1)
-        gamma = torch.tanh(gamma)
-        return x * (1 + gamma[:, :, None, None]) + beta[:, :, None, None]
-
-    def forward(self, U: torch.Tensor, t_ratio: torch.Tensor) -> torch.Tensor:
-        """
-        U       : (B, N, N)
-        t_ratio : (B, 1) — temps normalisé ∈ [0, 1]
-        retourne : (B, latent_dim)
-        """
-        t_emb = self.time_enc(t_ratio)                   # (B, 64)
-        x = self._film(self.conv1(U.unsqueeze(1)), self.film1, t_emb)
-        x = self._film(self.conv2(x),              self.film2, t_emb)
-        x = self._film(self.conv3(x),              self.film3, t_emb)
-        return self.fc(x.flatten(1))
-
-
-class FrameDecoder(nn.Module):
-    """
-    Décodeur spatial conditionné sur t_ratio = t / (Nt-1) ∈ [0, 1] via FiLM.
-    (B, latent_dim) → (B, N, N)
-
-    FC + 3 blocs ConvTranspose2d stride-2 (×8 en résolution), FiLM après chaque bloc.
-    N doit être multiple de 8.
-    """
-
-    def __init__(self, N: int, latent_dim: int, time_L: int = 8):
-        super().__init__()
-        self.base = N // 8
-        self.fc = nn.Sequential(
-            nn.Linear(latent_dim, 128 * self.base ** 2), nn.ReLU(),
-        )
-
-        self.time_enc = SinusoidalFreqEncoding(L=time_L, hidden_dim=64, out_dim=64)
-
-        self.film1 = nn.Linear(64, 2 * 128)
-        self.film2 = nn.Linear(64, 2 * 64)
-        self.film3 = nn.Linear(64, 2 * 32)
-
-        self.deconv1 = nn.Sequential(nn.ConvTranspose2d(128, 128, 4, 2, 1), nn.BatchNorm2d(128), nn.ReLU())
-        self.deconv2 = nn.Sequential(nn.ConvTranspose2d(128, 64,  4, 2, 1), nn.BatchNorm2d(64),  nn.ReLU())
-        self.deconv3 = nn.Sequential(nn.ConvTranspose2d(64,   1,  4, 2, 1))
-
-    def _film(self, x: torch.Tensor, proj: nn.Linear, t_emb: torch.Tensor) -> torch.Tensor:
-        gamma, beta = proj(t_emb).chunk(2, dim=1)
-        gamma = torch.tanh(gamma)
-        return x * (1 + gamma[:, :, None, None]) + beta[:, :, None, None]
-
-    def forward(self, z: torch.Tensor, t_ratio: torch.Tensor) -> torch.Tensor:
-        """
-        z       : (B, latent_dim)
-        t_ratio : (B, 1) — temps normalisé ∈ [0, 1]
-        retourne : (B, N, N)
-        """
-        B = z.shape[0]
-        t_emb = self.time_enc(t_ratio)                   # (B, 64)
-        x = self.fc(z).view(B, 128, self.base, self.base)
-        x = self._film(self.deconv1(x), self.film1, t_emb)
-        x = self._film(self.deconv2(x), self.film2, t_emb)
-        return self.deconv3(x).squeeze(1)                # (B, N, N)
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +53,8 @@ class LatentLaplaceAE(BaseAutoEncoder):
         self.beta        = beta
         self.beta_latent = beta_latent
 
-        self.encoder = FrameEncoder(N, latent_dim, time_L=time_L)
-        self.decoder = FrameDecoder(N, latent_dim, time_L=time_L)
+        self.encoder = ConvEncoder(in_channels=1, N=N, latent_dim=latent_dim, cond_L=time_L)
+        self.decoder = ConvDecoder(out_channels=1, N=N, latent_dim=latent_dim, cond_L=time_L)
         self.laplace  = LearnableLaplace(K, dt, Nt, gamma_init)
 
     # ------------------------------------------------------------------
@@ -166,11 +70,10 @@ class LatentLaplaceAE(BaseAutoEncoder):
     def _encode_seq(self, U: torch.Tensor) -> torch.Tensor:
         """U : (B, Nt, N, N) → z : (B, Nt, latent_dim)"""
         B, Nt, N, _ = U.shape
-        frames   = U.reshape(B * Nt, N, N)
+        frames   = U.reshape(B * Nt, 1, N, N)              # (B*Nt, 1, N, N)
         t_ratios = self._make_t_ratios(Nt, B, U.dtype, U.device)  # (B*Nt, 1)
 
         if self.training:
-            # Gradient checkpointing par chunks pour économiser la mémoire
             chunks_f = frames.split(256)
             chunks_t = t_ratios.split(256)
             z = torch.cat([
