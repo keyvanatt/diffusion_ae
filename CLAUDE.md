@@ -111,11 +111,30 @@ Les surrogates héritent de `BaseDecoder` et exposent la même interface :
   - `_generate(theta_norm)` → `U_pred (B, Nt, Hsub, Wsub)` (dénorm G + reconstruction SVD)
   - `F`, `P`, `alph`, `G_mean`, `G_std` stockés comme buffers (remplis via `set_bases()` avant sauvegarde)
 
-**`models/transient/laplace_ae.py`** (AE Laplace) :
-- `SinusoidalFreqEncoding(L, hidden_dim, out_dim)` — positional encoding sinusoïdal (style NeRF) pour freq_ratio ∈ [0, 1], utilisé pour le conditionnement FiLM.
+**`models/transient/conv_ae.py`** (blocs encodeur/décodeur unifiés) :
+- `ConvEncoder(in_channels, N, latent_dim, cond_L)` — Conv2d (3 downsampling stride-2) → FC, conditionné sur `cond_ratio ∈ [0,1]` via FiLM sinusoïdal. `in_channels=1` pour frame temporelle réelle, `in_channels=2` pour frame fréquentielle complexe (Re, Im).
+- `ConvDecoder(out_channels, N, latent_dim, cond_L)` — FC → 3 deconv stride-2 → 32ch, puis `out_channels` têtes de raffinement séparées Conv(32→32→32→1), conditionné sur `cond_ratio` via FiLM. `base = N // 8`.
+- Importé par `LatentLaplaceAE` (`in_channels=1, out_channels=1, cond_ratio=t_ratio`) et `SpatialLaplaceAE` (`in_channels=2, out_channels=2, cond_ratio=freq_ratio`).
+
+**`models/transient/laplace_ae.py`** (AE Laplace — fréquences fixes) :
+- `SinusoidalFreqEncoding(L, hidden_dim, out_dim)` — positional encoding sinusoïdal (style NeRF) pour ratio ∈ [0, 1], utilisé pour le conditionnement FiLM dans `ConvEncoder`/`ConvDecoder` et `LaplaceAE`.
 - `LaplaceEncoder(N, latent_dim, freq_L)` — Conv2d U→z (3 downsampling), conditionné sur freq_ratio via FiLM.
 - `LaplaceDecoder(N, latent_dim, freq_L)` — ConvTranspose2d z→Û (3 upsampling + raffinement séparé Re/Im), conditionné sur freq_ratio via FiLM. `base = N // 8`.
 - `LaplaceAE(N, latent_dim, beta, freq_L)` — autoencoder déterministe (Encoder + Decoder) + ridge loss (L2 sur les sorties). Conditionné sur freq_ratio.
+
+**`models/transient/latent_laplace_ae.py`** (AE Laplace dans l'espace latent) :
+- `LatentLaplaceAE(N, Nt, latent_dim, K, dt, beta, beta_latent, gamma_init, time_L)` — pipeline : U(t) → `ConvEncoder(1)` conditionné sur `t_ratio` → z(t) → `LearnableLaplace` → ẑ(s_k) → `LearnableLaplace⁻¹` → z̃(t) → `ConvDecoder(1)` conditionné sur `t_ratio` → Û(t). Les K points s_k sont apprenables.
+- Loss : `recon` (MSE spatiale) + `beta_latent × lat_rec` (MSE latente roundtrip Laplace) + `beta × ridge` (L2 sur ẑ).
+- Checkpoint : `checkpoints/LatentLaplaceAE_best.pt` — contient `model_state`, `N`, `Nt`, `latent_dim`, `K`, `dt`, `U_mean/std`, `theta_mean/std`, `test_idx`.
+- Script : `transient/latent_laplace_ae/train_ae.py`
+
+**`models/transient/spatial_laplace_ae.py`** (AE Laplace dans le domaine temporel) :
+- `SpatialLaplaceAE(N, Nt, K, latent_dim, dt, beta, beta_freq, freq_L, gamma_init)` — pipeline : U(t) → `LearnableLaplace` pixel-par-pixel → Û(s_k) → `ConvEncoder(2)` conditionné sur `freq_ratio` → z(s_k) → `ConvDecoder(2)` conditionné sur `freq_ratio` → Ũ(s_k) → `LearnableLaplace⁻¹` → U_rec(t). Les K points s_k sont apprenables.
+- Différence clé vs `LatentLaplaceAE` : la Laplace opère directement sur U(t) pixel par pixel (chaque pixel = série temporelle), pas dans l'espace latent.
+- Loss : `recon` (MSE temporelle) + `beta_freq × freq_rec` (MSE dans le domaine de Laplace) + `beta × ridge` (L2 sur Û).
+- Checkpoint : `checkpoints/SpatialLaplaceAE_best.pt` — contient `model_state`, `N`, `Nt`, `K`, `latent_dim`, `dt`, `U_mean/std`, `theta_mean/std`, `test_idx`.
+- Script : `transient/latent_laplace_ae/train_spatial_ae.py`
+- Note mémoire : la transformée inverse crée une matrice `(B·N², Nt)` — utiliser `batch_size=4` pour N=128.
 
 **`models/transient/laplace_latent_surrogate.py`** (surrogate latent) :
 - `LaplaceLatentSurrogate(latent_dim, theta_dim, freq_ratio)` — MLP θ→z (`proj` : 4 couches Linear + LayerNorm). Utilise un `shared_decoder` injecté par référence (non ré-enregistré comme sous-module). Appeler `set_decoder(decoder)` avant `forward()`.
