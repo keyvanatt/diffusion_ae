@@ -146,12 +146,21 @@ class TransientDataset(Dataset):
     # Normalisation
     # ------------------------------------------------------------------
 
-    def _u_stats(self, train_indices) -> tuple:
+    def _u_stats(self, train_indices, idx_hash: str | None = None) -> tuple:
         """
         Calcule la moyenne et l'écart-type pixel-par-pixel de U sur le train set.
         Retourne (U_mean, U_std) de shape (N, N) float32.
+        Pour le format mmap, le résultat est mis en cache sur disque (clé idx_hash).
         """
         if self._U_raw is not None:
+            if idx_hash is not None:
+                stem  = Path(self._data_path).stem
+                fpath = self._cache_dir / f"{stem}_ustats_N{self.N}_idx{idx_hash}.npz"
+                if fpath.exists():
+                    print(f"Cache U stats trouvé : {fpath}")
+                    d = np.load(str(fpath))
+                    return torch.from_numpy(d['mean']), torch.from_numpy(d['std'])
+
             sum_   = torch.zeros(self.N, self.N, dtype=torch.float64)
             sum_sq = torch.zeros(self.N, self.N, dtype=torch.float64)
             count  = 0
@@ -168,6 +177,11 @@ class TransientDataset(Dataset):
                 count  += V_i.shape[0]
             mean = (sum_ / count).float()
             std  = ((sum_sq / count - (sum_ / count) ** 2).clamp(min=0).sqrt() + 1e-8).float()
+
+            if idx_hash is not None:
+                self._cache_dir.mkdir(parents=True, exist_ok=True)
+                np.savez(str(fpath), mean=mean.numpy(), std=std.numpy())
+                print(f"Cache U stats sauvegardé : {fpath}")
         else:
             V_train = self.U[train_indices]
             n, Nt_  = V_train.shape[:2]
@@ -184,9 +198,9 @@ class TransientDataset(Dataset):
         """
         self.theta_mean = self.theta[train_indices].mean(0)
         self.theta_std  = self.theta[train_indices].std(0) + 1e-8
-        self.U_mean, self.U_std = self._u_stats(train_indices)
+        idx_hash = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
+        self.U_mean, self.U_std = self._u_stats(train_indices, idx_hash=idx_hash)
         if self.laplace:
-            idx_hash = hashlib.md5(np.array(sorted(train_indices)).tobytes()).hexdigest()[:8]
             self.U_laplace = self._to_laplace(self._s_list, self._rule, idx_hash)
 
     # ------------------------------------------------------------------
