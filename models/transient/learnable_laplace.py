@@ -1,6 +1,8 @@
 import math
 from typing import Optional
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -37,6 +39,10 @@ class LearnableLaplace(nn.Module):
         # DtTDt est entièrement constant (pas de paramètre appris dedans)
         Dt = (torch.diag(torch.ones(Nt - 1), 1) - torch.eye(Nt))[:Nt - 1, :]
         self.register_buffer('_DtTDt', Dt.T @ Dt)   # (Nt, Nt) float32
+
+        # Position initiale des s_k — pour le scatter de suivi
+        self.register_buffer('_s_init_re', torch.full((K,), gamma_init))
+        self.register_buffer('_s_init_im', torch.linspace(0.0, math.pi / dt, K))
 
         # Cache des matrices d'inversion — valide uniquement en mode eval
         self._eval_cache: Optional[tuple] = None
@@ -135,3 +141,53 @@ class LearnableLaplace(nn.Module):
         RHS = torch.real(U_hat_full @ torch.conj(F_full))         # (B*D, Nt)
         z_rec_flat = torch.linalg.solve(A, RHS.T).T               # (B*D, Nt)
         return z_rec_flat.view(B, D, self.Nt).permute(0, 2, 1).float()  # (B, Nt, D)
+
+    # ------------------------------------------------------------------
+    # Visualisation
+    # ------------------------------------------------------------------
+
+    def log_scatter(self, epoch: int):
+        """
+        Retourne un wandb.Image du scatter s_k (initial → courant).
+        Importer wandb dans le script appelant ; cette méthode ne l'importe
+        pas au niveau module pour ne pas créer de dépendance obligatoire.
+        """
+        import wandb
+
+        s_cur = self.s_list.detach().cpu().numpy()
+        s_ini = np.vectorize(complex)(
+            self._s_init_re.cpu().numpy(),
+            self._s_init_im.cpu().numpy(),
+        )
+        K    = len(s_cur)
+        cmap = plt.cm.plasma
+
+        fig, ax = plt.subplots(figsize=(5, 4))
+        for k, (a, b) in enumerate(zip(s_ini, s_cur)):
+            col = cmap(k / max(K - 1, 1))
+            ax.plot([a.real, b.real], [a.imag, b.imag], color=col, lw=0.6, alpha=0.5)
+        ax.scatter(s_ini.real, s_ini.imag, c=np.arange(K), cmap='plasma',
+                   s=50, marker='o', zorder=3, alpha=0.4, label='initial')
+        ax.scatter(s_cur.real, s_cur.imag, c=np.arange(K), cmap='plasma',
+                   s=80, marker='*', zorder=4, label='current')
+        ax.axhline(0, color='gray', lw=0.5)
+        ax.axvline(0, color='gray', lw=0.5)
+        ax.set_xlabel('Re(s)')
+        ax.set_ylabel('Im(s)')
+        ax.set_xscale('symlog', linthresh=1e-3)
+        ax.set_title(f's-points  epoch {epoch}')
+        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        img = wandb.Image(fig)
+        plt.close(fig)
+        return img
+
+    def log_text(self):
+        """Retourne un wandb.Html listant les s_k courants."""
+        import wandb
+        s = self.s_list.detach().cpu().numpy().tolist()
+        body = ", ".join(f"{z.real:.4f}+{z.imag:.4f}j" for z in s)
+        return wandb.Html(
+            f"<pre style='font-family:monospace;white-space:pre-wrap;'>[{body}]</pre>"
+        )

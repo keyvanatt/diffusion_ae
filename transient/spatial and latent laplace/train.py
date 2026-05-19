@@ -27,7 +27,6 @@ from models.transient.freq_latent_surrogate import (
     LatentLaplaceSurrogateModel, SpatialLaplaceSurrogateModel,
 )
 from transient.dataset import TransientDataset
-from transient.laplace_ae.laplace_opti import _log_s_scatter, _log_s_text
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +238,6 @@ def train(
     if mode == 'ae':
         model, ckpt_base = _build_ae(ae_type, cfg, device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['lr'], weight_decay=1e-4)
-        s_init    = model.laplace.s_list.detach().cpu().clone()
     else:
         ae, ae_ckpt = _load_ae(ae_type, cfg['ae_ckpt_path'], device)
         model, ckpt_base = _build_surrogate(ae_type, ae, ae_ckpt, theta_dim, cfg, device)
@@ -320,10 +318,8 @@ def train(
         }
         if mode == 'ae':
             log['lr'] = optimizer.param_groups[0]['lr']
-            s_cur = model.laplace.s_list.detach().cpu()
-            log['s_points/text'] = _log_s_text(s_cur)
-            if epoch % 5 == 0:
-                log['s_points/scatter'] = _log_s_scatter(s_cur, s_init, epoch)
+            log['s_points/text']    = model.laplace.log_text()
+            log['s_points/scatter'] = model.laplace.log_scatter(epoch)
         else:
             log['lr/surrogate'] = optimizer.param_groups[0]['lr']
             log['lr/decoder']   = optimizer.param_groups[1]['lr']
