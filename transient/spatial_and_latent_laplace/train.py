@@ -69,6 +69,7 @@ def _build_ae(ae_type: str, cfg: dict, device: torch.device):
             N=cfg['N'], Nt=cfg['Nt'], latent_dim=cfg['latent_dim'], K=cfg['K'],
             dt=cfg['dt'], beta=cfg['beta'], beta_latent=cfg['beta_latent'],
             gamma_init=cfg['gamma_init'], time_L=cfg['time_L'],
+            alpha_t=cfg.get('alpha_t', math.exp(-2.0)), lam=cfg.get('lam', math.exp(-2.0)),
         ).to(device)
         ckpt_keys = {
             'model_type': 'LatentLaplaceAE',
@@ -76,18 +77,21 @@ def _build_ae(ae_type: str, cfg: dict, device: torch.device):
             'K': cfg['K'], 'dt': cfg['dt'], 'beta': cfg['beta'],
             'beta_latent': cfg['beta_latent'], 'gamma_init': cfg['gamma_init'],
             'time_L': cfg['time_L'],
+            'alpha_t': cfg.get('alpha_t', math.exp(-2.0)), 'lam': cfg.get('lam', math.exp(-2.0)),
         }
     else:
         model = SpatialLaplaceAE(
             N=cfg['N'], Nt=cfg['Nt'], K=cfg['K'], latent_dim=cfg['latent_dim'],
             dt=cfg['dt'], beta=cfg['beta'], beta_freq=cfg['beta_freq'],
             gamma_init=cfg['gamma_init'], freq_L=cfg['freq_L'],
+            alpha_t=cfg.get('alpha_t', 1e-2), lam=cfg.get('lam', 1e-2),
         ).to(device)
         ckpt_keys = {
             'model_type': 'SpatialLaplaceAE',
             'N': cfg['N'], 'Nt': cfg['Nt'], 'K': cfg['K'], 'latent_dim': cfg['latent_dim'],
             'dt': cfg['dt'], 'beta': cfg['beta'], 'beta_freq': cfg['beta_freq'],
             'gamma_init': cfg['gamma_init'], 'freq_L': cfg['freq_L'],
+            'alpha_t': cfg.get('alpha_t', 1e-2), 'lam': cfg.get('lam', 1e-2),
         }
     return model, ckpt_keys
 
@@ -100,12 +104,14 @@ def _load_ae(ae_type: str, ckpt_path: str, device: torch.device):
             N=ckpt['N'], Nt=ckpt['Nt'], latent_dim=ckpt['latent_dim'], K=ckpt['K'],
             dt=ckpt['dt'], beta=ckpt.get('beta', 1e-2), beta_latent=ckpt.get('beta_latent', 5.0),
             gamma_init=ckpt.get('gamma_init', 0.0), time_L=ckpt.get('time_L', 8),
+            alpha_t=ckpt.get('alpha_t', math.exp(-2.0)), lam=ckpt.get('lam', math.exp(-2.0)),
         ).to(device)
     else:
         ae = SpatialLaplaceAE(
             N=ckpt['N'], Nt=ckpt['Nt'], K=ckpt['K'], latent_dim=ckpt['latent_dim'],
             dt=ckpt['dt'], beta=ckpt.get('beta', 1e-3), beta_freq=ckpt.get('beta_freq', 1.0),
             gamma_init=ckpt.get('gamma_init', 0.0), freq_L=ckpt.get('freq_L', 8),
+            alpha_t=ckpt.get('alpha_t', 1e-2), lam=ckpt.get('lam', 1e-2),
         ).to(device)
     ae.load_state_dict(ckpt['model_state'])
     ae.eval()

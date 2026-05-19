@@ -24,7 +24,8 @@ class LearnableLaplace(nn.Module):
     """
 
     def __init__(self, K: int, dt: float, Nt: int, gamma_init: float = 1e-2,
-                 learnable: bool = False):
+                 learnable: bool = False,
+                 alpha_t: float = math.exp(-2.0), lam: float = math.exp(-2.0)):
         super().__init__()
         self.K         = K
         self.dt        = dt
@@ -35,8 +36,12 @@ class LearnableLaplace(nn.Module):
                                         requires_grad=learnable)
         self.s_im        = nn.Parameter(torch.linspace(0.0, math.pi / dt, K),
                                         requires_grad=learnable)
-        self.log_alpha_t = nn.Parameter(torch.tensor(-2.0), requires_grad=learnable)
-        self.log_lam     = nn.Parameter(torch.tensor(-2.0), requires_grad=learnable)
+        self.log_alpha_t = nn.Parameter(torch.tensor(math.log(alpha_t)), requires_grad=learnable)
+        self.log_lam     = nn.Parameter(torch.tensor(math.log(lam)),     requires_grad=learnable)
+
+        # Valeurs fixes de régularisation utilisées quand learnable=False
+        self.register_buffer('_alpha_t_fixed', torch.tensor(alpha_t))
+        self.register_buffer('_lam_fixed',     torch.tensor(lam))
 
         # DtTDt est entièrement constant (pas de paramètre appris dedans)
         Dt = (torch.diag(torch.ones(Nt - 1), 1) - torch.eye(Nt))[:Nt - 1, :]
@@ -85,8 +90,8 @@ class LearnableLaplace(nn.Module):
         F_full = self.dt * w[None, :] * torch.exp(-s_full[:, None] * t[None, :])  # (K_full, Nt)
         FtF    = torch.real(torch.conj(F_full).T @ F_full)        # (Nt, Nt)
 
-        alpha_t = self.log_alpha_t.exp()
-        lam     = self.log_lam.exp()
+        alpha_t = self._alpha_t_fixed if not self.learnable else self.log_alpha_t.exp()
+        lam     = self._lam_fixed     if not self.learnable else self.log_lam.exp()
         A = (FtF
              + alpha_t * self._DtTDt.to(device=device)
              + lam * torch.eye(self.Nt, dtype=torch.float32, device=device))

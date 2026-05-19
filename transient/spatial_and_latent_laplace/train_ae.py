@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import numpy as np
 import torch
 
-from transient.train import train
+from transient.spatial_and_latent_laplace.train import train
 from transient.dataset import TransientDataset
 
 
@@ -32,14 +32,16 @@ if __name__ == "__main__":
         K          = 16,
         dt         = dt,
         beta       = 1e-2,
-        gamma_init = 0.0,
+        gamma_init = 1e-2,   # gain initiale pour les fréquences dans Laplace
+        alpha_t    = 7e-3,   # lissage temporel dans l'inversion de Laplace
+        lam        = 3e-5,   # ridge dans l'inversion de Laplace
     )
 
     if AE_TYPE == 'latent':
         cfg.update(dict(
             beta_latent = 5.0,
             time_L      = 8,
-            batch_size  = 16,
+            batch_size  = 4,
             lr          = 5e-4,
         ))
     else:

@@ -47,6 +47,8 @@ class LatentLaplaceAE(BaseAutoEncoder):
         gamma_init           : float = 1e-2,
         time_L               : int   = 8,
         learnable_laplace    : bool  = False,
+        alpha_t              : float = math.exp(-2.0),
+        lam                  : float = math.exp(-2.0),
     ):
         super().__init__()
         self.latent_dim  = latent_dim
@@ -56,7 +58,8 @@ class LatentLaplaceAE(BaseAutoEncoder):
 
         self.encoder = ConvEncoder(in_channels=1, N=N, latent_dim=latent_dim, cond_L=time_L)
         self.decoder = ConvDecoder(out_channels=1, N=N, latent_dim=latent_dim, cond_L=time_L)
-        self.laplace  = LearnableLaplace(K, dt, Nt, gamma_init, learnable=learnable_laplace)
+        self.laplace  = LearnableLaplace(K, dt, Nt, gamma_init, learnable=learnable_laplace,
+                                         alpha_t=alpha_t, lam=lam)
 
     # ------------------------------------------------------------------
     # Utilitaires séquence
@@ -158,7 +161,7 @@ class LatentLaplaceAE(BaseAutoEncoder):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    B, Nt, N, D, K = 2, 20, 64, 32, 20
+    B, Nt, N, D, K = 64, 150, 128, 64, 16
     model = LatentLaplaceAE(N=N, Nt=Nt, latent_dim=D, K=K, dt=0.1, time_L=8)
 
     n_total = sum(p.numel() for p in model.parameters())
